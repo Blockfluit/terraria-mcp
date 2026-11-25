@@ -6,6 +6,13 @@ namespace LlmPlayer.Core.Tests;
 public class WireProtocolTests
 {
     [Fact]
+    public void Result_SerializesEnumsAsLowercaseStrings()
+    {
+        var line = WireProtocol.Result(1, new LlmPlayer.Core.Tasks.TaskReport("move_to", LlmPlayer.Core.Tasks.GameTaskStatus.Running, null, null));
+        Assert.Contains("\"status\":\"running\"", line);
+    }
+
+    [Fact]
     public void ParsesRequest()
     {
         var r = WireProtocol.ParseRequest("{\"id\":3,\"method\":\"get_map\",\"params\":{\"radius\":5}}\r");
