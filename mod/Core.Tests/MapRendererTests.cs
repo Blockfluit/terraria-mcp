@@ -75,6 +75,18 @@ public class MapRendererTests
     }
 
     [Fact]
+    public void MarkerNamesLabelLegend()
+    {
+        var (g, _) = ArrayTileGrid.Parse("...", "...", "...");
+        var markers = new Dictionary<TilePoint, char> { [new TilePoint(2, 1)] = 'E', [new TilePoint(0, 2)] = 'i' };
+        var names = new Dictionary<char, string> { ['E'] = "hostile" };
+        string map = MapRenderer.Render(g, new TilePoint(1, 1), 1, new TilePoint(0, 0), markers, names);
+        var lines = Lines(map);
+        Assert.Contains("E hostile", lines);
+        Assert.Contains("i marker", lines); // unnamed markers fall back to "marker"
+    }
+
+    [Fact]
     public void PlayerOverridesMarkers()
     {
         var (g, _) = ArrayTileGrid.Parse("...", "...", "...");
