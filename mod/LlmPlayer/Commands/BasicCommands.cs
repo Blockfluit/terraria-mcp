@@ -1,4 +1,6 @@
 using LlmPlayer.Bridge;
+using LlmPlayer.Control;
+using LlmPlayer.Core.Control;
 using Terraria;
 using Terraria.ModLoader;
 
@@ -27,6 +29,7 @@ public static class BasicCommands
                 Life = p.statLife,
                 LifeMax = p.statLifeMax2,
                 InWorld = true,
+                Driver = ControlState.Driver.WireName(),
             };
         }, isAction: false);
     }

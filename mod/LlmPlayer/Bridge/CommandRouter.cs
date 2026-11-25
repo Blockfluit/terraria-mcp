@@ -1,6 +1,8 @@
 using System.Reflection;
 using System.Text.Json;
+using LlmPlayer.Control;
 using LlmPlayer.Core.Bridge;
+using LlmPlayer.Core.Control;
 using Terraria;
 
 namespace LlmPlayer.Bridge;
@@ -39,8 +41,10 @@ public static class CommandRouter
         if (spec.RequiresWorld && (Main.gameMenu || Main.LocalPlayer is not { active: true }))
             throw new CommandError(ErrorCodes.NotInWorld, "not in a world (main menu or loading)");
 
-        // Task 7: if (spec.IsAction && ControlState.Driver == Driver.User)
-        //             throw new CommandError(ErrorCodes.UserHasControl, "...press F8...");
+        // Action gate: the AI only acts after the user handed control over with the hotkey.
+        if (spec.IsAction && ControlState.Driver == Driver.User)
+            throw new CommandError(ErrorCodes.UserHasControl,
+                $"the user has control; ask them to press {LlmPlayerMod.ToggleKeyName()} in game to hand it to the AI");
     }
 
     internal static void RegisterAll(Action<string> log)
