@@ -4,8 +4,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TML_MODSOURCES="${TML_MODSOURCES:-<Windows Documents>/My Games/Terraria/tModLoader/ModSources}"
-export TML_MODSOURCES
+source "$REPO/scripts/tml-paths.sh"
 
 "$REPO/scripts/sync-mod.sh"
 
