@@ -12,13 +12,15 @@ namespace LlmPlayer.Core.Map;
 /// &lt;glyph&gt; &lt;name&gt;   (one line per glyph present, in order of first appearance)
 /// </code>
 /// Precedence per cell: player '@' &gt; marker &gt; TileInfo.Glyph &gt; kind default.
+/// Markers are labelled in the legend by <c>markerNames</c> (default "marker").
 /// </summary>
 public static class MapRenderer
 {
     public const int MaxRadius = 40;
 
     public static string Render(ITileGrid grid, TilePoint center, int radius, TilePoint player,
-        IReadOnlyDictionary<TilePoint, char>? markers = null)
+        IReadOnlyDictionary<TilePoint, char>? markers = null,
+        IReadOnlyDictionary<char, string>? markerNames = null)
     {
         int r = Math.Clamp(radius, 0, MaxRadius);
         int left = center.X - r, top = center.Y - r, size = 2 * r + 1;
@@ -41,7 +43,7 @@ public static class MapRenderer
                 var p = new TilePoint(x, y);
                 char c;
                 if (p == player) { c = '@'; Note(c, "player"); }
-                else if (markers != null && markers.TryGetValue(p, out var m)) { c = m; Note(c, "marker"); }
+                else if (markers != null && markers.TryGetValue(p, out var m)) { c = m; Note(c, markerNames != null && markerNames.TryGetValue(m, out var mn) ? mn : "marker"); }
                 else
                 {
                     var t = grid.Get(p);
