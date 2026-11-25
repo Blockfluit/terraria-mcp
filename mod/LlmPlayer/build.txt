@@ -1,0 +1,8 @@
+displayName = LLM Player
+author = terraria-mcp
+version = 0.1.0
+side = Client
+homepage =
+hideCode = false
+hideResources = false
+includeSource = true
