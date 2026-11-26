@@ -12,7 +12,7 @@ export interface ModClient {
 export const SERVER_INSTRUCTIONS = `You control the user's own Terraria character through the LlmPlayer mod.
 - Control: the user must hand over control by pressing the toggle key in game (default Insert). Until then observation tools work but action tools fail with user_has_control: ask the user to press Insert. Only the user pressing Insert again takes control back (it cancels the current task); dying cancels the current task but you keep control.
 - Coordinates: absolute tile coordinates, y grows DOWNWARD (smaller y = higher up). The player's position (x,y) is the bottom-left tile of its 2-wide x 3-tall body (feet-left): it occupies x..x+1, y-2..y, standing on tile row y+1.
-- Fair vision: you only see what the player could see. '?' in get_map = unknown/unrevealed tiles; find/get_entities only report visible things.
+- Fair vision: you only see what the player could see. '?' in get_map = unknown/unrevealed tiles; find/get_entities only report visible things (exception: get_state lists every living boss, as the vanilla boss health bar does).
 - Actions start asynchronous tasks and return immediately. Only one task runs at a time; starting a new one cancels the old. Follow an action with wait_for_task (blocks until done) or get_task (poll).
 - Suggested loop: get_state -> get_map -> pick an action -> wait_for_task -> repeat. Check events in results (damage taken, control changes).
 - Never breaks protected tiles (furniture, chests, doors, stations, NPC houses, spawn area), never attacks town NPCs/critters, never teleports or spawns items.`;
@@ -64,7 +64,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_state",
     description:
-      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Start every decision here." +
+      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x, y, distance, segments?}] (every boss alive in the world, like the vanilla boss health bar; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'). Start every decision here." +
       COORDS,
     readOnly: true,
   },
@@ -79,7 +79,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_entities",
     description:
-      "Visible NPCs, enemies, critters and dropped items near the player, nearest first (max 30): {id, name, kind: hostile|town|critter|item, x, y, life, distance}. Use id with move_to/attack/talk_to_npc.",
+      "Visible NPCs, enemies, critters, dropped items and hostile projectiles near the player (max 30): {id, name, kind: hostile|town|critter|item|projectile, x, y, life, lifeMax, distance}, plus when relevant boss: true, vx/vy (velocity in tiles/second, omitted when still; +y = falling/downward), damage (contact or projectile damage) and defense (hostiles). Ordered bosses first (nearest 10 segments), then threats (hostile NPCs and up to 10 projectiles), then everything else, nearest first within each group. Use id with move_to/attack/talk_to_npc (projectile ids are informational only).",
     shape: { radius: int().min(1).optional().describe("Search radius in tiles, default 40") },
     readOnly: true,
   },
@@ -98,7 +98,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_inventory",
     description:
-      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted.",
+      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game).",
     readOnly: true,
   },
   {

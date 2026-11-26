@@ -18,6 +18,11 @@ mod/LlmPlayer tModLoader mod inside Terraria
 - **See fairly.** It only sees tiles you've explored or that are lit near the screen, shown as an
   ASCII map with a legend. Unknown tiles show as `?`. Spelunker, Hunter and Dangersense potions
   widen its view the same way they widen yours.
+- **Read a fight at a glance.** `get_entities` shows each enemy's velocity, contact damage and defense,
+  flags bosses (always listed first), and includes visible hostile projectiles. `get_state` counts nearby
+  hostiles, lists every living boss with its health (like the vanilla boss bar), and names events such as
+  a blood moon or goblin army. `get_inventory` tags items as weapon (with damage), heal, ammo, consumable,
+  placeable, or pickaxe/axe/hammer power.
 - **Move smartly.** `move_to` plans an A* route over the real tile grid. The route walks, jumps,
   drops through platforms, swims, digs with your best pickaxe, and places platforms to cross gaps
   or climb out of shafts. The route-following code is tested against a physics simulation of
