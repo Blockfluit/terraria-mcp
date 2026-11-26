@@ -27,7 +27,8 @@ public static class GatherCommands
             return new { Started = true, Task = task.Name };
         }, isAction: true);
 
-        // One ore vein: every visible tile of the same type 8-connected to (x,y), without the stone around it.
+        // One ore vein (or `max` tiles of any block): visible tiles of the same type 8-connected to (x,y), nearest to
+        // it first, without whatever surrounds them.
         CommandRouter.Register("mine_vein", p =>
         {
             int x = Params.Int(p, "x"), y = Params.Int(p, "y");
@@ -35,11 +36,17 @@ public static class GatherCommands
             if (!WorldGen.InWorld(x, y, 10)) throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
             if (!Visibility.IsTileVisible(x, y)) throw new CommandError(ErrorCodes.NotVisible, $"({x},{y}) is not visible");
             var start = Main.tile[x, y];
-            if (!start.HasTile || !TileID.Sets.Ore[start.TileType])
-                throw new CommandError(ErrorCodes.BadParams, $"no ore at ({x},{y}) (find category=ore lists visible ore)");
+            if (!start.HasTile || !Main.tileSolid[start.TileType] || Main.tileAxe[start.TileType])
+                throw new CommandError(ErrorCodes.BadParams, $"no block at ({x},{y}) (find category=ore or category=block)");
             ushort type = start.TileType;
+            // Ore: the whole vein by default. Other blocks (stone, sand, clay…) form huge connected masses: then max
+            // says how many tiles to take (e.g. 20 stone for a furnace).
+            bool ore = TileID.Sets.Ore[type];
+            int max = Params.Has(p, "max") ? Params.Int(p, "max") : ore ? MiningOrder.MaxAreaTiles : 20;
+            if (max < 1 || max > MiningOrder.MaxAreaTiles)
+                throw new CommandError(ErrorCodes.BadParams, $"max must be 1..{MiningOrder.MaxAreaTiles}");
             var vein = VeinMath.Collect((tx, ty) => WorldGen.InWorld(tx, ty, 10) && Visibility.IsTileVisible(tx, ty)
-                && Main.tile[tx, ty] is { HasTile: true } t && t.TileType == type, new TilePoint(x, y));
+                && Main.tile[tx, ty] is { HasTile: true } t && t.TileType == type, new TilePoint(x, y), max);
             var (px, py) = StateReader.StandingTile(player);
             var ordered = MiningOrder.Order(vein, new TilePoint(px, py));
             var tiles = MineTask.Validate(player, ordered, area: true, out var skipped);

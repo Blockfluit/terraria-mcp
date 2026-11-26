@@ -183,10 +183,14 @@ const TOOLS: ToolDef[] = [
   {
     name: "mine_vein",
     description:
-      "Mine one whole ore vein: give any visible ore tile; every visible tile of the same ore connected to it (8-neighbourhood, at most 200) is mined nearest-first, without the stone around it. Tiles it can't reach or break are skipped and reported (report.result.skippedReasons). Use find category=ore to get a tile." +
+      "Mine one connected deposit: give any visible tile of it. Ore: the whole vein (every visible tile of the same ore connected to it, 8-neighbourhood, up to 200) by default. Any other block (Stone, Sand, Clay, Mud…): `max` tiles of it (default 20), nearest to the given tile first — e.g. 20 Stone for a furnace. Only that block type is mined, not what surrounds it. Tiles it can't reach or break are skipped and reported (report.result.skippedReasons). find category=ore / category=block gives a tile." +
       COORDS +
       STARTS_TASK,
-    shape: { x: tileX(), y: tileY() },
+    shape: {
+      x: tileX(),
+      y: tileY(),
+      max: int().min(1).max(200).optional().describe("How many tiles at most; default all of an ore vein, 20 of other blocks"),
+    },
   },
   {
     name: "chop_tree",
