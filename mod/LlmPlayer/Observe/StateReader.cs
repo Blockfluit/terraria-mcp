@@ -1,6 +1,7 @@
 using LlmPlayer.Core.Control;
 using LlmPlayer.Core.Observe;
 using Terraria;
+using Terraria.ID;
 
 namespace LlmPlayer.Observe;
 
@@ -23,25 +24,76 @@ public static class StateReader
 
         bool bedSpawn = p.SpawnX >= 0 && p.SpawnY >= 0;
         var held = p.HeldItem;
-        return new
+        // Dictionary (keys camelCased by the wire options) so optional fields can be left out entirely.
+        var state = new Dictionary<string, object?>
         {
-            X = x,
-            Y = y,
-            Life = p.statLife,
-            LifeMax = p.statLifeMax2,
-            Mana = p.statMana,
-            ManaMax = p.statManaMax2,
-            Defense = (int)p.statDefense,
-            Buffs = buffs,
-            HeldItem = held == null || held.IsAir ? null : held.Name,
-            TimeOfDay = GameClock.Format(Main.dayTime, Main.time),
-            Biome = Biome(p),
-            Layer = DepthLayer.Classify((int)(p.Center.Y / 16f), Main.worldSurface, Main.rockLayer, Main.UnderworldLayer),
-            Spawn = new { X = bedSpawn ? p.SpawnX : Main.spawnTileX, Y = bedSpawn ? p.SpawnY : Main.spawnTileY },
-            Driver = LlmPlayer.Control.ControlState.Driver.WireName(),
-            Task = LlmPlayer.Tasks.TaskHost.Runner.Current,
-            RecentEvents = RecentEvents.Log.Drain(),
+            ["X"] = x,
+            ["Y"] = y,
+            ["Life"] = p.statLife,
+            ["LifeMax"] = p.statLifeMax2,
+            ["Mana"] = p.statMana,
+            ["ManaMax"] = p.statManaMax2,
+            ["Defense"] = (int)p.statDefense,
+            ["Buffs"] = buffs,
+            ["HeldItem"] = held == null || held.IsAir ? null : held.Name,
+            ["TimeOfDay"] = GameClock.Format(Main.dayTime, Main.time),
+            ["Biome"] = Biome(p),
+            ["Layer"] = DepthLayer.Classify((int)(p.Center.Y / 16f), Main.worldSurface, Main.rockLayer, Main.UnderworldLayer),
+            ["Spawn"] = new { X = bedSpawn ? p.SpawnX : Main.spawnTileX, Y = bedSpawn ? p.SpawnY : Main.spawnTileY },
         };
+        var threats = Threats.Summarize(EntityReader.ReadAll(p, Threats.Radius)
+            .Where(e => e.Kind == EntityKind.Hostile).Select(e => e.Distance));
+        if (threats != null) state["NearbyHostiles"] = threats;
+        var bosses = Bosses(p, x, y);
+        if (bosses.Count > 0) state["Boss"] = bosses;
+        var events = WorldEvents();
+        if (events.Count > 0) state["WorldEvents"] = events;
+        state["Driver"] = LlmPlayer.Control.ControlState.Driver.WireName();
+        state["Task"] = LlmPlayer.Tasks.TaskHost.Runner.Current;
+        state["RecentEvents"] = RecentEvents.Log.Drain();
+        return state;
+    }
+
+    /// <summary>
+    /// Every active boss in the world, visible or not: vanilla shows a boss's health bar wherever it is, so knowing it
+    /// is alive (and where it is) is fair. Eater of Worlds segments merge into one entry.
+    /// </summary>
+    private static List<BossStatus> Bosses(Player p, int px, int py)
+    {
+        var sightings = new List<BossSighting>();
+        foreach (var npc in Main.npc)
+        {
+            if (!npc.active || npc.life <= 0 || !EntityReader.IsBoss(npc)) continue;
+            var (bx, by) = EntityReader.TileOf(npc);
+            double d = Math.Round(Math.Sqrt((double)(bx - px) * (bx - px) + (double)(by - py) * (by - py)), 1);
+            sightings.Add(new BossSighting(npc.whoAmI, npc.GivenOrTypeName, npc.life, npc.lifeMax, bx, by, d, Segment: !npc.boss));
+        }
+        return BossSummary.Collapse(sightings);
+    }
+
+    /// <summary>Ongoing world events the player would notice (sky colour, event messages, progress bars).</summary>
+    private static List<string> WorldEvents()
+    {
+        var list = new List<string>();
+        if (Main.bloodMoon) list.Add("blood moon");
+        if (Main.eclipse) list.Add("solar eclipse");
+        if (Main.pumpkinMoon) list.Add("pumpkin moon");
+        if (Main.snowMoon) list.Add("frost moon");
+        if (Main.slimeRain) list.Add("slime rain");
+        if (Main.invasionType > 0 && Main.invasionSize > 0)
+        {
+            list.Add(Main.invasionType switch
+            {
+                InvasionID.GoblinArmy => "goblin army",
+                InvasionID.SnowLegion => "frost legion",
+                InvasionID.PirateInvasion => "pirate invasion",
+                InvasionID.MartianMadness => "martian madness",
+                _ => "invasion",
+            });
+        }
+        if (Terraria.GameContent.Events.Sandstorm.Happening) list.Add("sandstorm");
+        if (Main.raining) list.Add("rain");
+        return list;
     }
 
     /// <summary>The most specific biome the player is in.</summary>

@@ -55,6 +55,27 @@ describe("registerTools", () => {
     );
   });
 
+  it("observation tools describe the boss/threat/projectile/item-tag fields", async () => {
+    const client = await setup(new FakeConn());
+    const tools = (await client.listTools()).tools;
+    const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
+    for (const word of ["nearbyHostiles", "boss", "worldEvents"]) expect(desc("get_state")).toContain(word);
+    for (const word of ["projectile", "boss: true", "vx/vy", "damage", "defense"]) expect(desc("get_entities")).toContain(word);
+    for (const word of ["weapon", "damage", "heal", "ammo", "consumable", "placeable", "pick/axe/hammer"])
+      expect(desc("get_inventory")).toContain(word);
+    for (const name of ["get_state", "get_entities", "get_inventory"])
+      expect(tools.find((t) => t.name === name)?.annotations?.readOnlyHint).toBe(true);
+  });
+
+  it("get_entities passes optional entity fields through unchanged", async () => {
+    const entity = { id: 2003, name: "Slime Spike", kind: "projectile", x: 10, y: 20, distance: 4.1, vx: -7.5, vy: 1.2, damage: 18 };
+    const conn = new FakeConn(() => ({ entities: [entity] }));
+    const client = await setup(conn);
+    const body = JSON.parse((await call(client, "get_entities", { radius: 30 })).content[0].text);
+    expect(conn.calls).toEqual([{ method: "get_entities", params: { radius: 30 } }]);
+    expect(body).toEqual({ entities: [entity] });
+  });
+
   it("move_to forwards x,y,allow_dig", async () => {
     const conn = new FakeConn(() => ({ started: "move_to" }));
     const client = await setup(conn);
