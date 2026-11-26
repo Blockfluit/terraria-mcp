@@ -45,7 +45,7 @@ public sealed class PathFollower
     private const int WorkStuckMultiplier = 4;
     private const int MaxJumpAttempts = 3;
     private const int MaxLookahead = 64;
-    private const int ResyncWindow = 12;
+    private const int ResyncWindow = 12, ValidateWindow = 48;
 
     private readonly IReadOnlyList<PathStep> _steps;
     private readonly int _stuckTicks;
@@ -483,11 +483,13 @@ public sealed class PathFollower
         return _noProgress >= limit;
     }
 
-    /// <summary>True if a remaining standing position lost its support or got its body blocked.
+    /// <summary>True if one of the next <see cref="ValidateWindow"/> standing positions lost its support or got its
+    /// body blocked (later ones are checked as they come closer; the live grid isn't free to read).
     /// Unknown tiles and tiles the path itself will dig/build don't count.</summary>
     private bool PathInvalidated(ITileGrid grid)
     {
-        for (int i = _index; i < _steps.Count; i++)
+        int end = Math.Min(_steps.Count, _index + ValidateWindow);
+        for (int i = _index; i < end; i++)
         {
             var s = _steps[i];
             if (s.Kind is MoveKind.Swim or MoveKind.Dig) continue;

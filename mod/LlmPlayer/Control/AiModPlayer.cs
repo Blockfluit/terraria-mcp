@@ -17,7 +17,8 @@ namespace LlmPlayer.Control;
 ///   ResetControls → Triggers.CopyInto (user input) → <b>SetControls</b> → hotbar/scroll handling →
 ///   tileTargetX/Y = (Main.mouseX/Y + screenPosition) / 16 → SmartCursorLookup → … → <b>PreUpdateMovement</b>
 ///   → movement → ItemCheck (uses tileTargetX/Y and Main.MouseWorld) → <b>PostUpdate</b>.
-/// When the window is unfocused in single player the game pauses (Main.DoUpdate returns early), so none of this runs.
+/// When the window is unfocused in single player vanilla pauses (Main.DoUpdate returns early); while the AI drives
+/// <see cref="UnfocusedPlay"/> keeps it running, so the AI's controls keep applying.
 /// </summary>
 public sealed class AiModPlayer : ModPlayer
 {
@@ -74,6 +75,7 @@ public sealed class AiModPlayer : ModPlayer
         p.controlRight = intent.Right;
         p.controlJump = intent.Jump;
         p.controlDown = intent.Down;
+        p.controlUp = intent.Up;
         p.controlUseItem = intent.UseItem;
 
         if (intent.UseItem)
@@ -123,7 +125,7 @@ public sealed class AiModPlayer : ModPlayer
         var prev = _prevRaw;
         _prevRaw = cur;
 
-        // Unfocused: nothing can be user input (and single player is paused anyway).
+        // Unfocused: nothing counts as user input (the user may be typing in a terminal while the AI plays).
         if (ControlState.Driver != Driver.Ai || !Main.instance.IsActive) return;
         if (InputWatcher.IsUserInput(prev, cur, toggleKey))
             ControlState.SetDriver(Driver.User, "user_input");

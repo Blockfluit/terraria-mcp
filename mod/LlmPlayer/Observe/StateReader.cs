@@ -39,7 +39,7 @@ public static class StateReader
             Layer = DepthLayer.Classify((int)(p.Center.Y / 16f), Main.worldSurface, Main.rockLayer, Main.UnderworldLayer),
             Spawn = new { X = bedSpawn ? p.SpawnX : Main.spawnTileX, Y = bedSpawn ? p.SpawnY : Main.spawnTileY },
             Driver = LlmPlayer.Control.ControlState.Driver.WireName(),
-            Task = (object?)null, // task: wired to the task runner by Task 10
+            Task = LlmPlayer.Tasks.TaskHost.Runner.Current,
             RecentEvents = RecentEvents.Log.Drain(),
         };
     }
