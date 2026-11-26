@@ -1,3 +1,4 @@
+using Microsoft.Xna.Framework.Input;
 using LlmPlayer.Core.Control;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Safety;
@@ -39,13 +40,37 @@ public sealed class AiModPlayer : ModPlayer
         HandleToggle();
     }
 
+    public override void OnEnterWorld()
+    {
+        if (!IsLocal) return;
+        var keys = LlmPlayerMod.ToggleAiControl?.GetAssignedKeys(InputMode.Keyboard);
+        LlmPlayerMod.Log($"toggle keybind assigned keys: [{(keys == null ? "keybind missing" : string.Join(", ", keys))}]"
+            + (keys is { Count: > 0 } ? "" : $"; falling back to raw {FallbackKey}"));
+    }
+
+    private const Keys FallbackKey = Keys.Insert;
+
+    /// <summary>
+    /// The keybind's JustPressed, or — if tModLoader left the keybind without any key assigned — a raw edge on
+    /// <see cref="FallbackKey"/>, so the documented default always works.
+    /// </summary>
+    private static bool TogglePressed()
+    {
+        var kb = LlmPlayerMod.ToggleAiControl;
+        if (kb is { JustPressed: true }) return true;
+        if (kb != null && kb.GetAssignedKeys(InputMode.Keyboard).Count > 0) return false;
+        return Main.keyState.IsKeyDown(FallbackKey) && !Main.oldKeyState.IsKeyDown(FallbackKey) && !Main.drawingPlayerChat;
+    }
+
     private void HandleToggle()
     {
-        if (LlmPlayerMod.ToggleAiControl is not { JustPressed: true }) return;
+        if (!TogglePressed()) return;
+        LlmPlayerMod.Log($"toggle pressed (driver was {ControlState.Driver.WireName()})");
 
         if (ControlState.Driver == Driver.Ai)
         {
             ControlState.SetDriver(Driver.User, "hotkey");
+            Main.NewText("LlmPlayer: you have control again.", 120, 220, 255);
             return;
         }
 
@@ -61,6 +86,7 @@ public sealed class AiModPlayer : ModPlayer
             return;
         }
         ControlState.SetDriver(Driver.Ai, "hotkey");
+        Main.NewText($"LlmPlayer: AI is now playing. Press {LlmPlayerMod.ToggleKeyName()} to take back control.", 120, 220, 255);
     }
 
     /// <summary>
