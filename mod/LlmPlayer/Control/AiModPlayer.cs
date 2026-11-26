@@ -32,7 +32,24 @@ public sealed class AiModPlayer : ModPlayer
 
     public override void ProcessTriggers(TriggersSet triggersSet)
     {
-        if (!IsLocal || LlmPlayerMod.ToggleAiControl is not { JustPressed: true }) return;
+        if (IsLocal) HandleToggle();
+    }
+
+    /// <summary>
+    /// Called instead of Player.Update while single player is auto-paused (incl. <see cref="PauseWhenIdle"/>), when
+    /// ProcessTriggers and PostUpdate don't run. While the AI drives, keep the hotkey and user-input takeover working
+    /// here so the user can always take control back from a paused world (which also unpauses it).
+    /// </summary>
+    public override void UpdateAutopause()
+    {
+        if (!IsLocal || ControlState.Driver != Driver.Ai) return;
+        HandleToggle();
+        CheckUserTakeover();
+    }
+
+    private void HandleToggle()
+    {
+        if (LlmPlayerMod.ToggleAiControl is not { JustPressed: true }) return;
 
         if (ControlState.Driver == Driver.Ai)
         {
@@ -120,7 +137,11 @@ public sealed class AiModPlayer : ModPlayer
 
     public override void PostUpdate()
     {
-        if (!IsLocal) return;
+        if (IsLocal) CheckUserTakeover();
+    }
+
+    private void CheckUserTakeover()
+    {
         var cur = ReadRawInput(out var toggleKey);
         var prev = _prevRaw;
         _prevRaw = cur;
