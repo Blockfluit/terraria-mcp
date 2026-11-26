@@ -166,7 +166,10 @@ const TOOLS: ToolDef[] = [
   {
     name: "mine_area",
     description:
-      "Mine every minable tile in the rectangle (x1,y1)-(x2,y2), inclusive. Protected tiles are skipped." + COORDS + STARTS_TASK,
+      "Mine every tile in the rectangle (x1,y1)-(x2,y2), inclusive, at most 200 tiles, top row first. Air, trees and " +
+      "hammer-only tiles are skipped; a protected or not-visible tile inside the area fails the call, naming the tile." +
+      COORDS +
+      STARTS_TASK,
     shape: { x1: tileX(), y1: tileY(), x2: tileX(), y2: tileY() },
   },
   {
