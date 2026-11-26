@@ -42,8 +42,11 @@ public static class InventoryCommands
                 var t = Target(p);
                 if (!Visibility.IsTileVisible(t.X, t.Y))
                     throw new CommandError(ErrorCodes.NotVisible, $"{t} is not visible");
-                bool touchesTiles = item.pick > 0 || item.axe > 0 || item.hammer > 0 || item.createTile >= 0 || item.createWall > 0;
-                if (touchesTiles && Protection.IsProtected(t.X, t.Y))
+                // Breaking tools respect full protection (incl. spawn area / houses); placing only
+                // needs the target itself not to be a protected object — placing into empty space is harmless.
+                bool breaks = item.pick > 0 || item.axe > 0 || item.hammer > 0;
+                bool places = item.createTile >= 0 || item.createWall > 0;
+                if ((breaks && Protection.IsProtected(t.X, t.Y)) || (places && IsProtectedObject(t.X, t.Y)))
                     throw new CommandError(ErrorCodes.ProtectedTile, $"{t} is protected (house, spawn area, furniture or station)");
                 aim = t;
             }
@@ -68,8 +71,8 @@ public static class InventoryCommands
             var t = Target(p);
             if (!Visibility.IsTileVisible(t.X, t.Y))
                 throw new CommandError(ErrorCodes.NotVisible, $"{t} is not visible");
-            if (Protection.IsProtected(t.X, t.Y))
-                throw new CommandError(ErrorCodes.ProtectedTile, $"{t} is protected (house, spawn area, furniture or station)");
+            if (IsProtectedObject(t.X, t.Y))
+                throw new CommandError(ErrorCodes.ProtectedTile, $"{t} holds a protected object (furniture, door, chest or station)");
             var tile = Main.tile[t.X, t.Y];
             if (item.createTile >= 0)
             {
@@ -163,4 +166,9 @@ public static class InventoryCommands
         if (!WorldGen.InWorld(x, y, 10)) throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
         return new TilePoint(x, y);
     }
+
+    /// <summary>Protected because of what is on the tile (not where it is).</summary>
+    private static bool IsProtectedObject(int x, int y) =>
+        !WorldGen.InWorld(x, y)
+        || (Main.tile[x, y].HasTile && LlmPlayer.Observe.TileClass.IsProtectedType(Main.tile[x, y].TileType));
 }
