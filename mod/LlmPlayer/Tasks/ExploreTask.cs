@@ -10,12 +10,12 @@ public enum ExploreDirection { Left, Right, Down, Up }
 /// <summary>
 /// Travel <c>distance</c> tiles in a direction through known terrain: each leg is a <see cref="MoveToTask"/> to the
 /// visible standable tile farthest along the direction (fair vision: Unknown tiles are never picked) within a
-/// window ahead. Succeeds once the distance is covered; fails after 3 consecutive legs without progress (or when
+/// window ahead. Succeeds once the distance is covered (within 1 tile); fails after 3 consecutive legs without progress (or when
 /// no visible standable tile lies ahead).
 /// </summary>
 public sealed class ExploreTask : IGameTask<GameCtx>
 {
-    private const int MaxNoProgressLegs = 3, LegReach = 40, LateralReach = 15;
+    private const int MaxNoProgressLegs = 3, LegReach = 40, LateralReach = 15, ArrivalTolerance = 1;
 
     private readonly ExploreDirection _dir;
     private readonly int _distance;
@@ -40,7 +40,9 @@ public sealed class ExploreTask : IGameTask<GameCtx>
         int along = Along(here - _origin.Value);
         _bestAlong = Math.Max(_bestAlong, along);
         Progress = $"{Math.Max(0, along)}/{_distance} tiles";
-        if (along >= _distance)
+        // Legs are MoveToTasks with tolerance 1, so the last one may stop a tile short: that counts as covered
+        // (it used to fail at "39/40 tiles" because no leg target can be 1 tile ahead).
+        if (along >= _distance - ArrivalTolerance)
         {
             _leg?.OnCancel(ctx);
             return GameTaskStatus.Succeeded;
@@ -55,11 +57,11 @@ public sealed class ExploreTask : IGameTask<GameCtx>
             if (along <= _legStartAlong) _noProgress++;
             else _noProgress = 0;
             if (_noProgress >= MaxNoProgressLegs)
-                return Fail($"no progress after {MaxNoProgressLegs} attempts{(legReason != null ? ": " + legReason : "")}");
+                return Fail($"no progress after {MaxNoProgressLegs} attempts at {Math.Max(0, along)}/{_distance} tiles{(legReason != null ? ": " + legReason : "")}");
         }
 
         if (!PickTarget(ctx, here, out var target))
-            return Fail($"no visible ground further {_dir.ToString().ToLowerInvariant()}");
+            return Fail($"no visible ground further {_dir.ToString().ToLowerInvariant()} (covered {Math.Max(0, along)}/{_distance} tiles)");
         _legStartAlong = along;
         _leg = new MoveToTask(target, name: "explore");
         return GameTaskStatus.Running;
