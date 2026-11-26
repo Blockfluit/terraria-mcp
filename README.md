@@ -56,6 +56,20 @@ mod/LlmPlayer tModLoader mod inside Terraria
   Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
   threshold with no healing potion available, it retreats and reports "low life". The result reports kills,
   damage taken, duration and dodges. This movement is also tested against the physics simulation.
+- **Fight bosses.** When the target is a boss (`target: "boss"` picks the nearest living one, even off screen, since
+  the vanilla boss bar shows it anyway), `attack` switches to arena mode. It never pathfinds and never leaves the arena
+  (`arena: {x1, x2}`, by default the walkable ground or platform span around you, up to 50 tiles each way). With a bow
+  it kites back and forth across the arena and shoots with lead aim. It dodges dashes sideways, by jumping, or by
+  dropping through the platform under it to the row below. Servants and other minions about to reach you get shot
+  first (`kill_minions`), then it goes back to the boss. If the boss leaves the screen it stays the target. The task
+  fails with "boss fled" only when the boss despawns alive (the Eye of Cthulhu at dawn). `heal_below` raises the
+  quick-heal threshold while the fight runs. When ammo runs out, the game picks the next stack of the same ammo
+  type, and once none is left `attack` switches to another weapon. The result adds potions used, ammo left, and the
+  boss's life left in percent if it survived. Build the arena first: `build_platforms` with 2-3 rows about 5 tiles
+  apart, so you can jump between them. `get_boss_info` gives short facts about the Eye of Cthulhu and King Slime:
+  summon item and recipe, spawn rules, when it leaves, and whether this world has beaten it. In a simulated fight
+  against an Eye-of-Cthulhu-like dasher on a 3-level platform arena, kiting takes about 25-50% fewer hits than
+  standing still.
 - **Build bigger things.** `build_platforms` lays whole rows of platforms or blocks (bridges, floors,
   stacked platform rows): it walks along, stands on what it just built and places every tile in reach
   before moving on. Occupied tiles, NPC houses and tiles with nothing to attach to are skipped and
@@ -148,7 +162,7 @@ In game: *Workshop → Manage Mods → LLM Player → Config*.
 | ProtectSpawnRadius | 20 | Blocks within this many tiles of spawn are never broken |
 | BackupKeep | 5 | How many save backups to keep |
 | AutoDefend | on | Reflex: attack hostiles in reach (or that just hit you) while idle, moving, gathering, placing or picking up; the task pauses and resumes after the fight (not during `attack`) |
-| QuickHealThreshold | 0.35 | Reflex: quick-heal below this fraction of max life |
+| QuickHealThreshold | 0.35 | Reflex: quick-heal below this fraction of max life (an `attack` with `heal_below` raises it while it runs) |
 | PauseWhenIdle | off | Singleplayer only: pause while the AI is driving but has no task |
 | ShowPathOverlay | on | Draw the planned path in game |
 | DevCommands | off | Allow `dev_save_and_exit` (save and quit the game) for `scripts/dev-reload.sh`, see below |

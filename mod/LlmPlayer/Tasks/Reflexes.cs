@@ -15,7 +15,8 @@ namespace LlmPlayer.Tasks;
 /// Decisions (and the precedence between reflexes and the task) come from Core's <see cref="ReflexArbiter"/>:
 /// <list type="number">
 /// <item>Quick-heal: any time, no controls involved — calls <see cref="Player.QuickHeal"/> (the quick-heal hotkey's
-/// action, same potion/sickness rules) below <c>QuickHealThreshold</c>.</item>
+/// action, same potion/sickness rules) below <c>QuickHealThreshold</c>, or below a running attack's higher
+/// <c>heal_below</c> (<see cref="SetHealOverride"/>). Also during attack: quick-heal never needs the controls.</item>
 /// <item>Auto-defend: while idle, waiting, or in a task it may pause (<see cref="TaskPhases"/>: move_to, explore,
 /// talk_to_npc, chop_tree, mine, mine_area, pick_up_items, place, use_item until it presses "use"), and a visible
 /// hostile is within the best weapon's reach (or just touched the player and is one tile beyond it,
@@ -40,6 +41,28 @@ public static class Reflexes
     private static int _targetId = -1;
     private static bool _lastUse;
 
+    private static object? _healOwner;
+    private static float _healOverride;
+
+    /// <summary>Quick-heals that used a potion since the game started (attack reports its own difference).</summary>
+    public static int PotionsUsed { get; private set; }
+
+    /// <summary>The quick-heal threshold in effect: the config's, or a running task's higher override.</summary>
+    public static float HealThreshold => Math.Max(LlmConfig.Current.QuickHealThreshold, _healOwner != null ? _healOverride : 0f);
+
+    /// <summary>Raise the quick-heal threshold while <paramref name="owner"/> (a task) runs; the config is untouched.</summary>
+    public static void SetHealOverride(object owner, float threshold)
+    {
+        _healOwner = owner;
+        _healOverride = threshold;
+    }
+
+    /// <summary>Drop <paramref name="owner"/>'s override (no-op if another task set one since).</summary>
+    public static void ClearHealOverride(object owner)
+    {
+        if (ReferenceEquals(_healOwner, owner)) _healOwner = null;
+    }
+
     /// <summary>True while auto-defend owns the controls.</summary>
     public static bool Defending => Arbiter.Defending;
 
@@ -63,9 +86,10 @@ public static class Reflexes
             if (_weapon != null) threat = CombatKit.NearestThreat(p, _weapon);
         }
 
-        bool low = p.statLife > 0 && p.statLife < cfg.QuickHealThreshold * p.statLifeMax2;
+        float healAt = HealThreshold;
+        bool low = p.statLife > 0 && p.statLife < healAt * p.statLifeMax2;
         var d = Arbiter.Tick(new ReflexInputs(phase, cfg.AutoDefend, threat != null, p.statLife, p.statLifeMax2,
-            cfg.QuickHealThreshold, p.HasBuff(BuffID.PotionSickness) || p.potionDelay > 0,
+            healAt, p.HasBuff(BuffID.PotionSickness) || p.potionDelay > 0,
             low && p.QuickHeal_GetItemToUse() != null, UsingItem: p.itemAnimation > 0 || p.itemTime > 0));
 
         if (d.QuickHeal) QuickHeal(p);
@@ -94,6 +118,7 @@ public static class Reflexes
     public static void Reset(Player? p)
     {
         Arbiter.Reset();
+        _healOwner = null;
         if (p != null) _lease.Restore(p);
         _lease = new HeldItemLease();
         _weapon = null;
@@ -115,7 +140,9 @@ public static class Reflexes
         int before = p.statLife;
         string? potion = p.QuickHeal_GetItemToUse()?.Name;
         if (potion == null) return;
+        int delayBefore = p.potionDelay;
         p.QuickHeal();
+        if (p.potionDelay > delayBefore || p.statLife > before) PotionsUsed++;
         Report(new { Kind = "quick_heal", Item = potion, LifeBefore = before, Life = p.statLife, LifeMax = p.statLifeMax2 },
             $"reflex: quick-heal with {potion} ({before} -> {p.statLife} life)");
     }

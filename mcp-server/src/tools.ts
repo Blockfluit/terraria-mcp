@@ -293,12 +293,13 @@ const TOOLS: ToolDef[] = [
   {
     name: "attack",
     description:
-      'Fight hostile enemies: picks the best weapon, closes in for melee or keeps 8-15 tiles for ranged/magic, and does not trade hits — when an enemy is about to touch you (from its hitbox and velocity) it backs off or jumps, never into a hole or lava, still swinging/shooting (melee becomes hit-and-run). target: an entity id from get_entities, "nearest", or "all" = every visible hostile within radius, nearest first, until none remain (one call clears a group). Below retreat_below of max life with no healing potion available (quick-heal reflex handles the rest) it stops attacking, runs away for up to 3 s and fails with reason "low life". When it finishes, wait_for_task\'s report.result is {killed, kills: [names], damageTaken, durationS, dodges, retreated}. Never targets town NPCs or critters.' +
+      'Fight hostile enemies: picks the best weapon, closes in for melee or keeps 8-15 tiles for ranged/magic, and does not trade hits — when an enemy is about to touch you (from its hitbox and velocity) it backs off or jumps, never into a hole or lava, still swinging/shooting (melee becomes hit-and-run). target: an entity id from get_entities, "nearest", "boss" (the nearest living boss, even off screen) or "all" = every visible hostile within radius, nearest first, until none remain (one call clears a group). Below retreat_below of max life with no healing potion available (quick-heal reflex handles the rest) it stops attacking, runs away for up to 3 s and fails with reason "low life". When it finishes, wait_for_task\'s report.result is {killed, kills: [names], damageTaken, durationS, dodges, retreated, potionsUsed, ammoLeft?}. Never targets town NPCs or critters.' +
+      " BOSS FIGHTS (the target is a boss, e.g. target \"boss\"): it never pathfinds and never leaves the arena; with a ranged weapon it kites back and forth across the arena (turning near the ends) shooting with lead aim, and dodges dashes sideways, by jumping, or by dropping through the platform underfoot; minions about to reach you are shot first (kill_minions, default true), then back to the boss. A boss that leaves the screen stays the target (kiting continues, shooting resumes when it is back). Ends with killed, or fails with \"boss fled\" when it despawns alive (e.g. the Eye of Cthulhu at dawn). Boss results add {boss, bossKilled, bossLifeLeftPct (when not killed)}; progress shows boss life %, ammo, potions and dodges. Before a boss: build an arena first (build_platforms: 2-3 rows of platforms 60-100 tiles long, spacing ~5 so you can jump between rows), stand on it, carry a bow + plenty of arrows and healing potions, then attack with heal_below ~0.5 and retreat_below 0 (running away from a flying boss doesn't help). Use wait_for_task with a long timeout (fights take minutes) and check get_state between waits. get_boss_info has summon/strategy facts." +
       STARTS_TASK,
     shape: {
       target: z
-        .union([int(), z.literal("nearest"), z.literal("all")])
-        .describe('Entity id of a hostile enemy, "nearest", or "all" (clear every visible hostile within radius)'),
+        .union([int(), z.literal("nearest"), z.literal("boss"), z.literal("all")])
+        .describe('Entity id of a hostile enemy, "nearest", "boss" (nearest living boss) or "all" (clear every visible hostile within radius)'),
       radius: z.number().min(1).max(40).optional().describe('For target "all": search radius in tiles, default 25'),
       retreat_below: z
         .number()
@@ -306,6 +307,17 @@ const TOOLS: ToolDef[] = [
         .lt(1)
         .optional()
         .describe("Retreat (and fail with 'low life') below this life fraction when no healing is available; default 0.3, 0 = never"),
+      heal_below: z
+        .number()
+        .min(0)
+        .lt(1)
+        .optional()
+        .describe("Quick-heal below this life fraction while this attack runs (only raises the set_reflexes threshold), e.g. 0.5 for a boss"),
+      arena: z
+        .object({ x1: tileX(), x2: tileX() })
+        .optional()
+        .describe("Boss fights: the tile columns to stay within (6-400 wide). Default: the walkable ground/platform span around you, up to 50 tiles each way"),
+      kill_minions: z.boolean().optional().describe("Boss fights: shoot minions about to reach you first (default true)"),
     },
   },
   {
@@ -439,6 +451,16 @@ const TOOLS: ToolDef[] = [
       collect_pots: z.boolean().optional().describe("Break pots seen on the way (within 12 tiles), default false"),
       torches: z.boolean().optional().describe("Place torches in the dark, default true"),
     },
+  },
+  // Bosses
+  {
+    name: "get_boss_info",
+    description:
+      "Short static facts for preparing a boss fight (Classic mode, 1.4.4), currently Eye of Cthulhu and King Slime only: {bosses: [{key, name, defeated (this world), summon, recipe, summonWhen, naturalSpawn, leaves, stats, tips}], isNight}. Omit boss for all. Use before summoning: craft the summon item (craft with_intermediates), build an arena (build_platforms), then attack target \"boss\".",
+    shape: {
+      boss: z.string().min(1).optional().describe('"Eye of Cthulhu", "eoc", "King Slime", ...; omit for all'),
+    },
+    readOnly: true,
   },
 ];
 
