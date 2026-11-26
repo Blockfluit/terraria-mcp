@@ -18,6 +18,16 @@ public static class Valuables
 {
     // Vanilla TileID values.
     public const int Heart = 12, DemonAltar = 26, Pots = 28, ShadowOrbs = 31, LargePiles2 = 187, LifeFruit = 236;
+    public const int Stalactite = 165, SmallPiles = 185, LargePiles = 186, DyePlants = 227;
+
+    /// <summary>
+    /// World-generated decoration (rock/bone piles, stalactites, dye plants like the Teal Mushroom): never the user's
+    /// build, vanilla players break it freely, so Protection doesn't protect it by type (location rules still apply).
+    /// The Enchanted Sword shrine's sword is loot, not decor. Seen in game: a rock pile and a Teal Mushroom blocked
+    /// build_house's door spot as "protected furniture".
+    /// </summary>
+    public static bool IsNaturalDecor(int type, int frameX) =>
+        type is Stalactite or SmallPiles or LargePiles or DyePlants || (type == LargePiles2 && !IsSwordInStone(type, frameX));
 
     /// <summary>LargePiles2 style (frameX / 54) of the sword in stone that drops the Enchanted Sword.</summary>
     public const int SwordStyle = 17;

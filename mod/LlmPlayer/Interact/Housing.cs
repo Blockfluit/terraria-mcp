@@ -1,3 +1,4 @@
+using LlmPlayer.Core.Observe;
 using System.Reflection;
 using LlmPlayer.Core.Build;
 using LlmPlayer.Core.Npc;
@@ -187,6 +188,7 @@ public static class Housing
             if (TileClass.IsTree(type)) return new SiteCell(SiteTile.Tree, wall);
             if (Main.tileCut[type]) return Liquidish(t, wall);
             if (TileID.Sets.Platforms[type]) return new SiteCell(SiteTile.Platform, wall);
+            if (Valuables.IsNaturalDecor(type, t.TileFrameX) && !Protection.IsProtectedArea(x, y)) return new SiteCell(SiteTile.Decor, wall);
             if (Main.tileFrameImportant[type] || TileClass.IsProtectedType(type)) return new SiteCell(SiteTile.Object, wall);
             if (Main.tileSolid[type]) return new SiteCell(Main.tileSolidTop[type] ? SiteTile.Platform : SiteTile.Solid, wall);
             return new SiteCell(SiteTile.Object, wall);

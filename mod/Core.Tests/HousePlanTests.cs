@@ -160,6 +160,21 @@ public class HousePlanTests
     }
 
     [Fact]
+    public void SiteCheck_DecorInDoorSpotAndInside_IsClearedFirst()
+    {
+        // Seen in game: a rock pile in the door spot and a Teal Mushroom inside blocked the house.
+        var l = new HouseLayout(10, 20, 10, 6, DoorSide.Left);
+        var door = l.DoorTiles.First();
+        var inside = new TilePoint(14, 19);
+        var c = HouseSite.Check(l, Flat(20, new() { [door] = new SiteCell(SiteTile.Decor), [inside] = new SiteCell(SiteTile.Decor) }), strict: true);
+        Assert.True(c.Ok, c.Problem);
+        Assert.NotNull(c.ClearFirst);
+        Assert.Contains(door, c.ClearFirst!);
+        Assert.Contains(inside, c.ClearFirst!);
+        Assert.Contains(inside, c.WallsToPlace);
+    }
+
+    [Fact]
     public void SiteCheck_TreeInsideOrNaturalWall_IsAProblem()
     {
         var l = new HouseLayout(10, 20, 10, 6, DoorSide.Left);

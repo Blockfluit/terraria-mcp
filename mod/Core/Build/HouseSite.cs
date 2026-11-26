@@ -19,6 +19,8 @@ public enum SiteTile
     Unknown,
     /// <summary>Inside (or bounding) a town NPC's house: never built on.</summary>
     NpcHouse,
+    /// <summary>Natural decoration (rock pile, dye plant…): broken first, then treated as empty.</summary>
+    Decor,
 }
 
 /// <summary>Background wall at a tile: none, a house wall (player-placed, counts for housing), or another wall
@@ -31,7 +33,9 @@ public readonly record struct SiteCell(SiteTile Tile, WallState Wall = WallState
 }
 
 /// <summary>Result of checking a site: what is already there and what remains to be placed.</summary>
-public sealed record SiteCheck(string? Problem, HashSet<TilePoint> FrameToPlace, HashSet<TilePoint> WallsToPlace, bool CanExit)
+/// <param name="ClearFirst">Natural decoration in the way, to break before building.</param>
+public sealed record SiteCheck(string? Problem, HashSet<TilePoint> FrameToPlace, HashSet<TilePoint> WallsToPlace, bool CanExit,
+    HashSet<TilePoint>? ClearFirst = null)
 {
     public bool Ok => Problem == null;
 }
@@ -50,8 +54,17 @@ public sealed record SiteCheck(string? Problem, HashSet<TilePoint> FrameToPlace,
 /// </summary>
 public static class HouseSite
 {
-    public static SiteCheck Check(HouseLayout l, Func<int, int, SiteCell> cell, bool strict)
+    public static SiteCheck Check(HouseLayout l, Func<int, int, SiteCell> rawCell, bool strict)
     {
+        // Decoration is broken first, so for every rule below it counts as empty air (its wall state kept).
+        var clear = new HashSet<TilePoint>();
+        SiteCell cell(int x, int y)
+        {
+            var c = rawCell(x, y);
+            if (c.Tile != SiteTile.Decor) return c;
+            clear.Add(new TilePoint(x, y));
+            return c with { Tile = SiteTile.Air };
+        }
         var frame = new HashSet<TilePoint>();
         var walls = new HashSet<TilePoint>();
         string? problem = null;
@@ -82,9 +95,9 @@ public static class HouseSite
             if (c.Wall == WallState.None) walls.Add(t);
         }
 
-        bool canExit = ExitClear(l, cell);
+        bool canExit = ExitClear(l, (x, y) => cell(x, y));
         if (strict && !canExit) problem ??= $"no room to stand outside the door at {l.OutsideStand}";
-        return new SiteCheck(problem, frame, walls, canExit);
+        return new SiteCheck(problem, frame, walls, canExit, clear);
     }
 
     /// <summary>Can the player stand just outside the door (2×3 body empty, ground under it)?</summary>

@@ -106,7 +106,7 @@ public static class HousingCommands
                 throw new CommandError(ErrorCodes.MissingItem, $"still short after crafting ({Describe(crafted)}): " +
                     (after.Ok ? string.Join(", ", after.Crafts.Select(c => $"{c.Item} x{c.Times}")) : after.MissingText()));
 
-            var task = new BuildHouseTask(layout, steps, site.CanExit);
+            var task = new BuildHouseTask(layout, steps, site.CanExit, site.ClearFirst?.ToList());
             TaskHost.Start(task);
             return new
             {

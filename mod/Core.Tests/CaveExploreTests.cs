@@ -318,4 +318,14 @@ public class ValuablesTests
         Assert.False(Valuables.IsCollectible(ValuableKind.Altar));
         Assert.False(Valuables.IsCollectible(ValuableKind.Chest));
     }
+
+    [Theory]
+    [InlineData(185, 0, true)]   // small pile
+    [InlineData(186, 0, true)]   // large pile
+    [InlineData(187, 0, true)]   // large pile 2
+    [InlineData(187, 17 * 54, false)] // the Enchanted Sword in stone is loot, not decor
+    [InlineData(227, 0, true)]   // dye plant (Teal Mushroom)
+    [InlineData(21, 0, false)]   // chest
+    public void NaturalDecor(int type, int frameX, bool expected) =>
+        Assert.Equal(expected, LlmPlayer.Core.Observe.Valuables.IsNaturalDecor(type, frameX));
 }

@@ -62,8 +62,12 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         _verdict?.Valid ?? false, _verdict is { Valid: false } v ? v.Message : null, new Dictionary<string, int>(_placed),
         _skips.Count, _skips.ByReason, _exited, _verdict);
 
-    public BuildHouseTask(HouseLayout layout, List<HouseStep> steps, bool canExit)
+    private MineTask? _clear;
+
+    /// <param name="clearFirst">Natural decoration in the plot (rock piles, dye plants) to break before building.</param>
+    public BuildHouseTask(HouseLayout layout, List<HouseStep> steps, bool canExit, List<TilePoint>? clearFirst = null)
     {
+        if (clearFirst is { Count: > 0 }) _clear = new MineTask(clearFirst, "build_house");
         _l = layout;
         _steps = steps;
         _canExit = canExit;
@@ -74,6 +78,15 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
     {
         var p = ctx.Player;
         if (p.noBuilding) return Finish(ctx, GameTaskStatus.Failed, "building isn't possible here (noBuilding)");
+        if (_clear != null)
+        {
+            var cs = _clear.Tick(ctx);
+            Progress = $"clearing decoration from the plot ({_clear.Progress})";
+            if (cs == GameTaskStatus.Running) return GameTaskStatus.Running;
+            string? why = _clear.Reason;
+            _clear = null;
+            if (cs == GameTaskStatus.Failed) return Finish(ctx, GameTaskStatus.Failed, $"couldn't clear the plot: {why}");
+        }
         return _phase switch
         {
             Phase.Build => TickBuild(ctx, p),
@@ -260,6 +273,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
 
     public void OnCancel(GameCtx ctx)
     {
+        _clear?.OnCancel(ctx);
         _move?.OnCancel(ctx);
         _move = null;
         ControlState.Pending = default;

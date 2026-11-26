@@ -58,7 +58,8 @@ public static class TileClass
     /// <summary><see cref="IsProtectedType"/> with the frame: also lets the sword in stone of an Enchanted Sword
     /// shrine be broken (<see cref="Valuables.IsBreakableLoot"/>).</summary>
     public static bool IsProtectedTile(Tile tile) =>
-        IsProtectedType(tile.TileType) && !Valuables.IsBreakableLoot(tile.TileType, tile.TileFrameX);
+        IsProtectedType(tile.TileType) && !Valuables.IsBreakableLoot(tile.TileType, tile.TileFrameX)
+        && !Valuables.IsNaturalDecor(tile.TileType, tile.TileFrameX);
 
     /// <summary>Which cave valuable the tile is (<see cref="Valuables.Classify"/>), or null.</summary>
     public static ValuableKind? Valuable(Tile tile) =>
