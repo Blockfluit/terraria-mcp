@@ -85,6 +85,21 @@ describe("registerTools", () => {
     expect(JSON.parse(res.content[0].text)).toEqual({ started: "move_to" });
   });
 
+  it("explore forwards allow_dig/torches and describes digging, torches and the result", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "explore" }));
+    const client = await setup(conn);
+    const res = await call(client, "explore", { direction: "down", distance: 25, allow_dig: true, torches: false });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([
+      { method: "explore", params: { direction: "down", distance: 25, allow_dig: true, torches: false } },
+    ]);
+    const tool = (await client.listTools()).tools.find((t) => t.name === "explore");
+    for (const word of ["shaft", "tunnel", "torch", "lava", "pick power", "too dark: no torches", "torchesPlaced", "stoppedBecause"])
+      expect(tool?.description).toContain(word);
+    const props = (tool?.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props).sort()).toEqual(["allow_dig", "direction", "distance", "torches"]);
+  });
+
   it("user_has_control becomes isError with toggle-key hint text", async () => {
     const conn = new FakeConn(() => {
       throw new ModError("user_has_control", "the user is driving");

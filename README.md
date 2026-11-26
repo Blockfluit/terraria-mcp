@@ -27,6 +27,13 @@ mod/LlmPlayer tModLoader mod inside Terraria
   drops through platforms, swims, digs with your best pickaxe, and places platforms to cross gaps
   or climb out of shafts. The route-following code is tested against a physics simulation of
   vanilla movement.
+- **Explore and dig.** `explore` walks toward the farthest visible ground in a direction. When there's
+  nothing visible to walk to, it digs with your best pickaxe: a 2-wide shaft straight down (you drop as the floor
+  goes, and `move_to` climbs back out with platforms) or a 3-tall tunnel left or right. It only digs tiles it can
+  see. It stops with a reason before lava or water next to the hole, protected tiles, tiles too hard for your
+  pickaxe, or a drop longer than a safe fall. In the dark it places torches from your inventory, like you would:
+  it lights a tile it needs to see, and it places a torch every ~10 tiles underground. The result reports tiles
+  covered, tiles dug, torches placed and why it stopped. `allow_dig` and `torches` turn each part off.
 - **Gather, build, fight.** It can mine, chop trees, pick up items, place, craft (only with real
   ingredients and stations), equip, use items, attack, and talk to NPCs.
 - **Fight without trading hits.** `attack` predicts when an enemy is about to touch the player (from its hitbox

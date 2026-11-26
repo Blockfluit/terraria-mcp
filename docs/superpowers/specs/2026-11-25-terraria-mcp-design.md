@@ -196,7 +196,7 @@ Observation
 - `list_recipes(craftable_only=true)` — given current inventory and nearby stations.
 
 Actions (start tasks unless noted)
-- `move_to(x, y | entity_id, allow_dig=true)`, `explore(direction, distance)`
+- `move_to(x, y | entity_id, allow_dig=true)`, `explore(direction, distance, allow_dig=true, torches=true)` (walks; digs a shaft/tunnel and places torches when there is no visible ground ahead)
 - `mine(x, y)`, `mine_area(x1,y1,x2,y2)`, `chop_tree(x, y | nearest)`
 - `place(item, x, y)`
 - `attack(entity_id | "nearest")` — picks a suitable weapon, aims, keeps distance for ranged

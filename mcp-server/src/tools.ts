@@ -116,7 +116,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_task",
     description:
-      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress, result?} (result only for tasks that return data, e.g. talk_to_npc, attack). Use wait_for_task to block instead of polling.",
+      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress, result?} (result only for tasks that return data, e.g. talk_to_npc, attack, explore). Use wait_for_task to block instead of polling.",
     readOnly: true,
   },
   {
@@ -146,11 +146,18 @@ const TOOLS: ToolDef[] = [
   {
     name: "explore",
     description:
-      "Travel roughly `distance` tiles in a direction toward the farthest reachable visible ground, revealing the map as it goes. Good for finding ores, trees and caves." +
+      "Travel roughly `distance` tiles in a direction, revealing the map as it goes. Good for finding ores, trees and caves. " +
+      "Walks toward the farthest visible ground; when there is none (e.g. solid ground below or a wall ahead) and allow_dig is on, it digs with your best pickaxe: " +
+      "down = a 2-wide shaft under you (you drop as the floor goes; move_to climbs back out with platforms), left/right = a 3-tall tunnel. Digging up isn't supported. " +
+      "It only digs tiles it can see and stops with a reason before lava/water next to the hole, protected tiles, tiles too hard for the pickaxe (\"needs pick power N at (x,y)\") or an unsafe drop. " +
+      "Dark tiles: it places a torch from your inventory and looks again (\"too dark: no torches\" without any); with torches on it also lights dark spots underground about every 10 tiles. " +
+      "Progress shows walking/digging; result: {covered, dug, torchesPlaced, stoppedBecause?}." +
       STARTS_TASK,
     shape: {
       direction: z.enum(["left", "right", "down", "up"]),
       distance: int().min(1).optional().describe("Tiles to cover, default 50"),
+      allow_dig: z.boolean().optional().describe("Dig when there is no visible ground to walk to, default true"),
+      torches: z.boolean().optional().describe("Place torches from the inventory in the dark, default true"),
     },
   },
 
