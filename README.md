@@ -98,7 +98,7 @@ In game: *Workshop → Manage Mods → LLM Player → Config*.
 | BindAddress | 0.0.0.0 | Use `127.0.0.1` if your MCP client runs on Windows or WSL uses mirrored networking |
 | ProtectSpawnRadius | 20 | Blocks within this many tiles of spawn are never broken |
 | BackupKeep | 5 | How many save backups to keep |
-| AutoDefend | on | Reflex: attack hostiles in reach while idle or moving |
+| AutoDefend | on | Reflex: attack hostiles in reach (or that just hit you) while idle, moving, gathering, placing or picking up; the task pauses and resumes after the fight (not during `attack`) |
 | QuickHealThreshold | 0.35 | Reflex: quick-heal below this fraction of max life |
 | PauseWhenIdle | off | Singleplayer only: pause while the AI is driving but has no task |
 | ShowPathOverlay | on | Draw the planned path in game |

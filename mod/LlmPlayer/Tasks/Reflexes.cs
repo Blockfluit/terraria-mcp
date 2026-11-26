@@ -16,11 +16,16 @@ namespace LlmPlayer.Tasks;
 /// <list type="number">
 /// <item>Quick-heal: any time, no controls involved — calls <see cref="Player.QuickHeal"/> (the quick-heal hotkey's
 /// action, same potion/sickness rules) below <c>QuickHealThreshold</c>.</item>
-/// <item>Auto-defend: while idle, waiting, or in a move/explore task, and a visible hostile is within the best
-/// weapon's reach. <see cref="Tick"/> then returns true: reflexes own <see cref="ControlState.Pending"/> this tick
-/// and TaskHost does not tick the task (it is paused, not cancelled, and resumes ~1/3 s after the last threat).
-/// The defender stands its ground, aims and swings/shoots; the previously held item comes back afterwards.</item>
-/// <item>Any other task (attack, mine, place, …) keeps the controls.</item>
+/// <item>Auto-defend: while idle, waiting, or in a task it may pause (<see cref="TaskPhases"/>: move_to, explore,
+/// talk_to_npc, chop_tree, mine, mine_area, pick_up_items, place, use_item until it presses "use"), and a visible
+/// hostile is within the best weapon's reach (or just touched the player and is one tile beyond it,
+/// <see cref="ThreatRules"/>). <see cref="Tick"/> then returns true: reflexes own <see cref="ControlState.Pending"/>
+/// this tick and TaskHost does not tick the task (it is paused, not cancelled, and resumes ~1/3 s after the last
+/// threat, once the defender's swing has ended). The defender stands its ground, aims and swings/shoots; it switches
+/// to its weapon only after a tool swing in progress ends (<see cref="HeldItemLease.Hold"/> waits; meanwhile "use" is
+/// released, so the swing does end). The previously held item comes back (<see cref="EndDefense"/>) before the task
+/// ticks again, so a task lease that swapped a main-inventory tool into the hotbar finds it where it left it.</item>
+/// <item>attack (and a use_item that already pressed "use") keeps the controls.</item>
 /// </list>
 /// Each firing emits <c>reflex {kind, …}</c> and is noted in get_state's recent events. Main thread only.
 /// </summary>
@@ -38,13 +43,8 @@ public static class Reflexes
     /// <summary>True while auto-defend owns the controls.</summary>
     public static bool Defending => Arbiter.Defending;
 
-    /// <summary>Tasks auto-defend may pause; <see cref="WaitTask"/> counts as idle.</summary>
-    public static TaskPhase PhaseOf(IGameTask<GameCtx>? task) => task switch
-    {
-        null or WaitTask => TaskPhase.Idle,
-        MoveToTask or ExploreTask => TaskPhase.Defendable,
-        _ => TaskPhase.Busy,
-    };
+    /// <summary>Which tasks auto-defend may pause: Core's <see cref="TaskPhases"/> (by task name).</summary>
+    public static TaskPhase PhaseOf(IGameTask<GameCtx>? task) => TaskPhases.Of(task);
 
     /// <summary>Run the reflexes for this tick. Returns true when they own the controls (skip the task).</summary>
     public static bool Tick(Player p, IGameTask<GameCtx>? task)
@@ -66,7 +66,7 @@ public static class Reflexes
         bool low = p.statLife > 0 && p.statLife < cfg.QuickHealThreshold * p.statLifeMax2;
         var d = Arbiter.Tick(new ReflexInputs(phase, cfg.AutoDefend, threat != null, p.statLife, p.statLifeMax2,
             cfg.QuickHealThreshold, p.HasBuff(BuffID.PotionSickness) || p.potionDelay > 0,
-            low && p.QuickHeal_GetItemToUse() != null));
+            low && p.QuickHeal_GetItemToUse() != null, UsingItem: p.itemAnimation > 0 || p.itemTime > 0));
 
         if (d.QuickHeal) QuickHeal(p);
         if (d.DefendEnded) EndDefense(p);

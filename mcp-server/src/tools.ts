@@ -250,7 +250,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "set_reflexes",
     description:
-      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach while idle or moving), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think). Omitted fields keep their value; returns the current settings." +
+      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think). Omitted fields keep their value; returns the current settings." +
       INSTANT_ACTION,
     shape: {
       auto_defend: z.boolean().optional(),

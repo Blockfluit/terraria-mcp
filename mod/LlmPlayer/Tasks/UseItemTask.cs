@@ -1,4 +1,5 @@
 using LlmPlayer.Control;
+using LlmPlayer.Core.Combat;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Nav;
 using LlmPlayer.Core.Tasks;
@@ -17,9 +18,11 @@ namespace LlmPlayer.Tasks;
 /// cooldowns; nothing here bypasses it.</item>
 /// <item>The aim (a tile) is applied every tick, during the press and the whole animation, so a swing never follows
 /// the real mouse. Without an explicit target the aim is two tiles in front of the player.</item>
+/// <item>Auto-defend may pause it only while it waits to switch items; from the first press on it is
+/// <see cref="Uninterruptible"/> (pausing then could repeat the use, or move the aim mid-animation).</item>
 /// </list>
 /// </summary>
-public sealed class UseItemTask : IGameTask<GameCtx>
+public sealed class UseItemTask : IGameTask<GameCtx>, IUninterruptibleTask
 {
     public const int StartTimeoutTicks = 60, MaxAnimationTicks = 600, HoldTimeoutTicks = 300;
 
@@ -34,6 +37,9 @@ public sealed class UseItemTask : IGameTask<GameCtx>
     public string Name => "use_item";
     public string? Reason { get; private set; }
     public string? Progress { get; private set; }
+
+    /// <summary>"Use" was pressed: keep the controls until the use is over.</summary>
+    public bool Uninterruptible => _pressTicks > 0 || _started;
 
     public UseItemTask(Player p, int slot, TilePoint? aim)
     {
