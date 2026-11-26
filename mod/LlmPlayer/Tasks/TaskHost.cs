@@ -87,11 +87,44 @@ public sealed class TaskHost : ModSystem
         if (ControlState.Driver != Driver.Ai) return;
         bool reflexOwnsControls = Reflexes.Tick(p, Runner.CurrentTask);
         if (!reflexOwnsControls && !Runner.IsIdle) Runner.Tick(GameCtx.ForLocalPlayer());
+        CheckStalled(p, reflexOwnsControls);
         if (Runner.IsIdle && !reflexOwnsControls)
         {
             ControlState.Pending = default;
             PathOverlayState.Clear();
         }
+    }
+
+    private static readonly StallWatchdog Watchdog = new();
+
+    /// <summary>
+    /// Stop a task that has made no progress for 20 s (<see cref="StallWatchdog"/>): no new progress message, no new
+    /// tile stood on, no inventory change. wait is exempt. The report's reason starts with "stuck:".
+    /// </summary>
+    private static void CheckStalled(Player p, bool paused)
+    {
+        if (Runner.CurrentTask is not { } task || task is WaitTask)
+        {
+            Watchdog.Reset();
+            return;
+        }
+        var (x, y) = StateReader.StandingTile(p);
+        if (!Watchdog.Tick(task, task.Progress, x, y, InventorySignature(p), paused)) return;
+        string at = task.Progress is { } pr ? $" (at \"{pr}\")" : "";
+        LlmPlayerMod.Log($"watchdog: {task.Name} stuck{at}");
+        Cancel($"stuck: no progress for {Watchdog.IdleSeconds} s{at}; try another approach or target");
+        Watchdog.Reset();
+    }
+
+    private static long InventorySignature(Player p)
+    {
+        long h = 17;
+        for (int i = 0; i < 58; i++)
+        {
+            var it = p.inventory[i];
+            h = h * 31 + (it.IsAir ? 0 : it.type * 1000L + it.stack);
+        }
+        return h;
     }
 
     private static void OnDriverChanged(Driver d, string reason)
