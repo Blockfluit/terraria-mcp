@@ -22,6 +22,27 @@ public static class ObserveCommands
     {
         CommandRouter.Register("get_state", _ => StateReader.Read(), isAction: false);
 
+        // Open or close a door in interaction reach, like a right-click (vanilla WorldGen.OpenDoor/CloseDoor path).
+        CommandRouter.Register("door", p =>
+        {
+            int x = Params.Int(p, "x"), y = Params.Int(p, "y");
+            string action = (Params.Has(p, "action") ? p.GetProperty("action").GetString() : "close")?.Trim().ToLowerInvariant() ?? "close";
+            var player = Main.LocalPlayer;
+            if (!WorldGen.InWorld(x, y) || !Visibility.IsTileVisible(x, y)) throw new CommandError(ErrorCodes.NotVisible, $"({x},{y}) is not visible");
+            if (!TileClass.IsDoor(Main.tile[x, y].TileType) || !Main.tile[x, y].HasTile)
+                throw new CommandError(ErrorCodes.BadParams, $"no door at ({x},{y}) (inspect shows what is there)");
+            if (!LlmPlayer.Interact.DoorActions.InReach(player, x, y))
+                throw new CommandError(ErrorCodes.BadParams, $"door at ({x},{y}) is out of reach: move_to next to it first");
+            bool ok = action switch
+            {
+                "open" => LlmPlayer.Interact.DoorActions.TryOpen(player, x, y),
+                "close" => LlmPlayer.Interact.DoorActions.TryClose(player, x, y),
+                _ => throw new CommandError(ErrorCodes.BadParams, "action must be open or close"),
+            };
+            return new { Door = new { X = x, Y = y }, Action = action, Done = ok,
+                Note = ok ? null : (action == "close" ? "it didn't close (already closed, or something stands in the doorway)" : "it didn't open (already open, locked or blocked)") };
+        }, isAction: true);
+
         // What exactly is on one visible tile: get_map draws small objects (saplings, rocks, herbs) as air.
         CommandRouter.Register("inspect", p =>
         {

@@ -95,6 +95,14 @@ const TOOLS: ToolDef[] = [
     readOnly: true,
   },
   {
+    name: "door",
+    description:
+      "Open or close a door within interaction reach (like a right-click): {x, y, action: 'open'|'close' (default close)}. Close the door of a house to keep zombies out at night; move_to already opens and closes doors it walks through." +
+      COORDS +
+      INSTANT_ACTION,
+    shape: { x: tileX(), y: tileY(), action: z.enum(["open", "close"]).optional() },
+  },
+  {
     name: "inspect",
     description:
       "What exactly is on one visible tile: {tile (name or null), solid, cuttable (grass/plants placing replaces), wall, liquid, protected, pickPower}. get_map draws small objects (saplings, rocks, herbs) as '.'; use this when a build or placement says a spot isn't empty." +

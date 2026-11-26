@@ -54,7 +54,7 @@ describe("registerTools", () => {
         "build_platforms", "unequip", "buy", "mine_vein",
         "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
         "collect", "loot_chest", "explore_caves",
-        "get_boss_info", "inspect",
+        "get_boss_info", "inspect", "door",
         "build_house", "check_housing",
       ].sort(),
     );
