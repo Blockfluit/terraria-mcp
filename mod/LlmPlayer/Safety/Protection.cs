@@ -1,3 +1,4 @@
+using LlmPlayer.Core.Grid;
 using LlmPlayer.Bridge;
 using LlmPlayer.Config;
 using LlmPlayer.Observe;
@@ -27,6 +28,7 @@ public static class Protection
         if (!WorldGen.InWorld(x, y)) return true;
         var tile = Main.tile[x, y];
         if (tile.HasTile && TileClass.IsProtectedType(tile.TileType)) return true;
+        if (SupportRules.SupportsProtectedObject(IsProtectedObject, x, y)) return true;
         return IsProtectedArea(x, y);
     }
 
@@ -78,6 +80,9 @@ public static class Protection
         Rooms.Clear();
         _ticksUntilRefresh = 0; // refresh on the first in-world tick
     }
+
+    private static bool IsProtectedObject(int x, int y) =>
+        WorldGen.InWorld(x, y) && Main.tile[x, y].HasTile && TileClass.IsProtectedType(Main.tile[x, y].TileType);
 }
 
 public sealed class ProtectionSystem : ModSystem

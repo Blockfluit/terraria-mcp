@@ -24,6 +24,9 @@ public sealed class BridgeSystem : ModSystem
 
     public override void OnModLoad()
     {
+        // Single player skips most of Main.DoUpdate while the window is unfocused (unless the AI drives), so
+        // PostUpdateInput never runs: drain here too, so requests are answered while the user plays in another window.
+        Terraria.On_Main.DoUpdate += DrainThenUpdate;
         _log = msg => Mod.Logger.Info(msg);
         CommandRouter.RegisterAll(_log);
         EnsureServer();
@@ -33,6 +36,7 @@ public sealed class BridgeSystem : ModSystem
 
     public override void Unload()
     {
+        Terraria.On_Main.DoUpdate -= DrainThenUpdate;
         _server?.Stop();
         _server = null;
         Tick = null;
@@ -77,6 +81,12 @@ public sealed class BridgeSystem : ModSystem
         {
             _log($"[bridge] could not listen on {cfg.BindAddress}:{cfg.Port}: {e.Message}");
         }
+    }
+
+    private static void DrainThenUpdate(Terraria.On_Main.orig_DoUpdate orig, Terraria.Main self, ref Microsoft.Xna.Framework.GameTime gameTime)
+    {
+        Drain();
+        orig(self, ref gameTime);
     }
 
     private static void Drain()

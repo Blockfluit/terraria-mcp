@@ -39,6 +39,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private PlanJob? _job;
     private PathFollower? _follower;
     private bool _partial, _pathCrossesUnknown;
+    private readonly ProgressGuard _progress = new(maxStalls: 3);
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
     private string? _lastFailure;
 
@@ -104,6 +105,8 @@ public sealed class MoveToTask : IGameTask<GameCtx>
             case FollowerStatus.Arrived:
                 _failures = 0;
                 DropFollower();
+                if (_partial && _progress.RecordArrival(Chebyshev(here, _goal)))
+                    return Finish(ctx, GameTaskStatus.Failed, $"unreachable: no progress toward {_goal}");
                 if (_partial || Chebyshev(here, _goal) > _tolerance) StartPlan(p, here);
                 ControlState.Pending = default;
                 return GameTaskStatus.Running;

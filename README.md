@@ -82,7 +82,8 @@ about tModLoader listening on port 7878. Allow it on private networks.
    the screen.
 3. Ask your MCP client to play, for example: *"Gather wood, make a workbench and wooden tools, then
    find some copper."*
-4. Press any key or click to take control back.
+4. Press any key or click to take control back. Clicking into the Terraria window, or Alt+Tabbing to it,
+   also counts, so leave the window alone while the AI plays.
 
 A good loop for the LLM is `get_state` → `get_map` → an action → `wait_for_task`.
 

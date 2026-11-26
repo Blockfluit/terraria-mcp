@@ -110,17 +110,26 @@ public static class CombatKit
     /// sentries (they don't attack the chosen target), and anything shooting explosives (they can break the user's
     /// tiles).
     /// </summary>
-    public static bool IsWeapon(Item it)
-    {
-        if (it.IsAir || it.damage <= 0 || it.useStyle == ItemUseStyleID.None || it.ammo > 0) return false;
-        if (it.createTile >= 0 || it.createWall >= 0 || it.fishingPole > 0 || it.healLife > 0 || it.potion) return false;
-        if (it.sentry || (it.CountsAsClass(DamageClass.Summon) && !IsWhip(it))) return false;
-        return !IsExplosive(it.shoot);
-    }
+    public static bool IsWeapon(Item it) => !it.IsAir && ItemRules.IsWeapon(Traits(it));
+
+    /// <summary>Map an item to the game-independent traits Core's <see cref="ItemRules"/> decides on.</summary>
+    public static ItemTraits Traits(Item it) => new(
+        Damage: it.damage,
+        NoUseStyle: it.useStyle == ItemUseStyleID.None,
+        IsAmmo: it.ammo > 0,
+        Places: it.createTile >= 0 || it.createWall >= 0,
+        FishingPole: it.fishingPole > 0,
+        Heals: it.healLife > 0 || it.potion,
+        IsSentry: it.sentry,
+        IsSummonNonWhip: it.CountsAsClass(DamageClass.Summon) && !IsWhip(it),
+        ShootsExplosive: IsExplosive(it.shoot),
+        Pick: it.pick,
+        Axe: it.axe,
+        Hammer: it.hammer);
 
     private static bool IsWhip(Item it) => it.shoot > 0 && it.shoot < ProjectileID.Sets.IsAWhip.Length && ProjectileID.Sets.IsAWhip[it.shoot];
 
-    private static bool IsExplosive(int projType)
+    public static bool IsExplosive(int projType)
     {
         if (projType <= 0) return false;
         if (projType < ProjectileID.Sets.Explosive.Length && ProjectileID.Sets.Explosive[projType]) return true;
