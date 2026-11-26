@@ -18,8 +18,10 @@ public sealed class RecentEventsPlayer : ModPlayer
 {
     public override void OnEnterWorld() => RecentEvents.Log.Clear();
 
-    /// <summary>One call per hit: feeds both get_state's recent events and the <c>took_damage</c> wire event.</summary>
-    public override void OnHurt(Player.HurtInfo info)
+    /// <summary>One call per hit: feeds both get_state's recent events and the <c>took_damage</c> wire event.
+    /// PostHurt, not OnHurt: OnHurt runs before vanilla subtracts the damage, so it reported the life before the
+    /// hit (a 10-damage hit at full life read "100/100 life").</summary>
+    public override void PostHurt(Player.HurtInfo info)
     {
         if (Player.whoAmI != Main.myPlayer) return;
         string source = DescribeSource(info.DamageSource);

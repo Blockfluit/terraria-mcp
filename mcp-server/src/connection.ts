@@ -1,4 +1,5 @@
 import net from "node:net";
+import { compactEvents } from "./events.js";
 
 export class ModError extends Error {
   constructor(
@@ -21,7 +22,8 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
-const MAX_BUFFERED_EVENTS = 100;
+/** Raw events kept between two drains (compactEvents shrinks them for the LLM). */
+const MAX_BUFFERED_EVENTS = 1000;
 
 /**
  * Newline-delimited JSON client for the LlmPlayer mod. Connects lazily on the
@@ -58,8 +60,9 @@ export class ModConnection {
     });
   }
 
+  /** Events since the last drain, compacted for the LLM (see compactEvents). */
   drainEvents(): ModEvent[] {
-    return this.events.splice(0);
+    return compactEvents(this.events.splice(0));
   }
 
   close(): void {
