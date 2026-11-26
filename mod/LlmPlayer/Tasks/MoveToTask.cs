@@ -39,6 +39,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private PlanJob? _job;
     private PathFollower? _follower;
     private bool _partial, _pathCrossesUnknown;
+    private TilePoint? _resolvedGoal;
     private readonly ProgressGuard _progress = new(maxStalls: 3);
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
     private string? _lastFailure;
@@ -105,7 +106,13 @@ public sealed class MoveToTask : IGameTask<GameCtx>
             case FollowerStatus.Arrived:
                 _failures = 0;
                 DropFollower();
-                if (_partial && _progress.RecordArrival(Chebyshev(here, _goal)))
+                // A complete plan whose goal was snapped (the requested tile wasn't standable) ends within tolerance
+                // of the snapped goal, maybe 2-4 tiles from _goal: that's as close as the body can get, so done.
+                // Without this the task replanned the same path forever ("2 tiles remaining").
+                if (!_partial && _resolvedGoal is { } rg && Chebyshev(here, rg) <= _tolerance && k.OnGround)
+                    return Finish(ctx, GameTaskStatus.Succeeded, null);
+                // Any plan (partial or not) that keeps ending no closer to the goal: give up instead of looping.
+                if (_progress.RecordArrival(Chebyshev(here, _goal)))
                     return Finish(ctx, GameTaskStatus.Failed, $"unreachable: no progress toward {_goal}");
                 if (_partial || Chebyshev(here, _goal) > _tolerance) StartPlan(p, here);
                 ControlState.Pending = default;
@@ -156,6 +163,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
             return GameTaskStatus.Running;
         }
         _partial = job.IsPartial;
+        _resolvedGoal = r.ResolvedGoal;
         _follower = new PathFollower(r.Steps, start: job.Start, physics: ProfileBuilder.Physics(ctx.Player));
         _stepsAtPlan = _follower.RemainingSteps;
         _pathCrossesUnknown = CrossesUnknown(ctx.Grid, r.Steps);

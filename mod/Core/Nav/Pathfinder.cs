@@ -31,7 +31,9 @@ public static class Pathfinder
     private const float WalkCost = 1f, StepUpCost = 1.5f, JumpBase = 2f, DropCost = 1.5f;
     private const float FallBase = 1f, FallPerTile = 0.2f, DigPerTile = 3f, BuildCost = 4f;
     private const float SwimCost = 2f, SwimDiagCost = 2.5f, UnknownPenalty = 2f;
-    private const int MaxBuildUp = 3, GoalSearchRadius = 3, MaxBuildsTracked = 511;
+    /// <summary>A goal the body can't occupy snaps to the nearest standable cell within this many tiles.</summary>
+    public const int GoalSearchRadius = 3;
+    private const int MaxBuildUp = 3, MaxBuildsTracked = 511;
     // Jump evaluation works on 64-row column bitmasks: 2*MaxJumpUp + 5 rows must fit.
     private const int MaxJumpUpModelled = 29, MaxJumpGapModelled = 32;
 
@@ -61,7 +63,7 @@ public static class Pathfinder
     public static PathResult FindPath(ITileGrid grid, TilePoint start, TilePoint goal,
         MovementProfile profile, PathOptions options)
     {
-        if (start == goal) return new PathResult(true, Array.Empty<PathStep>(), null, 0);
+        if (start == goal) return new PathResult(true, Array.Empty<PathStep>(), null, 0, goal);
         var s = new Search(grid, start, goal, profile, options);
         try { return s.Run(); }
         finally { s.Dispose(); }
@@ -193,7 +195,7 @@ public static class Pathfinder
                 steps.Add(new PathStep(new TilePoint(n.X, n.Y), n.Kind,
                     n.HasWork ? new TilePoint(n.WX, n.WY) : null));
             }
-            return new PathResult(true, steps, null, expanded);
+            return new PathResult(true, steps, null, expanded, _goal);
         }
 
         private int Chebyshev(int x, int y) => Math.Max(Math.Abs(x - _goal.X), Math.Abs(y - _goal.Y));

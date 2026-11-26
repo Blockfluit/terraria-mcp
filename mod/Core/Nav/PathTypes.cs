@@ -14,8 +14,13 @@ public sealed record PathOptions(
     int MaxNodes = 20000,
     int GoalTolerance = 1);
 
+/// <param name="ResolvedGoal">Where the search actually aimed: the requested goal, or the nearest standable cell
+/// when the requested one wasn't (snapped up to <see cref="Pathfinder.GoalSearchRadius"/> tiles). A successful
+/// path ends within <see cref="PathOptions.GoalTolerance"/> of this, not necessarily of the requested goal.
+/// Null on failure.</param>
 public sealed record PathResult(
     bool Success,
     IReadOnlyList<PathStep> Steps,
     string? FailureReason,
-    int NodesExpanded);
+    int NodesExpanded,
+    TilePoint? ResolvedGoal = null);

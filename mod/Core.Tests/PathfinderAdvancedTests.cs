@@ -275,6 +275,35 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void SnappedGoal_IsReportedAsResolvedGoal()
+    {
+        // Goal two tiles down inside the ground: the body can't be there, so the search aims at the surface cell
+        // above it. MoveToTask relies on ResolvedGoal to know that arriving there means done (it used to replan
+        // forever, seen in game as "walking: 2 tiles remaining").
+        var b = new GridBuilder(20, 10).Fill(0, 5, 19, 9, '#');
+        b.Put(0, 4, 'S');
+        var (g, m) = b.Parse();
+        var requested = new TilePoint(10, 6);
+        var r = Pathfinder.FindPath(g, m['S'], requested, new(), new(AllowDig: false, AllowBuild: false));
+        Assert.True(r.Success, r.FailureReason);
+        Assert.NotNull(r.ResolvedGoal);
+        Assert.NotEqual(requested, r.ResolvedGoal);
+        Assert.Equal(4, r.ResolvedGoal!.Value.Y);
+        var end = r.Steps[^1].Pos;
+        Assert.True(Math.Max(Math.Abs(end.X - r.ResolvedGoal.Value.X), Math.Abs(end.Y - r.ResolvedGoal.Value.Y)) <= 1);
+        Assert.True(Math.Max(Math.Abs(end.X - requested.X), Math.Abs(end.Y - requested.Y)) > 1,
+            "the path legitimately ends outside tolerance of the requested goal");
+    }
+
+    [Fact]
+    public void ExactGoal_ResolvedGoalIsRequested()
+    {
+        var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");
+        var r = Pathfinder.FindPath(g, m['S'], m['G'], new(), new());
+        Assert.Equal(m['G'], r.ResolvedGoal);
+    }
+
+    [Fact]
     public void GoalDeepInSolid_FailsGoalNotStandable()
     {
         var b = new GridBuilder(20, 20).Fill(0, 3, 19, 19, '#');
