@@ -149,6 +149,21 @@ public class StandFinderTests
     }
 
     [Fact]
+    public void BuildSupport_FindsMidShaftSpotBesideOre()
+    {
+        // Ore (A) in the wall of a 2-wide shaft, 8 rows above the floor: no ground spot reaches it, but a spot in
+        // the shaft does once a platform is built under it.
+        var b = new GridBuilder(12, 20).Fill(0, 0, 11, 19, '#').Fill(5, 0, 6, 17, '.');
+        b.Put(4, 6, 'A').Put(5, 17, 'S');
+        var (g, m) = b.Parse();
+        Assert.Null(StandFinder.Best(g, m['S'], m['A'], Vanilla, margin: 0f));
+        var stand = StandFinder.Best(g, m['S'], m['A'], Vanilla, margin: 0f, buildSupport: true);
+        Assert.NotNull(stand);
+        Assert.Equal(5, stand!.Value.X);
+        Assert.True(Reach.FromStand(stand.Value, m['A'], Vanilla));
+    }
+
+    [Fact]
     public void AvoidsStandingOnlyOnPendingTiles()
     {
         var (g, m) = ArrayTileGrid.Parse(

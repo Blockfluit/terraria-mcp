@@ -75,7 +75,22 @@ public static class MiningOrder
 /// <summary>Where to stand to work on a tile.</summary>
 public static class StandFinder
 {
-    private const int PendingSupportPenalty = 100, BelowTargetPenalty = 50;
+    private const int PendingSupportPenalty = 100, BelowTargetPenalty = 50, BuiltSupportPenalty = 20;
+
+    /// <summary>Body clear, plain air under the left foot (not the target), and that air touches a standable tile
+    /// (vanilla anchors a platform to a neighbouring tile).</summary>
+    private static bool CanBuildUnder(ITileGrid grid, TilePoint s)
+    {
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 2; dx++)
+                if (grid.Get(s.X + dx, s.Y - dy).BlocksBody) return false;
+        var under = new TilePoint(s.X, s.Y + 1);
+        if (grid.Get(under).Kind != TileKind.Air) return false;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                if ((dx != 0 || dy != 0) && grid.Get(under.X + dx, under.Y + dy).IsStandable) return true;
+        return false;
+    }
 
     /// <summary>
     /// The standable position (body clear, supported: <see cref="Pathfinder.CanStand"/>) within
@@ -84,8 +99,10 @@ public static class StandFinder
     /// (<paramref name="pending"/> or the target: it would drop out from under the player), +50 if the target is
     /// straight above the body (falling sand/debris). Null if nothing qualifies.
     /// </summary>
+    /// <param name="buildSupport">Also accept spots with nothing underfoot when a platform can be placed there (plain
+    /// air under the left foot next to a solid tile or platform): move_to builds it. Costs extra; use as a fallback.</param>
     public static TilePoint? Best(ITileGrid grid, TilePoint player, TilePoint target, ReachSpec reach,
-        IReadOnlySet<TilePoint>? pending = null, float margin = 1f, int searchRadius = 8)
+        IReadOnlySet<TilePoint>? pending = null, float margin = 1f, int searchRadius = 8, bool buildSupport = false)
     {
         TilePoint? best = null;
         int bestCost = int.MaxValue;
@@ -93,8 +110,14 @@ public static class StandFinder
             for (int x = target.X - searchRadius; x <= target.X + searchRadius; x++)
             {
                 var s = new TilePoint(x, y);
-                if (!Reach.FromStand(s, target, reach, margin) || !Pathfinder.CanStand(grid, s)) continue;
-                int cost = Math.Abs(x - player.X) + Math.Abs(y - player.Y);
+                if (!Reach.FromStand(s, target, reach, margin)) continue;
+                bool built = false;
+                if (!Pathfinder.CanStand(grid, s))
+                {
+                    if (!buildSupport || !CanBuildUnder(grid, s)) continue;
+                    built = true;
+                }
+                int cost = Math.Abs(x - player.X) + Math.Abs(y - player.Y) + (built ? BuiltSupportPenalty : 0);
                 if (RestsOnlyOnPending(grid, s, target, pending)) cost += PendingSupportPenalty;
                 if (target.X >= x && target.X <= x + 1 && target.Y < y - 2) cost += BelowTargetPenalty;
                 if (cost >= bestCost) continue;

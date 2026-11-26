@@ -123,7 +123,11 @@ internal sealed class TileWorker
             // Prefer a spot with reach to spare; fall back to the exact edge of reach before giving up on stands.
             var stand = StandFinder.Best(ctx.Grid, here, _target, reach, _pending, _approachMargin)
                         ?? (_approachMargin > 1f ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending) : null)
-                        ?? StandFinder.Best(ctx.Grid, here, _target, reach, _pending, margin: 0f);
+                        ?? StandFinder.Best(ctx.Grid, here, _target, reach, _pending, margin: 0f)
+                        // Nowhere to stand (e.g. ore beside a 2-wide shaft): a spot whose floor move_to can build.
+                        ?? (HeldItemLease.BuildItemCount(p) > 0
+                            ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending, margin: 0f, buildSupport: true)
+                            : null);
             // No known spot (e.g. the tile is buried in rock): head for the tile itself and let the pathfinder dig.
             // A stand spot is exact: it can sit at the very edge of reach, and stopping a tile short (tolerance 1)
             // left the tile out of reach while every re-approach "arrived" instantly at the same spot (seen in game:

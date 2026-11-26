@@ -24,7 +24,18 @@ public sealed class MineTask : IGameTask<GameCtx>
     private readonly HeldItemLease _lease = new();
     private readonly TileWorker _worker;
     private readonly SkipReport? _skips;
-    private int _index = -1, _mined;
+    private int _index = -1, _mined, _failsInARow;
+    private string? _lastFailure;
+    private const int MaxFailsInARow = 5;
+
+    /// <summary>"can't reach (x,y): goal_not_standable: …" → "unreachable"; else the reason's first clause.</summary>
+    private static string ShortReason(string? reason) => reason switch
+    {
+        null => "failed",
+        _ when reason.StartsWith("can't reach") || reason.StartsWith("couldn't get within reach") => "unreachable",
+        _ when reason.Contains("didn't break") => "didn't break",
+        _ => reason.Split(':')[0],
+    };
 
     public string Name { get; }
     public string? Reason { get; private set; }
@@ -71,10 +82,25 @@ public sealed class MineTask : IGameTask<GameCtx>
                 Progress = _worker.MoveProgress is { } mp ? $"mined {_index}/{_tiles.Count} (walking: {mp})" : $"mined {_index}/{_tiles.Count}";
                 return GameTaskStatus.Running;
             }
-            if (s == GameTaskStatus.Failed) return Finish(ctx, GameTaskStatus.Failed, _worker.Reason);
+            if (s == GameTaskStatus.Failed)
+            {
+                // An area mine skips a tile it can't reach or break and goes on (seen in game: one tile beside a
+                // shaft with no floor to stand on failed the whole vein). Give up after several in a row.
+                if (_skips == null) return Finish(ctx, GameTaskStatus.Failed, _worker.Reason);
+                _skips.Add(t, ShortReason(_worker.Reason));
+                _lastFailure = _worker.Reason;
+                if (++_failsInARow >= MaxFailsInARow)
+                    return Finish(ctx, GameTaskStatus.Failed, $"{MaxFailsInARow} tiles in a row failed; last: {_worker.Reason}");
+                _mined--; // Next counts the tile as done
+                Next(ctx);
+                continue;
+            }
+            _failsInARow = 0;
             Next(ctx); // succeeded: tile gone; move on in the same tick
         }
-        Progress = $"mined {_tiles.Count}/{_tiles.Count}";
+        Progress = $"mined {_mined}/{_tiles.Count}";
+        if (_skips != null && _mined == 0 && _lastFailure != null)
+            return Finish(ctx, GameTaskStatus.Failed, $"nothing could be mined; last: {_lastFailure}");
         return Finish(ctx, GameTaskStatus.Succeeded, null);
     }
 

@@ -305,6 +305,25 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void MidShaftGoal_ReachedByBuildingPlatforms()
+    {
+        // 2-wide shaft (x=3..4) in solid rock; the player stands at its bottom. A goal 6 tiles up the shaft has no
+        // floor: reachable only by climbing on placed platforms (used to stand beside ore in the shaft wall).
+        var b = new GridBuilder(10, 16).Fill(0, 0, 9, 15, '#').Fill(3, 0, 4, 13, '.');
+        b.Put(3, 13, 'S');
+        var (g, m) = b.Parse();
+        var goal = new TilePoint(3, 7);
+        var r = Pathfinder.FindPath(g, m['S'], goal, new(BuildItemCount: 20), new(AllowDig: false, GoalTolerance: 0));
+        Assert.True(r.Success, r.FailureReason);
+        Assert.Equal(goal, r.ResolvedGoal);
+        Assert.Equal(goal, r.Steps[^1].Pos);
+        Assert.Contains(r.Steps, s => s.Kind == MoveKind.BuildPlatform);
+
+        var none = Pathfinder.FindPath(g, m['S'], goal, new(BuildItemCount: 0), new(AllowDig: false, GoalTolerance: 0));
+        Assert.NotEqual(goal, none.ResolvedGoal); // without platforms the goal isn't standable
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");

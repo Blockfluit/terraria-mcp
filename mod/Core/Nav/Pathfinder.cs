@@ -184,7 +184,12 @@ public static class Pathfinder
             return best != int.MaxValue;
         }
 
-        private bool GoalOk(int x, int y) => BodyClear(x, y) && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid));
+        /// <summary>The body fits and something holds it: ground, liquid, or — when building is allowed — a plain,
+        /// anchored air tile under the left foot where a platform can go (mid-shaft spots the search reaches by
+        /// climbing with platforms; e.g. a stand to mine ore beside a shaft).</summary>
+        private bool GoalOk(int x, int y) =>
+            BodyClear(x, y) && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid)
+                                || (_canBuild && _buildCap > 0 && _t.F(x, y + 1) == TileCache.Computed && Anchored(x, y + 1)));
 
         private PathResult Success(int ni, int expanded)
         {
