@@ -75,8 +75,14 @@ public class RecipeMathTests
         Assert.Equal(int.MaxValue, RecipeMath.MaxCrafts(Array.Empty<Ingredient>()));
 
     [Fact]
-    public void PickRecipe_PrefersAvailable_ThenStationsMet_ThenFewestMissing()
+    public void PickRecipe_PrefersAvailable_ThenIngredientsAtHand_ThenStationsMet_ThenFewestMissing()
     {
+        // Iron Bar: from ore (have it, Furnace missing) vs from Iron Fence (no station needed, have none).
+        Assert.Equal(0, RecipeMath.PickRecipe(new[]
+        {
+            new RecipeCandidate(Available: false, StationsMet: false, MissingKinds: 0),
+            new RecipeCandidate(false, true, 1),
+        }));
         Assert.Equal(2, RecipeMath.PickRecipe(new[]
         {
             new RecipeCandidate(Available: false, StationsMet: true, MissingKinds: 0),
@@ -85,7 +91,7 @@ public class RecipeMathTests
         }));
         Assert.Equal(1, RecipeMath.PickRecipe(new[]
         {
-            new RecipeCandidate(false, false, 0),
+            new RecipeCandidate(false, false, 1),
             new RecipeCandidate(false, true, 2),
             new RecipeCandidate(false, true, 3),
         }));

@@ -63,8 +63,10 @@ public static class RecipeMath
         return max;
     }
 
-    /// <summary>Best recipe to craft or explain: available first, then one whose stations are met, then the fewest
-    /// missing ingredient kinds; ties keep the earliest. -1 for an empty list.</summary>
+    /// <summary>Best recipe to craft or explain: available first, then one with every ingredient at hand (only a
+    /// station is missing: "stand near a Furnace" beats "you need Iron Fence" for Iron Bar, seen in game), then one
+    /// whose stations are met, then the fewest missing ingredient kinds; ties keep the earliest. -1 for an empty
+    /// list.</summary>
     public static int PickRecipe(IReadOnlyList<RecipeCandidate> candidates)
     {
         int best = -1;
@@ -76,6 +78,8 @@ public static class RecipeMath
     private static bool Better(RecipeCandidate a, RecipeCandidate b)
     {
         if (a.Available != b.Available) return a.Available;
+        bool aHas = a.MissingKinds == 0, bHas = b.MissingKinds == 0;
+        if (aHas != bHas) return aHas;
         if (a.StationsMet != b.StationsMet) return a.StationsMet;
         return a.MissingKinds < b.MissingKinds;
     }

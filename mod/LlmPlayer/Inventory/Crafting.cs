@@ -241,12 +241,29 @@ public static class Crafting
         return n;
     }
 
+    /// <summary>"; Furnace at (4217,548) 6 tiles away" for each missing station the player can see, else a hint.</summary>
+    private static string NearestStations(Player p, List<string> stations)
+    {
+        var parts = new List<string>();
+        foreach (var name in stations)
+        {
+            try
+            {
+                var near = Observe.Finder.Find(p, "station", name, 60);
+                if (near.Count > 0) parts.Add($"{near[0].Name} at ({near[0].X},{near[0].Y}) {near[0].Distance:0} tiles away");
+            }
+            catch (CommandError) { /* conditions like "Near Water" aren't stations */ }
+        }
+        return parts.Count > 0 ? "; nearest: " + string.Join(", ", parts) + " (move_to next to it)" : "; none visible nearby (craft and place one)";
+    }
+
     private static CommandError Unavailable(Player p, Recipe r)
     {
         var stations = MissingStations(p, r);
         if (stations.Count > 0)
             return new CommandError(ErrorCodes.MissingStation,
-                $"{r.createItem.Name} needs: {string.Join(", ", stations)} (stand near it; stations count within a few tiles)");
+                $"{r.createItem.Name} needs: {string.Join(", ", stations)} — stations count within 4 tiles left/right "
+                + $"and 3 up/down of the player's centre{NearestStations(p, stations)}");
         var missing = RecipeMath.Missing(Ingredients(p, r));
         if (missing.Count > 0)
             return new CommandError(ErrorCodes.MissingItem, $"{r.createItem.Name} needs {RecipeMath.Describe(missing)}");
