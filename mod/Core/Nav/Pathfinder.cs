@@ -190,7 +190,7 @@ public static class Pathfinder
         private bool GoalOk(int x, int y) =>
             (BodyClear(x, y) || (_o.DigToGoal && _canDig && BodyDiggable(x, y)))
             && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid)
-                                || (_canBuild && _buildCap > 0 && _t.F(x, y + 1) == TileCache.Computed && Anchored(x, y + 1)));
+                                || (_canBuild && _buildCap > 0 && PlainAir(x, y + 1) && Anchored(x, y + 1)));
 
         private PathResult Success(int ni, int expanded)
         {
@@ -426,7 +426,7 @@ public static class Pathfinder
             if (_canBuild && builds < _buildCap)
             {
                 int wx = dx > 0 ? x + 1 : x, wy = y + 1;
-                if (_t.F(wx, wy) == TileCache.Computed)
+                if (PlainAir(wx, wy) && AnchoredFrom(ni, wx, wy))
                     Add(ni, tx, y, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: wx, wy: wy, hasWork: true);
             }
         }
@@ -608,10 +608,9 @@ public static class Pathfinder
                 int r = y - 2 - k; // new head row
                 if (!Passable(x, r) || !Passable(x + 1, r)) return;
                 int ty = y - k, wy = ty + 1;
-                if (_t.F(x, wy) != TileCache.Computed) continue; // must place into plain air
-                // Vanilla places a platform only next to an existing tile (3x3) or in front of a background wall,
-                // which the grid doesn't show. k = 1 is anchored by our own support; higher needs a grid anchor.
-                if (k > 1 && !Anchored(x, wy)) continue;
+                if (!PlainAir(x, wy)) continue; // must place into plain air
+                // Vanilla places a platform only next to a tile on one of its 4 sides or in front of a background wall.
+                if (!AnchoredFrom(ni, x, wy)) continue;
                 if (HasSupport(x, ty) || BodyHas(x, ty, TileCache.Liquid)) continue;
                 Add(ni, x, ty, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: x, wy: wy, hasWork: true);
             }
@@ -624,13 +623,25 @@ public static class Pathfinder
             return (f & TileCache.Plat) != 0 && (_t.F(x, y - 1) & TileCache.Plat) == 0;
         }
 
-        private bool Anchored(int x, int y)
+        /// <summary>Vanilla lets a tile (platform) be placed only next to a tile on one of its 4 sides, or in front of a
+        /// background wall. Diagonals don't count: seen in game, a climb whose platform was only diagonal to the floor
+        /// never got placed and the player jumped and fell back forever.</summary>
+        private bool Anchored(int x, int y) =>
+            (_t.F(x, y) & TileCache.Wall) != 0
+            || ((_t.F(x - 1, y) | _t.F(x + 1, y) | _t.F(x, y - 1) | _t.F(x, y + 1)) & TileCache.Stand) != 0;
+
+        /// <summary><see cref="Anchored"/>, or orthogonally next to the platform this path placed in the step that
+        /// reached node <paramref name="ni"/> (the search doesn't write its own platforms into the grid; chained
+        /// bridge/climb platforms hang off the previous one).</summary>
+        private bool AnchoredFrom(int ni, int x, int y)
         {
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
-                    if ((dx != 0 || dy != 0) && (_t.F(x + dx, y + dy) & TileCache.Stand) != 0) return true;
-            return false;
+            if (Anchored(x, y)) return true;
+            ref var n = ref _nodes[ni];
+            return n.Kind == MoveKind.BuildPlatform && n.HasWork && Math.Abs(n.WX - x) + Math.Abs(n.WY - y) == 1;
         }
+
+        /// <summary>Known empty air (a background wall behind it is fine).</summary>
+        private bool PlainAir(int x, int y) => (_t.F(x, y) & ~TileCache.Wall) == TileCache.Computed;
 
         private void Swim(int ni, int x, int y, int builds)
         {
@@ -696,7 +707,7 @@ public static class Pathfinder
     private sealed class TileCache : IDisposable
     {
         public const ushort Computed = 1, Block = 2, Stand = 4, Plat = 8, Liquid = 16, Deadly = 32, Unknown = 64, Diggable = 128,
-            Door = 256;
+            Door = 256, Wall = 512;
         private const int Margin = 128, MaxDim = 1024;
 
         private readonly ITileGrid _g;
@@ -827,6 +838,7 @@ public static class Pathfinder
                 case TileKind.Hazard: b |= Deadly; break;
                 case TileKind.Unknown: b |= Unknown; break;
             }
+            if (t.Wall) b |= Wall;
             Seen |= b;
             return (ushort)b;
         }

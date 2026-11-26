@@ -57,7 +57,15 @@ public sealed class GameTileGrid : ITileGrid
         return x >= left && x <= right && y >= top && y <= bottom;
     }
 
+    /// <summary>The tile with its background-wall flag (only for tiles the player can see: Unknown stays bare).</summary>
     public TileInfo Get(int x, int y)
+    {
+        var info = GetCore(x, y);
+        if (info.Kind != TileKind.Unknown && WorldGen.InWorld(x, y) && Main.tile[x, y].WallType != 0) info = info with { Wall = true };
+        return info;
+    }
+
+    private TileInfo GetCore(int x, int y)
     {
         if (!WorldGen.InWorld(x, y)) return TileInfo.Unbreakable;
         bool prot = Protection.IsProtected(x, y);

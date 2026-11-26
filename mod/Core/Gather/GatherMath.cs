@@ -77,19 +77,19 @@ public static class StandFinder
 {
     private const int PendingSupportPenalty = 100, BelowTargetPenalty = 50, BuiltSupportPenalty = 20;
 
-    /// <summary>Body clear, plain air under the left foot (not the target), and that air touches a standable tile
-    /// (vanilla anchors a platform to a neighbouring tile).</summary>
+    /// <summary>Body clear, plain air under the left foot, and vanilla would let a platform go there (a tile on one of
+    /// its 4 sides or a background wall).</summary>
     private static bool CanBuildUnder(ITileGrid grid, TilePoint s)
     {
         for (int dy = 0; dy < 3; dy++)
             for (int dx = 0; dx < 2; dx++)
                 if (grid.Get(s.X + dx, s.Y - dy).BlocksBody) return false;
         var under = new TilePoint(s.X, s.Y + 1);
-        if (grid.Get(under).Kind != TileKind.Air) return false;
-        for (int dy = -1; dy <= 1; dy++)
-            for (int dx = -1; dx <= 1; dx++)
-                if ((dx != 0 || dy != 0) && grid.Get(under.X + dx, under.Y + dy).IsStandable) return true;
-        return false;
+        var u = grid.Get(under);
+        if (u.Kind != TileKind.Air) return false;
+        // Vanilla anchoring: a tile on one of the 4 sides, or a background wall behind it.
+        return u.Wall || grid.Get(under.X - 1, under.Y).IsStandable || grid.Get(under.X + 1, under.Y).IsStandable
+               || grid.Get(under.X, under.Y + 1).IsStandable;
     }
 
     /// <summary>

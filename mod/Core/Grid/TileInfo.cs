@@ -14,7 +14,8 @@ public readonly record struct TileInfo(
     bool Protected = false,
     char Glyph = '\0',
     string? Name = null,
-    bool Door = false)
+    bool Door = false,
+    bool Wall = false)
 {
     public static readonly TileInfo Air = new(TileKind.Air);
     public static readonly TileInfo Unbreakable = new(TileKind.Solid, int.MaxValue);

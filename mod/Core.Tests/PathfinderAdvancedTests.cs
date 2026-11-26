@@ -343,6 +343,34 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ClimbPlatforms_AreOrthogonallyAnchored()
+    {
+        // Seen in game: standing on a ledge with only the right foot supported, the plan put a climbing platform under
+        // the left foot (only diagonal to the ledge); vanilla refused it and the player jumped and fell forever.
+        // Every planned platform must touch a tile or an earlier planned platform on one of its 4 sides.
+        var b = new GridBuilder(16, 30).Fill(0, 26, 15, 29, '#');
+        b.Fill(9, 6, 15, 25, '#'); // tall cliff on the right
+        b.Fill(6, 20, 6, 20, '#'); // a one-tile ledge sticking out in the air
+        b.Put(5, 19, 'S');          // body x=5..6: only the right foot (x=6) is on the ledge
+        var (g, m) = b.Parse();
+        var goal = new TilePoint(10, 5);
+        var r = Pathfinder.FindPath(g, m['S'], goal, new(BuildItemCount: 40), new(AllowDig: false));
+        Assert.True(r.Success, r.FailureReason);
+        var placed = new HashSet<TilePoint>();
+        foreach (var st in r.Steps.Where(st => st.Kind == MoveKind.BuildPlatform))
+        {
+            var w = st.WorkTile!.Value;
+            bool anchored = new[] { (1, 0), (-1, 0), (0, 1), (0, -1) }.Any(d =>
+            {
+                var n = new TilePoint(w.X + d.Item1, w.Y + d.Item2);
+                return g.Get(n).IsStandable || placed.Contains(n);
+            });
+            Assert.True(anchored, $"platform at {w} has no orthogonal anchor");
+            placed.Add(w);
+        }
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");
