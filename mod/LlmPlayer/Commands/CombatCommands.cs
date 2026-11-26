@@ -19,16 +19,24 @@ public static class CombatCommands
         CommandRouter.Register("attack", p =>
         {
             var player = Main.LocalPlayer;
-            var npc = ResolveTarget(p, player);
+            bool all = IsAll(p);
+            float radius = Params.Float(p, "radius", DefaultAllRadius);
+            if (!float.IsFinite(radius) || radius < 1f || radius > EntityReader.DefaultRadius)
+                throw new CommandError(ErrorCodes.BadParams, $"radius must be between 1 and {EntityReader.DefaultRadius}");
+            float retreat = Params.Float(p, "retreat_below", 0.3f);
+            if (!float.IsFinite(retreat) || retreat < 0f || retreat >= 1f)
+                throw new CommandError(ErrorCodes.BadParams, "retreat_below must be >= 0 and < 1 (0 = never retreat)");
+            var npc = all ? Nearest(player, radius) : ResolveTarget(p, player);
             var weapon = CombatKit.BestWeapon(player)
                 ?? throw new CommandError(ErrorCodes.MissingItem, "no usable weapon (need a damaging item with its ammo/mana)");
-            var task = new AttackTask(npc);
+            var task = new AttackTask(npc, all, radius, retreat);
             TaskHost.Start(task);
             return new
             {
                 Started = true,
                 Task = task.Name,
                 Target = new { Id = npc.whoAmI, Name = npc.GivenOrTypeName },
+                All = all,
                 Weapon = weapon.Item.Name,
             };
         }, isAction: true);
@@ -73,22 +81,33 @@ public static class CombatCommands
         }, isAction: true);
     }
 
+    private const float DefaultAllRadius = 25f;
+
+    private static bool IsAll(JsonElement p) =>
+        Params.Has(p, "target") && p.GetProperty("target") is { ValueKind: JsonValueKind.String } t
+        && string.Equals(t.GetString()?.Trim(), "all", StringComparison.OrdinalIgnoreCase);
+
+    private static NPC Nearest(Player player, float radius)
+    {
+        var c = player.Center / 16f;
+        var pick = TargetRules.PickNearest(CombatKit.VisibleNpcs(player), c.X, c.Y, radius)
+            ?? throw new CommandError(ErrorCodes.NotVisible, $"no hostile enemy visible within {radius:0} tiles");
+        return Main.npc[pick.Id];
+    }
+
     /// <summary>
     /// "nearest" → the nearest visible attackable NPC within 40 tiles; an id → that NPC, refused with bad_params if
     /// it's a town NPC, critter, other friendly or invulnerable, and not_visible if the player can't see it.
     /// </summary>
     private static NPC ResolveTarget(JsonElement p, Player player)
     {
-        if (!Params.Has(p, "target")) throw new CommandError(ErrorCodes.BadParams, "missing required param 'target' (entity id or \"nearest\")");
+        if (!Params.Has(p, "target")) throw new CommandError(ErrorCodes.BadParams, "missing required param 'target' (entity id, \"nearest\" or \"all\")");
         var t = p.GetProperty("target");
         if (t.ValueKind == JsonValueKind.String)
         {
             if (!string.Equals(t.GetString()?.Trim(), "nearest", StringComparison.OrdinalIgnoreCase))
-                throw new CommandError(ErrorCodes.BadParams, "target must be an entity id or \"nearest\"");
-            var c = player.Center / 16f;
-            var pick = TargetRules.PickNearest(CombatKit.VisibleNpcs(player), c.X, c.Y, EntityReader.DefaultRadius)
-                ?? throw new CommandError(ErrorCodes.NotVisible, $"no hostile enemy visible within {EntityReader.DefaultRadius} tiles");
-            return Main.npc[pick.Id];
+                throw new CommandError(ErrorCodes.BadParams, "target must be an entity id, \"nearest\" or \"all\"");
+            return Nearest(player, EntityReader.DefaultRadius);
         }
 
         int id = Params.Int(p, "target");

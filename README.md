@@ -29,6 +29,11 @@ mod/LlmPlayer tModLoader mod inside Terraria
   vanilla movement.
 - **Gather, build, fight.** It can mine, chop trees, pick up items, place, craft (only with real
   ingredients and stations), equip, use items, attack, and talk to NPCs.
+- **Fight without trading hits.** `attack` predicts when an enemy is about to touch the player (from its hitbox
+  and velocity) and backs off or jumps instead, never into a hole or lava, while it keeps swinging or shooting.
+  Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
+  threshold with no healing potion available, it retreats and reports "low life". The result reports kills,
+  damage taken, duration and dodges. This movement is also tested against the physics simulation.
 - **Survive while thinking.** Reflexes auto-attack nearby hostiles and quick-heal while the LLM
   thinks. You can optionally pause the world while the AI is idle.
 - **Keep playing unfocused.** While the AI drives, the game keeps running when the Terraria window

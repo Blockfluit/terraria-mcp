@@ -130,6 +130,41 @@ describe("registerTools", () => {
     expect(body.report).toMatchObject({ name: "explore", status: "running" });
   });
 
+  it("attack forwards target all with radius and retreat_below", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "attack", all: true }));
+    const client = await setup(conn);
+    const res = await call(client, "attack", { target: "all", radius: 20, retreat_below: 0.25 });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([{ method: "attack", params: { target: "all", radius: 20, retreat_below: 0.25 } }]);
+  });
+
+  it("attack accepts an entity id and nearest, rejects other strings and bad retreat_below", async () => {
+    const conn = new FakeConn(() => ({ started: true }));
+    const client = await setup(conn);
+    expect((await call(client, "attack", { target: 7 })).isError).toBeFalsy();
+    expect((await call(client, "attack", { target: "nearest" })).isError).toBeFalsy();
+    expect((await call(client, "attack", { target: "boss" })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "all", retreat_below: 1 })).isError).toBe(true);
+    expect(conn.calls.map((c) => c.params)).toEqual([{ target: 7 }, { target: "nearest" }]);
+  });
+
+  it("attack description explains evasion, all and the result", async () => {
+    const client = await setup(new FakeConn());
+    const tool = (await client.listTools()).tools.find((t) => t.name === "attack")!;
+    expect(tool.description).toContain('"all"');
+    expect(tool.description).toContain("low life");
+    expect(tool.description).toContain("damageTaken");
+    expect(tool.inputSchema.properties).toHaveProperty("retreat_below");
+  });
+
+  it("wait_for_task passes attack's result through", async () => {
+    const result = { killed: 3, kills: ["Zombie", "Zombie", "Demon Eye"], damageTaken: 12, durationS: 9.5, dodges: 4, retreated: false };
+    const conn = new FakeConn(() => ({ current: null, lastFinished: { name: "attack", status: 1, reason: "no hostiles left", result } }));
+    const client = await setup(conn);
+    const body = JSON.parse((await call(client, "wait_for_task", { timeout_s: 1 })).content[0].text);
+    expect(body.report).toMatchObject({ name: "attack", status: "succeeded", result });
+  });
+
   it("events are appended to results", async () => {
     const conn = new FakeConn(() => ({ x: 5, y: 6 }));
     conn.events.push({ event: "took_damage", amount: 7 });
