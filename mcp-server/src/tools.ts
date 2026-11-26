@@ -116,7 +116,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_task",
     description:
-      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress}. Use wait_for_task to block instead of polling.",
+      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress, result?} (result only for tasks that return data, e.g. talk_to_npc). Use wait_for_task to block instead of polling.",
     readOnly: true,
   },
   {
@@ -268,7 +268,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "talk_to_npc",
     description:
-      "Walk to a visible town NPC and talk: returns their chat text and shop items with prices (if any). Buying/selling is not supported." +
+      "Walk within talk range of a visible town NPC and open its chat. When the task succeeds, wait_for_task's report.result is {name, chat, shop?: [{name, price}]} (shop only if the NPC sells things; price after happiness discounts, e.g. '1 gold 50 silver'). Buying/selling is not supported." +
       STARTS_TASK,
     shape: { entity_id: int().describe("Town NPC id from get_entities") },
   },
@@ -359,7 +359,7 @@ export function registerTools(server: McpServer, conn: ModClient): void {
     "wait_for_task",
     {
       description:
-        `Block until the current task finishes (succeeded, failed or cancelled) or timeout_s passes (default 30, max ${MAX_WAIT_S}). Returns {timed_out, report: {name, status, reason, progress}}. If timed_out, the task is still running: call again, or cancel_task. Call this after every task-starting action.`,
+        `Block until the current task finishes (succeeded, failed or cancelled) or timeout_s passes (default 30, max ${MAX_WAIT_S}). Returns {timed_out, report: {name, status, reason, progress, result?}}; result carries data from tasks like talk_to_npc. If timed_out, the task is still running: call again, or cancel_task. Call this after every task-starting action.`,
       inputSchema: {
         timeout_s: z.number().min(0).max(MAX_WAIT_S).default(30).describe("Seconds to wait, default 30"),
       },

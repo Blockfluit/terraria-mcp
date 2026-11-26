@@ -1,8 +1,13 @@
+using System.Text.Json.Serialization;
+
 namespace LlmPlayer.Core.Tasks;
 
 public enum GameTaskStatus { Running, Succeeded, Failed, Cancelled }
 
-public sealed record TaskReport(string Name, GameTaskStatus Status, string? Reason, string? Progress);
+/// <param name="Result">Optional structured outcome of the task (e.g. talk_to_npc's chat and shop), serialized as
+/// <c>result</c> only when set. Reaches the LLM via get_task / wait_for_task and the <c>task_finished</c> event.</param>
+public sealed record TaskReport(string Name, GameTaskStatus Status, string? Reason, string? Progress,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Result = null);
 
 public interface IGameTask<TCtx>
 {
@@ -11,6 +16,9 @@ public interface IGameTask<TCtx>
     string? Reason { get; }
     string? Progress { get; }
     void OnCancel(TCtx ctx);
+
+    /// <summary>Structured outcome for the report (null for most tasks). Read after every tick and on finish.</summary>
+    object? Result => null;
 }
 
 /// <summary>Runs at most one task. <c>Finished</c> fires exactly once per started task.</summary>
@@ -27,7 +35,7 @@ public sealed class TaskRunner<TCtx>
 
     public TaskReport? Current => _task == null
         ? null
-        : new TaskReport(_task.Name, GameTaskStatus.Running, _task.Reason, _task.Progress);
+        : new TaskReport(_task.Name, GameTaskStatus.Running, _task.Reason, _task.Progress, _task.Result);
 
     public void Start(IGameTask<TCtx> task, TCtx ctx)
     {
@@ -68,7 +76,7 @@ public sealed class TaskRunner<TCtx>
     private void Finish(IGameTask<TCtx> task, GameTaskStatus status, string? reason)
     {
         _task = null;
-        var report = new TaskReport(task.Name, status, reason, task.Progress);
+        var report = new TaskReport(task.Name, status, reason, task.Progress, task.Result);
         LastFinished = report;
         Finished?.Invoke(report);
     }

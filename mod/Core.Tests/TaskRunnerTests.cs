@@ -138,4 +138,47 @@ public class TaskRunnerTests
         r.Tick(0);
         Assert.Null(r.CurrentTask);
     }
+
+    private sealed class ResultTask : IGameTask<int>
+    {
+        public string Name => "talk";
+        public string? Reason => null;
+        public string? Progress => null;
+        public object? Result { get; set; }
+        public GameTaskStatus Tick(int ctx) => GameTaskStatus.Succeeded;
+        public void OnCancel(int ctx) { }
+    }
+
+    [Fact]
+    public void Result_DefaultsToNull()
+    {
+        var r = new TaskRunner<int>();
+        r.Start(new FakeTask(), 0);
+        r.Tick(0);
+        Assert.Null(r.Current!.Result);
+    }
+
+    [Fact]
+    public void Result_IsCarriedOnFinishedReport()
+    {
+        var r = new TaskRunner<int>();
+        var reports = new List<TaskReport>();
+        r.Finished += reports.Add;
+        var payload = new { Chat = "hi" };
+        r.Start(new ResultTask { Result = payload }, 0);
+        r.Tick(0);
+        Assert.Same(payload, reports.Single().Result);
+        Assert.Same(payload, r.LastFinished!.Result);
+    }
+
+    [Fact]
+    public void Result_NullIsOmittedFromJson_PresentWhenSet()
+    {
+        var opts = LlmPlayer.Core.Bridge.WireProtocol.Json;
+        var without = System.Text.Json.JsonSerializer.Serialize(new TaskReport("a", GameTaskStatus.Succeeded, null, null), opts);
+        Assert.DoesNotContain("result", without);
+        var with = System.Text.Json.JsonSerializer.Serialize(
+            new TaskReport("a", GameTaskStatus.Succeeded, null, null, new { Name = "Guide" }), opts);
+        Assert.Contains("\"result\":{\"name\":\"Guide\"}", with);
+    }
 }
