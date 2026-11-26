@@ -85,11 +85,11 @@ const TOOLS: ToolDef[] = [
   {
     name: "find",
     description:
-      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests (any container), crafting stations, beds, NPCs or dropped items. Only searches tiles the player has seen; explore to reveal more." +
+      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests (any container), crafting stations, beds, NPCs, dropped items, or blocks by name (category block + name, e.g. 'Stone', 'Sand', 'Clay': get_map shows every solid tile as '#'). Only searches tiles the player has seen; explore to reveal more." +
       COORDS,
     shape: {
-      category: z.enum(["ore", "tree", "chest", "station", "bed", "npc", "item"]),
-      name: z.string().optional().describe("Optional name filter, e.g. 'Copper Ore', 'Work Bench', 'Guide'"),
+      category: z.enum(["ore", "tree", "chest", "station", "bed", "npc", "item", "block"]),
+      name: z.string().optional().describe("Name filter, e.g. 'Copper Ore', 'Work Bench', 'Guide'; required for block ('Stone', 'Sand')"),
       radius: int().min(1).optional().describe("Search radius in tiles, default 60"),
     },
     readOnly: true,

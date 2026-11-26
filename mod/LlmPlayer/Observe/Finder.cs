@@ -12,7 +12,7 @@ namespace LlmPlayer.Observe;
 /// </summary>
 public static class Finder
 {
-    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item" };
+    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item", "block" };
     public const int DefaultRadius = 60;
     public const int MaxRadius = 100;
     private const int OreClusterRadius = 3;
@@ -23,6 +23,9 @@ public static class Finder
         var cat = category.Trim().ToLowerInvariant();
         if (Array.IndexOf(Categories, cat) < 0)
             throw new CommandError(ErrorCodes.BadParams, $"category must be one of {string.Join(", ", Categories)}");
+        // Blocks are everywhere (dirt, stone…): only searched by name, e.g. "Stone Block", "Sand", "Clay".
+        if (cat == "block" && string.IsNullOrWhiteSpace(name))
+            throw new CommandError(ErrorCodes.BadParams, "category block needs a name, e.g. 'Stone', 'Sand', 'Clay', 'Mud'");
         radius = Math.Clamp(radius, 0, MaxRadius);
         var (px, py) = StateReader.StandingTile(p);
 
@@ -35,7 +38,7 @@ public static class Finder
         }
 
         var cands = ScanTiles(p, cat, px, py, radius);
-        int cluster = cat switch { "ore" => OreClusterRadius, "tree" => TreeClusterRadius, _ => 0 };
+        int cluster = cat switch { "ore" or "block" => OreClusterRadius, "tree" => TreeClusterRadius, _ => 0 };
         return FindSelector.Select(cands, px, py, FindSelector.MaxResults, cluster, name);
     }
 
@@ -60,6 +63,8 @@ public static class Finder
                 "chest" => TileClass.IsContainer(type),
                 "station" => TileClass.IsStation(type),
                 "bed" => LlmPlayer.Interact.BedAccess.IsBed(type),
+                "block" => Main.tileSolid[type] && !TileClass.IsOre(type) && !TileClass.IsTree(type)
+                           && !TileClass.IsContainer(type) && !TileClass.IsStation(type),
                 _ => false,
             };
             if (!match || !Visibility.IsTileVisible(x, y, screen, p)) continue;
