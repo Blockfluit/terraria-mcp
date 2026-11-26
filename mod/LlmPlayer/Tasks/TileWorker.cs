@@ -80,8 +80,11 @@ internal sealed class TileWorker
         if (p.noBuilding) return Fail(ctx, "tools can't be used here (noBuilding)");
 
         var reach = new ReachSpec(Player.tileRangeX, Player.tileRangeY, p.inventory[slot].tileBoost);
-        // Hysteresis: start swinging with a little reach to spare, keep swinging until truly out of reach.
-        float margin = _working ? 0f : 0.25f;
+        // Hysteresis: start swinging with a little reach to spare, keep swinging until truly out of reach. Standing
+        // still on the ground nothing drifts, so the exact vanilla reach counts: tiles at the very edge of reach
+        // (e.g. two rows below the feet with a copper/tin pickaxe, tileBoost -1) were otherwise never worked.
+        bool settled = p.velocity.X == 0f && p.velocity.Y == 0f;
+        float margin = _working || settled ? 0f : 0.25f;
         bool inReach = Reach.InRange(p.position.X / 16f, p.position.Y / 16f, p.width / 16f, p.height / 16f, _target, reach, margin);
 
         if (inReach)
@@ -105,8 +108,10 @@ internal sealed class TileWorker
             if (++_approaches > MaxApproaches) return Fail(ctx, $"couldn't get within reach of {_target}");
             var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
             var here = NavMath.StandingTile(k);
+            // Prefer a spot with reach to spare; fall back to the exact edge of reach before giving up on stands.
             var stand = StandFinder.Best(ctx.Grid, here, _target, reach, _pending, _approachMargin)
-                        ?? (_approachMargin > 1f ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending) : null);
+                        ?? (_approachMargin > 1f ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending) : null)
+                        ?? StandFinder.Best(ctx.Grid, here, _target, reach, _pending, margin: 0f);
             // No known spot (e.g. the tile is buried in rock): head for the tile itself and let the pathfinder dig.
             _move = new MoveToTask(stand ?? _target, allowDig: true, allowBuild: true, tolerance: 1, name: _name);
         }

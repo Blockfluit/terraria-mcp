@@ -127,6 +127,28 @@ public class StandFinderTests
     }
 
     [Fact]
+    public void CopperPickaxe_TwoRowsBelowFeet_OnlyAtExactReach()
+    {
+        // Seen in game: mining one tile below the surface (two rows below the feet) with a Copper Pickaxe
+        // (tileBoost -1) failed with "couldn't get within reach". It is exactly at the edge of vanilla reach
+        // (bottom 3 + 4 - 1 - 2 = 4 >= 4), so any spare-reach margin rules out every stand; TileWorker falls back to
+        // margin 0.
+        var copper = Vanilla with { TileBoost = -1 };
+        var (g, _) = ArrayTileGrid.Parse(
+            "..........",
+            "..........",
+            "..........",
+            "##########",
+            "##########",
+            "##########");
+        var target = new TilePoint(5, 4);
+        Assert.Null(StandFinder.Best(g, new TilePoint(0, 2), target, copper, margin: 1f));
+        var stand = StandFinder.Best(g, new TilePoint(0, 2), target, copper, margin: 0f);
+        Assert.NotNull(stand);
+        Assert.True(Reach.FromStand(stand!.Value, target, copper));
+    }
+
+    [Fact]
     public void AvoidsStandingOnlyOnPendingTiles()
     {
         var (g, m) = ArrayTileGrid.Parse(
