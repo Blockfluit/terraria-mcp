@@ -2,16 +2,19 @@ using System.Text.Json;
 using LlmPlayer.Bridge;
 using LlmPlayer.Core.Bridge;
 using LlmPlayer.Core.Grid;
+using LlmPlayer.Core.Observe;
 using LlmPlayer.Observe;
 using LlmPlayer.Safety;
 using LlmPlayer.Tasks;
 using Terraria;
+using Terraria.Audio;
 using Terraria.ID;
+using Terraria.ModLoader;
 using Terraria.UI;
 
 namespace LlmPlayer.Commands;
 
-/// <summary>select_hotbar, equip (instant actions); use_item, place (tasks).</summary>
+/// <summary>select_hotbar, equip, unequip (instant actions); use_item, place (tasks).</summary>
 [CommandGroup]
 public static class InventoryCommands
 {
@@ -29,7 +32,16 @@ public static class InventoryCommands
             return new { Selected = slot, Item = held.IsAir ? null : held.Name };
         }, isAction: true);
 
-        CommandRouter.Register("equip", p => Equip(Main.LocalPlayer, Params.String(p, "item")), isAction: true);
+        CommandRouter.Register("equip", p => Params.Has(p, "slot")
+            ? EquipToSlot(Main.LocalPlayer, Params.String(p, "item"), Params.Int(p, "slot"))
+            : Equip(Main.LocalPlayer, Params.String(p, "item")), isAction: true);
+
+        CommandRouter.Register("unequip", p =>
+        {
+            bool hasItem = Params.Has(p, "item"), hasSlot = Params.Has(p, "slot");
+            if (hasItem == hasSlot) throw new CommandError(ErrorCodes.BadParams, "give exactly one of item or slot");
+            return Unequip(Main.LocalPlayer, hasItem ? Params.String(p, "item") : null, hasSlot ? Params.Int(p, "slot") : -1);
+        }, isAction: true);
 
         CommandRouter.Register("use_item", p =>
         {
@@ -137,6 +149,96 @@ public static class InventoryCommands
             SlotKind = SlotKind(equippedAt),
             SwappedOut = back.IsAir ? null : back.Name,
         };
+    }
+
+    /// <summary>First accessory slot (<c>p.armor</c> index) and one past the last functional one (3..9, as get_inventory
+    /// numbers them).</summary>
+    public const int FirstAccessorySlot = 3, EndAccessorySlot = 10;
+
+    /// <summary>
+    /// Put an accessory into a specific accessory slot (<c>p.armor</c> index 3-9, as get_inventory lists them), replacing
+    /// what is there; the replaced item goes to the inventory slot the new one came from. Mirrors vanilla dropping an
+    /// item from the cursor onto an accessory slot (ItemSlot.LeftClick, context EquipAccessory):
+    /// <list type="bullet">
+    /// <item>The slot must be unlocked and usable (<c>Player.IsItemSlotUnlockedAndUsable</c>: the 8th needs expert mode +
+    /// Demon Heart, the 9th master mode).</item>
+    /// <item><c>ItemSlot.AccCheck</c> (PickItemMovementAction): no duplicate of the same accessory elsewhere, no second pair
+    /// of wings unless replacing wings; plus the mod rules <c>ItemLoader.CanAccessoryBeEquippedWith</c> against the
+    /// other equipped accessories and <c>ItemLoader.CanEquipAccessory</c> for the slot.</item>
+    /// <item>Then the swap, the equip sound and a recipe refresh, as vanilla. Modded extra accessory slots aren't
+    /// addressable here (use equip without slot).</item>
+    /// </list>
+    /// </summary>
+    private static object EquipToSlot(Player pl, string query, int armorSlot)
+    {
+        if (armorSlot < FirstAccessorySlot || armorSlot >= EndAccessorySlot)
+            throw new CommandError(ErrorCodes.BadParams, $"slot must be an accessory slot {FirstAccessorySlot}..{EndAccessorySlot - 1} (as get_inventory numbers them); armor goes to its own slot (equip without slot)");
+        int invSlot = ItemLookup.FindSlot(pl, query);
+        var item = pl.inventory[invSlot];
+        if (!item.accessory)
+            throw new CommandError(ErrorCodes.BadParams, $"{item.Name} is not an accessory (slot is only for accessories)");
+        if (invSlot == pl.selectedItem && (pl.itemAnimation > 0 || pl.channel))
+            throw new CommandError(ErrorCodes.BadParams, $"{item.Name} is being used right now; try again in a moment");
+        if (!pl.IsItemSlotUnlockedAndUsable(armorSlot))
+            throw new CommandError(ErrorCodes.BadParams, $"accessory slot {armorSlot} is locked (slot 8 needs expert mode and the Demon Heart, slot 9 master mode)");
+        if (ItemSlot.AccCheck(pl.armor, item, armorSlot))
+            throw new CommandError(ErrorCodes.BadParams, $"{item.Name} can't go there: the same accessory is already equipped, or it would be a second pair of wings");
+        for (int i = FirstAccessorySlot; i < EndAccessorySlot; i++)
+            if (i != armorSlot && !pl.armor[i].IsAir && !ItemLoader.CanAccessoryBeEquippedWith(pl, pl.armor[i], item))
+                throw new CommandError(ErrorCodes.BadParams, $"{item.Name} can't be worn together with {pl.armor[i].Name} (mod rule)");
+        if (!ItemLoader.CanEquipAccessory(pl, item, armorSlot, false))
+            throw new CommandError(ErrorCodes.BadParams, $"{item.Name} can't be equipped in slot {armorSlot} (a mod rule refused it)");
+
+        var old = pl.armor[armorSlot];
+        pl.armor[armorSlot] = item;
+        pl.inventory[invSlot] = old.IsAir ? new Item() : old;
+        Terraria.GameContent.Achievements.AchievementsHelper.HandleOnEquip(pl, item, ItemSlot.Context.EquipAccessory);
+        SoundEngine.PlaySound(SoundID.Grab);
+        Recipe.FindRecipes();
+        return new
+        {
+            Equipped = item.Name,
+            ArmorSlot = armorSlot,
+            SlotKind = SlotKind(armorSlot),
+            SwappedOut = old.IsAir ? null : old.Name,
+            SwappedOutTo = old.IsAir ? (int?)null : invSlot,
+        };
+    }
+
+    /// <summary>
+    /// Take off an equipped item (<c>p.armor</c> 0-19: armor 0-2, accessories 3-9, vanity 10-19), by name or slot, into
+    /// the first empty main inventory slot (10-49, then the hotbar), like picking it up from its slot and dropping it
+    /// into an empty inventory slot. Fails with bad_params when the inventory has no empty slot (nothing is dropped).
+    /// </summary>
+    private static object Unequip(Player pl, string? query, int armorSlot)
+    {
+        if (query != null)
+        {
+            var names = new ItemName?[pl.armor.Length];
+            for (int i = 0; i < pl.armor.Length; i++)
+                if (!pl.armor[i].IsAir) names[i] = new ItemName(pl.armor[i].Name, ItemLookup.InternalName(pl.armor[i].type));
+            armorSlot = ItemMatcher.Find(names, query);
+            if (armorSlot < 0) throw new CommandError(ErrorCodes.MissingItem, $"no '{query.Trim()}' equipped");
+        }
+        else if (armorSlot < 0 || armorSlot >= pl.armor.Length)
+        {
+            throw new CommandError(ErrorCodes.BadParams, $"slot must be 0..{pl.armor.Length - 1} (0-2 armor, 3-9 accessories, 10-19 vanity)");
+        }
+        var item = pl.armor[armorSlot];
+        if (item.IsAir) throw new CommandError(ErrorCodes.MissingItem, $"equipment slot {armorSlot} is empty");
+
+        int free = -1;
+        for (int i = 10; i < 50 && free < 0; i++)
+            if (pl.inventory[i].IsAir) free = i;
+        for (int i = 0; i < 10 && free < 0; i++)
+            if (pl.inventory[i].IsAir) free = i;
+        if (free < 0) throw new CommandError(ErrorCodes.BadParams, $"inventory is full: no empty slot for {item.Name}");
+
+        pl.inventory[free] = item;
+        pl.armor[armorSlot] = new Item();
+        SoundEngine.PlaySound(SoundID.Grab);
+        Recipe.FindRecipes();
+        return new { Unequipped = item.Name, FromSlot = armorSlot, SlotKind = SlotKind(armorSlot), InventorySlot = free };
     }
 
     private static (int Type, int Stack, int Prefix) Snapshot(Item it) => (it.type, it.stack, it.prefix);

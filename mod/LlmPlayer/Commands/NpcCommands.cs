@@ -8,7 +8,7 @@ using Terraria.ModLoader;
 
 namespace LlmPlayer.Commands;
 
-/// <summary>talk_to_npc (action, task). The chat text and shop come back in the task report's <c>result</c>
+/// <summary>talk_to_npc and buy (actions, tasks). The chat text and shop come back in the task report's <c>result</c>
 /// (<see cref="TalkResult"/>): wait_for_task / get_task, or the <c>task_finished</c> event.</summary>
 [CommandGroup]
 public static class NpcCommands
@@ -35,6 +35,26 @@ public static class NpcCommands
             var task = new TalkToNpcTask(npc);
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name, Npc = npc.GivenOrTypeName };
+        }, isAction: true);
+
+        CommandRouter.Register("buy", p =>
+        {
+            int id = Params.Int(p, "entity_id");
+            string item = Params.String(p, "item");
+            int count = Params.Int(p, "count", 1);
+            if (count < 1 || count > BuyTask.MaxCount) throw new CommandError(ErrorCodes.BadParams, $"count must be 1..{BuyTask.MaxCount}");
+            if (string.IsNullOrWhiteSpace(item)) throw new CommandError(ErrorCodes.BadParams, "item is empty");
+            if (!EntityReader.TryResolve(id, out var e) || e is not NPC npc)
+                throw new CommandError(ErrorCodes.BadParams, $"no NPC {id} (ids come from get_entities)");
+            if (!Visibility.IsEntityVisible(npc))
+                throw new CommandError(ErrorCodes.NotVisible, $"entity {id} is not visible");
+            if (EntityReader.KindOf(npc) != EntityKind.Town || !CanChat(npc))
+                throw new CommandError(ErrorCodes.BadParams, $"{npc.GivenOrTypeName} is not a town NPC you can talk to");
+            if (!NPCShopDatabase.AllShops.Any(s => s.NpcType == npc.type))
+                throw new CommandError(ErrorCodes.BadParams, $"{npc.GivenOrTypeName} has no shop");
+            var task = new BuyTask(npc, item, count);
+            TaskHost.Start(task);
+            return new { Started = true, Task = task.Name, Npc = npc.GivenOrTypeName, Item = item.Trim(), Count = count };
         }, isAction: true);
     }
 

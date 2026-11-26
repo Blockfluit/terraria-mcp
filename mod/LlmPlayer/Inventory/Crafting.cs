@@ -18,6 +18,11 @@ public sealed record RecipeView(string Result, int Stack, List<IngredientView> I
 
 public sealed record CraftResult(string Item, int Crafted, int Requested, string? Reason, int DroppedAtFeet);
 
+public sealed record CraftedStep(string Item, int Crafted, int Planned);
+
+/// <summary>craft with_intermediates: the requested item's outcome plus every intermediate craft, in order.</summary>
+public sealed record ChainCraftResult(string Item, int Crafted, int Requested, List<CraftedStep> Intermediates, string? Reason, int DroppedAtFeet);
+
 /// <summary>
 /// Reading and crafting recipes exactly as the crafting UI does. Main thread only.
 /// <para>Availability is always the game's own: <see cref="Recipe.FindRecipes"/> fills <c>Main.availableRecipe</c>
@@ -112,6 +117,111 @@ public static class Crafting
         if (dropped > 0)
             reason = (reason == null ? "" : reason + "; ") + $"inventory full: {dropped} dropped at the player's feet";
         return new CraftResult(picked.createItem.Name, crafted, count, reason, dropped);
+    }
+
+    /// <summary>
+    /// craft with_intermediates: like <see cref="Craft"/>, but ingredients the player is short of are crafted first from
+    /// their own recipes when possible (<see cref="CraftChain"/> plans it from the items the player has and the stations
+    /// in range now). Every craft, intermediate or final, is a normal <see cref="CraftOnce"/> of a recipe the game lists
+    /// as available at that moment; if one isn't (the plan was off, e.g. a hidden condition), it stops there and reports
+    /// what was crafted. Throws like <see cref="Craft"/> when no plan works (missing_station if the item's own recipe
+    /// lacks a station, else missing_item with the chain explanation).
+    /// </summary>
+    public static ChainCraftResult CraftWithIntermediates(Player p, string query, int count)
+    {
+        ChainCraftResult? result = null;
+        WithoutGuideItem(() => result = ChainInner(p, query, count));
+        return result!;
+    }
+
+    private static ChainCraftResult ChainInner(Player p, string query, int count)
+    {
+        Refresh(p);
+        var all = AllRecipes().ToList();
+        var matches = RecipeMath.MatchResults(all.Select(ResultName).ToList(), query);
+        if (matches.Count == 0)
+            throw new CommandError(ErrorCodes.MissingItem, $"no recipe makes '{query.Trim()}' (check the item name with list_recipes)");
+
+        var byResult = all.GroupBy(r => r.createItem.type).ToDictionary(g => g.Key, g => g.ToList());
+        var chainCache = new Dictionary<int, ChainRecipe>();
+        ChainRecipe ToChainCached(Recipe r) => chainCache.TryGetValue(r.RecipeIndex, out var c) ? c : chainCache[r.RecipeIndex] = ToChain(p, r);
+        IReadOnlyList<ChainRecipe> RecipesFor(int type) =>
+            byResult.TryGetValue(type, out var list) ? list.Select(ToChainCached).ToList() : Array.Empty<ChainRecipe>();
+
+        // Candidates in the same preference order as plain craft (available, then stations met, then fewest missing).
+        var available = new HashSet<int>(AvailableRecipes().Select(r => r.RecipeIndex));
+        var candidates = matches.Select(i => all[i])
+            .OrderByDescending(r => available.Contains(r.RecipeIndex))
+            .ThenByDescending(r => MissingStations(p, r).Count == 0)
+            .ThenBy(r => RecipeMath.Missing(Ingredients(p, r)).Count)
+            .ToList();
+
+        var owned = OwnedItems(p);
+        ChainPlan? firstFailure = null;
+        foreach (var r in candidates)
+        {
+            var plan = CraftChain.Plan(ToChainCached(r), count, owned, RecipesFor);
+            if (plan.Ok) return Execute(p, r, count, plan);
+            firstFailure ??= plan;
+        }
+        var best = candidates[0];
+        var stations = MissingStations(p, best);
+        if (stations.Count > 0)
+            throw new CommandError(ErrorCodes.MissingStation,
+                $"{best.createItem.Name} needs: {string.Join(", ", stations)} (stand near it; stations count within a few tiles)");
+        throw new CommandError(ErrorCodes.MissingItem, $"can't craft {best.createItem.Name} x{count}, even with intermediates: {firstFailure!.Problem}");
+    }
+
+    private static ChainCraftResult Execute(Player p, Recipe top, int count, ChainPlan plan)
+    {
+        var steps = new List<CraftedStep>();
+        int dropped = 0, topCrafted = 0;
+        string? reason = null;
+        for (int si = 0; si < plan.Steps.Count; si++)
+        {
+            var step = plan.Steps[si];
+            var r = Main.recipe[step.RecipeId];
+            int crafted = 0;
+            while (crafted < step.Times && IsAvailable(r))
+            {
+                dropped += CraftOnce(p, r);
+                crafted++;
+            }
+            bool isTop = si == plan.Steps.Count - 1; // the plan always ends with the requested recipe
+            if (isTop) topCrafted = crafted;
+            else steps.Add(new CraftedStep(r.createItem.Name, crafted, step.Times));
+            if (crafted < step.Times)
+            {
+                var missing = RecipeMath.Missing(Ingredients(p, r));
+                var lacking = MissingStations(p, r);
+                reason = $"stopped at {r.createItem.Name}: crafted {crafted} of {step.Times}" +
+                    (missing.Count > 0 ? $" (next one needs {RecipeMath.Describe(missing)})"
+                    : lacking.Count > 0 ? $" (missing {string.Join(", ", lacking)})"
+                    : " (recipe no longer available)");
+                break;
+            }
+        }
+        if (dropped > 0)
+            reason = (reason == null ? "" : reason + "; ") + $"inventory full: {dropped} dropped at the player's feet";
+        return new ChainCraftResult(top.createItem.Name, topCrafted, count, steps, reason, dropped);
+    }
+
+    /// <summary>The planner's view of a recipe: ingredients with every item type they accept (recipe groups), and
+    /// whether its stations and conditions are met right now.</summary>
+    private static ChainRecipe ToChain(Player p, Recipe r)
+    {
+        var ings = new List<ChainIngredient>();
+        foreach (var req in r.requiredItem)
+        {
+            if (req.IsAir) continue;
+            var accepted = new HashSet<int> { req.type };
+            foreach (int g in r.acceptedGroups)
+                if (RecipeGroup.recipeGroups.TryGetValue(g, out var group) && group.ContainsItem(req.type))
+                    accepted.UnionWith(group.ValidItems);
+            ings.Add(new ChainIngredient(IngredientName(r, req), req.type, accepted, req.stack));
+        }
+        var missing = MissingStations(p, r);
+        return new ChainRecipe(r.RecipeIndex, r.createItem.Name, r.createItem.type, r.createItem.stack, ings, missing.Count == 0, missing);
     }
 
     /// <summary>One craft, as Main.CraftItem. Returns how many result items had to be dropped (inventory full).</summary>
