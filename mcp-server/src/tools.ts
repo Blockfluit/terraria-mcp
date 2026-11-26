@@ -95,6 +95,14 @@ const TOOLS: ToolDef[] = [
     readOnly: true,
   },
   {
+    name: "inspect",
+    description:
+      "What exactly is on one visible tile: {tile (name or null), solid, cuttable (grass/plants placing replaces), wall, liquid, protected, pickPower}. get_map draws small objects (saplings, rocks, herbs) as '.'; use this when a build or placement says a spot isn't empty." +
+      COORDS,
+    shape: { x: tileX(), y: tileY() },
+    readOnly: true,
+  },
+  {
     name: "get_inventory",
     description:
       "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game).",

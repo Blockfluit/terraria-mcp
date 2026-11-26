@@ -22,6 +22,28 @@ public static class ObserveCommands
     {
         CommandRouter.Register("get_state", _ => StateReader.Read(), isAction: false);
 
+        // What exactly is on one visible tile: get_map draws small objects (saplings, rocks, herbs) as air.
+        CommandRouter.Register("inspect", p =>
+        {
+            int x = Params.Int(p, "x"), y = Params.Int(p, "y");
+            if (!WorldGen.InWorld(x, y)) throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
+            if (!Visibility.IsTileVisible(x, y)) throw new CommandError(ErrorCodes.NotVisible, $"({x},{y}) is not visible");
+            var t = Main.tile[x, y];
+            var info = new GameTileGrid(Main.LocalPlayer).Get(x, y);
+            return new
+            {
+                X = x, Y = y,
+                Tile = t.HasTile ? TileClass.Name(t.TileType) : null,
+                Solid = t.HasTile && Main.tileSolid[t.TileType] && !t.IsActuated,
+                Cuttable = t.HasTile && Main.tileCut[t.TileType],
+                Wall = t.WallType == 0 ? null
+                    : Terraria.ID.WallID.Search.TryGetName(t.WallType, out var wn) ? wn : $"wall {t.WallType}",
+                Liquid = t.LiquidAmount > 0 ? (t.LiquidType == Terraria.ID.LiquidID.Lava ? "lava" : t.LiquidType == Terraria.ID.LiquidID.Honey ? "honey" : "water") : null,
+                Protected = Safety.Protection.IsProtected(x, y),
+                PickPower = t.HasTile && Main.tileSolid[t.TileType] ? info.PickPowerRequired : (int?)null,
+            };
+        }, isAction: false);
+
         CommandRouter.Register("get_map", p =>
         {
             int radius = Params.Int(p, "radius", 20);
