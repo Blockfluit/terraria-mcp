@@ -21,8 +21,9 @@ public sealed record CraftResult(string Item, int Crafted, int Requested, string
 /// <summary>
 /// Reading and crafting recipes exactly as the crafting UI does. Main thread only.
 /// <para>Availability is always the game's own: <see cref="Recipe.FindRecipes"/> fills <c>Main.availableRecipe</c>
-/// from the player's items (inventory, void bag, open chest), <c>Player.adjTile</c> (stations in range, updated
-/// every tick by <c>Player.AdjTiles</c>), recipe conditions (water, biome, …) and <c>RecipeLoader.RecipeAvailable</c>.
+/// from the player's items (inventory, void bag, open chest), <c>Player.adjTile</c> (stations in range, refreshed
+/// by <see cref="Refresh"/> before every lookup), recipe conditions (water, biome, …) and
+/// <c>RecipeLoader.RecipeAvailable</c>.
 /// A craft is only attempted for a recipe in that list.</para>
 /// <para>A craft mirrors <c>Main.CraftItem</c> (the method behind clicking a recipe), except the result goes into the
 /// inventory instead of the mouse cursor: clone <c>createItem</c>, roll its prefix, <see cref="Recipe.Create"/>
@@ -45,7 +46,7 @@ public static class Crafting
         int total = 0;
         WithoutGuideItem(() =>
         {
-            Recipe.FindRecipes();
+            Refresh(Main.LocalPlayer);
             foreach (var r in craftableOnly ? AvailableRecipes() : AllRecipes())
             {
                 if (!RecipeMath.NameFilter(ResultName(r), name)) continue;
@@ -77,7 +78,7 @@ public static class Crafting
 
     private static CraftResult CraftInner(Player p, string query, int count)
     {
-        Recipe.FindRecipes();
+        Refresh(p);
         var candidates = AllRecipes().ToList();
         var matches = RecipeMath.MatchResults(candidates.Select(ResultName).ToList(), query);
         if (matches.Count == 0)
@@ -140,6 +141,17 @@ public static class Crafting
         if (missing.Count > 0)
             return new CommandError(ErrorCodes.MissingItem, $"{r.createItem.Name} needs {RecipeMath.Describe(missing)}");
         return new CommandError(ErrorCodes.MissingItem, $"{r.createItem.Name} can't be crafted right now (a mod or hidden condition blocks it)");
+    }
+
+    /// <summary>
+    /// Re-detect the stations in range, then the craftable recipes. Vanilla only calls <c>Player.AdjTiles</c> from
+    /// <c>Player.Update</c> while the inventory is open, and the AI never opens it, so without this
+    /// <c>Player.adjTile</c> stays stale and a Work Bench right next to the player doesn't count.
+    /// </summary>
+    private static void Refresh(Player p)
+    {
+        p.AdjTiles();
+        Recipe.FindRecipes();
     }
 
     // ---- recipe facts ------------------------------------------------------------------------------------------
