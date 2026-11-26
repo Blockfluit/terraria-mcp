@@ -6,13 +6,13 @@ using Terraria;
 namespace LlmPlayer.Observe;
 
 /// <summary>
-/// find: nearest visible ore / tree / chest / station / npc / item, at most 10.
+/// find: nearest visible ore / tree / chest / station / bed / npc / item, at most 10.
 /// Ores: one result per vein (same name within 3 tiles collapses). Trees: the bottom of the trunk (or a root beside it).
-/// Chests and stations: the object's top-left tile. NPCs and items: their standing tile.
+/// Chests, stations and beds: the object's top-left tile. NPCs and items: their standing tile.
 /// </summary>
 public static class Finder
 {
-    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "npc", "item" };
+    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item" };
     public const int DefaultRadius = 60;
     public const int MaxRadius = 100;
     private const int OreClusterRadius = 3;
@@ -59,11 +59,12 @@ public static class Finder
                 "tree" => TileClass.IsTree(type) && IsTreeBase(x, y),
                 "chest" => TileClass.IsContainer(type),
                 "station" => TileClass.IsStation(type),
+                "bed" => LlmPlayer.Interact.BedAccess.IsBed(type),
                 _ => false,
             };
             if (!match || !Visibility.IsTileVisible(x, y, screen, p)) continue;
             int rx = x, ry = y;
-            if (cat is "chest" or "station") (rx, ry) = TileClass.ObjectOrigin(x, y, tile);
+            if (cat is "chest" or "station" or "bed") (rx, ry) = TileClass.ObjectOrigin(x, y, tile);
             if (!seen.Add((rx, ry))) continue;
             list.Add(new FindCandidate(TileClass.Name(type), rx, ry));
         }

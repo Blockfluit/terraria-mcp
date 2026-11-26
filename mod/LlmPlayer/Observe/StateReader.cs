@@ -46,6 +46,7 @@ public static class StateReader
         if (threats != null) state["NearbyHostiles"] = threats;
         var bosses = Bosses(p, x, y);
         if (bosses.Count > 0) state["Boss"] = bosses;
+        if (LlmPlayer.Interact.ChestAccess.OpenInfo(p) is { } chest) state["OpenChest"] = chest;
         var events = WorldEvents();
         if (events.Count > 0) state["WorldEvents"] = events;
         state["Driver"] = LlmPlayer.Control.ControlState.Driver.WireName();

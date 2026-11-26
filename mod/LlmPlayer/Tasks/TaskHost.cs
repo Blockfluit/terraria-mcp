@@ -37,8 +37,13 @@ public sealed class TaskHost : ModSystem
 {
     public static TaskRunner<GameCtx> Runner { get; private set; } = new();
 
-    /// <summary>Start a task, cancelling the running one with reason "replaced". Main thread only.</summary>
-    public static void Start(IGameTask<GameCtx> task) => Runner.Start(task, GameCtx.ForLocalPlayer());
+    /// <summary>Start a task, cancelling the running one with reason "replaced". Main thread only. Any other task than
+    /// open_chest closes an open chest first (vanilla would close it anyway once the player walks out of reach).</summary>
+    public static void Start(IGameTask<GameCtx> task)
+    {
+        if (task is not OpenChestTask && Main.LocalPlayer is { } p) Interact.ChestAccess.Close(p);
+        Runner.Start(task, GameCtx.ForLocalPlayer());
+    }
 
     /// <summary>Cancel the running task (no-op when idle). Returns the cancelled task's name, or null.</summary>
     public static string? Cancel(string reason)
@@ -93,6 +98,7 @@ public sealed class TaskHost : ModSystem
     {
         if (d != Driver.User) return;
         Cancel(reason);
+        if (Main.LocalPlayer is { active: true } pl) Interact.ChestAccess.Close(pl); // hand back with no chest left open
         Reflexes.Reset(Main.LocalPlayer is { active: true } p ? p : null);
     }
 

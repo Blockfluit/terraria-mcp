@@ -19,7 +19,7 @@ public interface IUninterruptibleTask
 /// <item>Idle: no task, <c>wait</c>.</item>
 /// <item>Defendable: <c>move_to</c>, <c>explore</c>, <c>talk_to_npc</c> (walking to the NPC; opening the chat is
 /// instant), <c>chop_tree</c>, <c>mine</c>, <c>mine_area</c>, <c>pick_up_items</c>, <c>place</c>,
-/// <c>use_item</c>. A paused task is simply not ticked; all their timers count their own ticks, so a defence doesn't
+/// <c>use_item</c>, <c>open_chest</c> and <c>use_bed</c> (walking there; the right-click is instant). A paused task is simply not ticked; all their timers count their own ticks, so a defence doesn't
 /// use up a swing timeout, pickup deadline or stuck counter. A swing in progress finishes before the defender
 /// switches to its weapon (HeldItemLease waits for the use to end).</item>
 /// <item>Busy: <c>attack</c> (it fights already), any task reporting <see cref="IUninterruptibleTask.Uninterruptible"/>
@@ -31,6 +31,7 @@ public static class TaskPhases
     private static readonly HashSet<string> Defendable = new(StringComparer.Ordinal)
     {
         "move_to", "explore", "talk_to_npc", "chop_tree", "mine", "mine_area", "pick_up_items", "place", "use_item",
+        "open_chest", "use_bed",
     };
 
     public static TaskPhase Of(string? taskName) => taskName switch

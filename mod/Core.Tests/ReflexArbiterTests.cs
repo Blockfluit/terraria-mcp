@@ -202,6 +202,8 @@ public class TaskPhasesTests
     [InlineData("move_to", TaskPhase.Defendable)]
     [InlineData("explore", TaskPhase.Defendable)]
     [InlineData("talk_to_npc", TaskPhase.Defendable)]
+    [InlineData("open_chest", TaskPhase.Defendable)]
+    [InlineData("use_bed", TaskPhase.Defendable)]
     [InlineData("chop_tree", TaskPhase.Defendable)]
     [InlineData("mine", TaskPhase.Defendable)]
     [InlineData("mine_area", TaskPhase.Defendable)]

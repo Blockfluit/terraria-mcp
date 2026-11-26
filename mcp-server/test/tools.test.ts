@@ -51,6 +51,7 @@ describe("registerTools", () => {
         "get_inventory", "get_task", "cancel_task", "move_to", "explore", "mine", "mine_area",
         "chop_tree", "pick_up_items", "select_hotbar", "equip", "use_item", "place", "craft",
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
+        "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
       ].sort(),
     );
   });
@@ -140,5 +141,69 @@ describe("registerTools", () => {
 
     const again = JSON.parse((await call(client, "get_state")).content[0].text);
     expect(again).toEqual({ x: 5, y: 6 });
+  });
+
+  describe("chests and beds", () => {
+    it("open_chest forwards x,y or nothing, and rejects a lone coordinate", async () => {
+      const conn = new FakeConn(() => ({ started: true, task: "open_chest" }));
+      const client = await setup(conn);
+      expect((await call(client, "open_chest", { x: 10, y: 20 })).isError).toBeFalsy();
+      expect((await call(client, "open_chest")).isError).toBeFalsy();
+      const bad = await call(client, "open_chest", { x: 10 });
+      expect(bad.isError).toBe(true);
+      expect(bad.content[0].text).toMatch(/^bad_params: give both x and y/);
+      expect(conn.calls).toEqual([
+        { method: "open_chest", params: { x: 10, y: 20 } },
+        { method: "open_chest", params: {} },
+      ]);
+    });
+
+    it("chest_deposit needs exactly one mode and count only with item", async () => {
+      const conn = new FakeConn(() => ({ moved: [{ name: "Wood", count: 50 }] }));
+      const client = await setup(conn);
+      expect((await call(client, "chest_deposit", { item: "Wood", count: 50 })).isError).toBeFalsy();
+      expect((await call(client, "chest_deposit", { all: true })).isError).toBeFalsy();
+      expect((await call(client, "chest_deposit", { quick_stack: true })).isError).toBeFalsy();
+      for (const args of [{}, { item: "Wood", all: true }, { all: true, quick_stack: true }, { all: true, count: 3 }]) {
+        const res = await call(client, "chest_deposit", args);
+        expect(res.isError).toBe(true);
+        expect(res.content[0].text).toMatch(/^bad_params:/);
+      }
+      expect(conn.calls.map((c) => c.params)).toEqual([{ item: "Wood", count: 50 }, { all: true }, { quick_stack: true }]);
+    });
+
+    it("chest_withdraw takes item or all, and passes mod errors through", async () => {
+      const conn = new FakeConn((_m, p) => {
+        if (p.item === "Gel") throw new ModError("bad_params", "inventory_full: no room in the inventory for that item");
+        return { moved: [] };
+      });
+      const client = await setup(conn);
+      expect((await call(client, "chest_withdraw", { all: true })).isError).toBeFalsy();
+      expect((await call(client, "chest_withdraw", { item: "Wood" })).isError).toBeFalsy();
+      expect((await call(client, "chest_withdraw", { item: "Wood", all: true })).isError).toBe(true);
+      expect((await call(client, "chest_withdraw", {})).isError).toBe(true);
+      const full = await call(client, "chest_withdraw", { item: "Gel" });
+      expect(full.isError).toBe(true);
+      expect(full.content[0].text).toContain("inventory_full");
+    });
+
+    it("close_chest and use_bed forward to the mod", async () => {
+      const conn = new FakeConn((m) => (m === "close_chest" ? { closed: true } : { started: true }));
+      const client = await setup(conn);
+      expect(JSON.parse((await call(client, "close_chest")).content[0].text)).toEqual({ closed: true });
+      expect((await call(client, "use_bed", { x: 5, y: 6 })).isError).toBeFalsy();
+      expect((await call(client, "use_bed", { y: 6 })).isError).toBe(true);
+      expect(conn.calls.map((c) => c.method)).toEqual(["close_chest", "use_bed"]);
+    });
+
+    it("descriptions mention doors, openChest and the bed find category", async () => {
+      const client = await setup(new FakeConn());
+      const tools = (await client.listTools()).tools;
+      const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
+      expect(desc("get_state")).toContain("openChest");
+      expect(desc("get_map")).toContain("'D' closed door");
+      expect(JSON.stringify(tools.find((t) => t.name === "find")?.inputSchema)).toContain("bed");
+      expect(desc("open_chest")).toContain("locked");
+    });
   });
 });
