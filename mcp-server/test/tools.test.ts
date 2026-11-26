@@ -53,6 +53,7 @@ describe("registerTools", () => {
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
         "build_platforms", "unequip", "buy", "mine_vein",
         "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
+        "collect", "loot_chest", "explore_caves",
       ].sort(),
     );
   });
@@ -320,6 +321,68 @@ describe("registerTools", () => {
       expect(desc("get_map")).toContain("'D' closed door");
       expect(JSON.stringify(tools.find((t) => t.name === "find")?.inputSchema)).toContain("bed");
       expect(desc("open_chest")).toContain("locked");
+    });
+  });
+  describe("caves", () => {
+    it("find accepts the valuable category and describes life crystals, pots and orbs", async () => {
+      const conn = new FakeConn(() => [{ name: "Life Crystal", x: 10, y: 300, distance: 12 }]);
+      const client = await setup(conn);
+      expect((await call(client, "find", { category: "valuable" })).isError).toBeFalsy();
+      expect(conn.calls).toEqual([{ method: "find", params: { category: "valuable" } }]);
+      const desc = (await client.listTools()).tools.find((t) => t.name === "find")?.description ?? "";
+      for (const s of ["Life Crystal", "Pot", "Locked Gold Chest", "Enchanted Sword", "Demon Altar", "Shadow Orb", "Fallen Star"])
+        expect(desc).toContain(s);
+    });
+
+    it("collect needs x and y and forwards them", async () => {
+      const conn = new FakeConn(() => ({ started: true, task: "collect" }));
+      const client = await setup(conn);
+      expect((await call(client, "collect", { x: 3, y: 400 })).isError).toBeFalsy();
+      expect((await call(client, "collect", { x: 3 })).isError).toBe(true);
+      expect(conn.calls).toEqual([{ method: "collect", params: { x: 3, y: 400 } }]);
+    });
+
+    it("loot_chest forwards x,y or nothing, rejects a lone coordinate", async () => {
+      const conn = new FakeConn(() => ({ started: true, task: "loot_chest" }));
+      const client = await setup(conn);
+      expect((await call(client, "loot_chest", { x: 1, y: 2 })).isError).toBeFalsy();
+      expect((await call(client, "loot_chest")).isError).toBeFalsy();
+      const bad = await call(client, "loot_chest", { y: 2 });
+      expect(bad.isError).toBe(true);
+      expect(bad.content[0].text).toMatch(/^bad_params: give both x and y/);
+      expect(conn.calls.map((c) => c.params)).toEqual([{ x: 1, y: 2 }, {}]);
+    });
+
+    it("explore_caves forwards stop_on, collect_pots and limits, and rejects unknown kinds", async () => {
+      const conn = new FakeConn(() => ({ started: true, task: "explore_caves" }));
+      const client = await setup(conn);
+      const args = { radius: 60, max_seconds: 90, stop_on: ["life_crystal", "chest"], collect_pots: true };
+      expect((await call(client, "explore_caves", args)).isError).toBeFalsy();
+      expect((await call(client, "explore_caves", { stop_on: [] })).isError).toBeFalsy();
+      expect((await call(client, "explore_caves", { stop_on: ["diamonds"] })).isError).toBe(true);
+      expect((await call(client, "explore_caves", { radius: 500 })).isError).toBe(true);
+      expect(conn.calls).toEqual([
+        { method: "explore_caves", params: args },
+        { method: "explore_caves", params: { stop_on: [] } },
+      ]);
+    });
+
+    it("explore_caves describes frontiers, torches, lava, stop_on and the result", async () => {
+      const client = await setup(new FakeConn());
+      const tool = (await client.listTools()).tools.find((t) => t.name === "explore_caves");
+      for (const s of ["unknown", "torches", "lava", "stop_on", "revealedTiles", "found", "stoppedBecause", "collect_pots"])
+        expect(tool?.description).toContain(s);
+      expect(Object.keys((tool?.inputSchema as { properties: object }).properties).sort()).toEqual(
+        ["collect_pots", "max_seconds", "radius", "stop_on", "torches"],
+      );
+    });
+
+    it("wait_for_task passes loot and exploration results through", async () => {
+      const result = { looted: [{ name: "Band of Regeneration", count: 1 }], left: [] };
+      const conn = new FakeConn(() => ({ current: null, lastFinished: { name: "loot_chest", status: "succeeded", result } }));
+      const client = await setup(conn);
+      const res = JSON.parse((await call(client, "wait_for_task", { timeout_s: 1 })).content[0].text);
+      expect(res.report.result).toEqual(result);
     });
   });
 });

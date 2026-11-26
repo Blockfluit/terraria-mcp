@@ -41,6 +41,16 @@ mod/LlmPlayer tModLoader mod inside Terraria
   tiles of any block (`max`, e.g. 20 Stone), without the surrounding rock. `find` locates ore and,
   with `category: "block"` and a name, blocks like Stone, Sand or Clay. Mining walks to a spot in reach,
   builds a platform to stand on in a shaft, or digs toward a tile no open spot can reach.
+- **Explore caves and loot them.** `explore_caves` explores underground through the open cave space, frontier by
+  frontier: it walks to the nearest reachable edge between known open space and unknown tiles (digging at most a
+  tile or two to connect), lights it with your torches, looks, and moves on. It never walks through lava, skips
+  openings next to it and keeps to safe falls. It stops when something you asked for comes into view (`stop_on`:
+  life crystals, chests, the Enchanted Sword shrine, pots, ore, altars, orbs, Fallen Stars), when time is up or when
+  nothing reachable is left within `radius`, and reports what it found, tiles revealed and torches placed.
+  `collect_pots` breaks pots on the way. `find` with `category: "valuable"` lists the same things by name
+  ("Life Crystal", "Pot", "Locked Gold Chest", "Demon Altar", "Shadow Orb (don't break)"…). `collect` breaks a pot,
+  life crystal, life fruit or the sword in stone with your pickaxe and picks up what drops. `loot_chest` opens a
+  chest, presses *Loot All* and closes it again.
 - **Fight without trading hits.** `attack` predicts when an enemy is about to touch the player (from its hitbox
   and velocity) and backs off or jumps instead, never into a hole or lava, while it keeps swinging or shooting.
   Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
@@ -76,7 +86,9 @@ The AI plays on your real saves, so the mod enforces these rules:
 - The first time you hand over control in a session, it backs up your `.plr` and `.wld` files to
   `Documents/My Games/Terraria/tModLoader/LlmPlayerBackups/<timestamp>/`. It keeps the newest 5.
 - It never breaks chests, furniture, doors, crafting stations, anything inside an NPC house, or
-  blocks near spawn. It never attacks town NPCs or critters.
+  blocks near spawn. It never attacks town NPCs or critters. Natural cave loot is the exception: pots, life
+  crystals, life fruit and the Enchanted Sword shrine's sword may be broken (but not in an NPC house or near spawn).
+  Shadow Orbs, Crimson Hearts and altars are never broken: breaking an orb has world effects.
 
 ## Setup
 
