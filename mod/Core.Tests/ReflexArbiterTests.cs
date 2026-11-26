@@ -1,4 +1,5 @@
 using LlmPlayer.Core.Combat;
+using LlmPlayer.Core.Tasks;
 using Xunit;
 
 namespace LlmPlayer.Core.Tests;
@@ -119,5 +120,182 @@ public class ReflexArbiterTests
         a.Reset();
         Assert.False(a.Defending);
         Assert.False(a.Tick(Calm()).DefendEnded);
+    }
+    // ---- release waits for the defender's swing -----------------------------------------------------------------
+
+    [Fact]
+    public void Release_WaitsForItemUseToEnd()
+    {
+        var a = new ReflexArbiter();
+        a.Tick(Calm(TaskPhase.Defendable) with { ThreatInReach = true });
+        for (int i = 1; i < ReflexArbiter.ReleaseGraceTicks; i++) a.Tick(Calm(TaskPhase.Defendable) with { UsingItem = true });
+        // Grace is over but the swing isn't: keep the controls.
+        for (int i = 0; i < 10; i++)
+        {
+            var d = a.Tick(Calm(TaskPhase.Defendable) with { UsingItem = true });
+            Assert.True(d.Defend);
+            Assert.False(d.DefendEnded);
+        }
+        var end = a.Tick(Calm(TaskPhase.Defendable));
+        Assert.False(end.Defend);
+        Assert.True(end.DefendEnded);
+    }
+
+    [Fact]
+    public void Release_ItemUseNeverEnding_GivesUpAfterMaxWait()
+    {
+        var a = new ReflexArbiter();
+        a.Tick(Calm(TaskPhase.Defendable) with { ThreatInReach = true });
+        var busy = Calm(TaskPhase.Defendable) with { UsingItem = true };
+        int ticks = 0;
+        ReflexDecision d;
+        do { d = a.Tick(busy); ticks++; } while (d.Defend && ticks < 1000);
+        Assert.True(d.DefendEnded);
+        Assert.Equal(ReflexArbiter.ReleaseGraceTicks + ReflexArbiter.MaxReleaseWaitTicks, ticks);
+    }
+
+    [Fact]
+    public void Release_ThreatReturnsWhileWaiting_ResetsWait()
+    {
+        var a = new ReflexArbiter();
+        a.Tick(Calm() with { ThreatInReach = true });
+        var busy = Calm() with { UsingItem = true };
+        for (int i = 0; i < ReflexArbiter.ReleaseGraceTicks + ReflexArbiter.MaxReleaseWaitTicks - 1; i++) Assert.True(a.Tick(busy).Defend);
+        a.Tick(Calm() with { ThreatInReach = true });
+        for (int i = 0; i < ReflexArbiter.ReleaseGraceTicks + ReflexArbiter.MaxReleaseWaitTicks - 1; i++) Assert.True(a.Tick(busy).Defend);
+        Assert.True(a.Tick(busy).DefendEnded);
+    }
+
+    [Fact]
+    public void UsingItem_DoesNotDelayStart()
+    {
+        // The task's tool is mid-swing when the threat arrives: the defence starts at once (the task stops being
+        // ticked, "use" is released); the reflex's HeldItemLease switches weapons once the swing ends.
+        var d = new ReflexArbiter().Tick(Calm(TaskPhase.Defendable) with { ThreatInReach = true, UsingItem = true });
+        Assert.True(d.Defend);
+        Assert.True(d.DefendStarted);
+    }
+
+    // ---- the chop_tree playtest bug -----------------------------------------------------------------------------
+
+    [Fact]
+    public void ChopTree_ZombieInReach_PausesTaskAndResumesAfterGrace()
+    {
+        var a = new ReflexArbiter();
+        var chopping = Calm(TaskPhases.Of("chop_tree"));
+        Assert.False(a.Tick(chopping).Defend); // task ticks
+        var hit = a.Tick(chopping with { ThreatInReach = true });
+        Assert.True(hit.Defend);                // task paused
+        Assert.True(hit.DefendStarted);
+        for (int i = 1; i < ReflexArbiter.ReleaseGraceTicks; i++) Assert.True(a.Tick(chopping).Defend);
+        var resume = a.Tick(chopping);
+        Assert.True(resume.DefendEnded);
+        Assert.False(resume.Defend);            // task ticks again this tick
+    }
+}
+
+public class TaskPhasesTests
+{
+    [Theory]
+    [InlineData(null, TaskPhase.Idle)]
+    [InlineData("wait", TaskPhase.Idle)]
+    [InlineData("move_to", TaskPhase.Defendable)]
+    [InlineData("explore", TaskPhase.Defendable)]
+    [InlineData("talk_to_npc", TaskPhase.Defendable)]
+    [InlineData("chop_tree", TaskPhase.Defendable)]
+    [InlineData("mine", TaskPhase.Defendable)]
+    [InlineData("mine_area", TaskPhase.Defendable)]
+    [InlineData("pick_up_items", TaskPhase.Defendable)]
+    [InlineData("place", TaskPhase.Defendable)]
+    [InlineData("use_item", TaskPhase.Defendable)]
+    [InlineData("attack", TaskPhase.Busy)]
+    [InlineData("some_future_task", TaskPhase.Busy)]
+    [InlineData("Chop_Tree", TaskPhase.Busy)]
+    public void ByName(string? name, TaskPhase expected) => Assert.Equal(expected, TaskPhases.Of(name));
+
+    private sealed class FakeTask(string name) : IGameTask<object>
+    {
+        public string Name => name;
+        public GameTaskStatus Tick(object ctx) => GameTaskStatus.Running;
+        public string? Reason => null;
+        public string? Progress => null;
+        public void OnCancel(object ctx) { }
+    }
+
+    private sealed class FakeUseTask : IGameTask<object>, IUninterruptibleTask
+    {
+        public bool Pressed;
+        public string Name => "use_item";
+        public bool Uninterruptible => Pressed;
+        public GameTaskStatus Tick(object ctx) => GameTaskStatus.Running;
+        public string? Reason => null;
+        public string? Progress => null;
+        public void OnCancel(object ctx) { }
+    }
+
+    [Fact]
+    public void ByTask_UsesName_NullIsIdle()
+    {
+        Assert.Equal(TaskPhase.Idle, TaskPhases.Of<object>(null));
+        Assert.Equal(TaskPhase.Defendable, TaskPhases.Of(new FakeTask("mine")));
+        Assert.Equal(TaskPhase.Busy, TaskPhases.Of(new FakeTask("attack")));
+    }
+
+    [Fact]
+    public void ByTask_UninterruptibleIsBusy()
+    {
+        var t = new FakeUseTask();
+        Assert.Equal(TaskPhase.Defendable, TaskPhases.Of(t));
+        t.Pressed = true;
+        Assert.Equal(TaskPhase.Busy, TaskPhases.Of(t));
+    }
+
+    [Fact]
+    public void UseItemPressedMidDefence_EndsDefenceImmediately()
+    {
+        var a = new ReflexArbiter();
+        var t = new FakeUseTask();
+        var inputs = new ReflexInputs(TaskPhases.Of(t), true, true, 100, 100, 0.35f, false, true);
+        Assert.True(a.Tick(inputs).Defend);
+        t.Pressed = true;
+        var d = a.Tick(inputs with { Task = TaskPhases.Of(t) });
+        Assert.False(d.Defend);
+        Assert.True(d.DefendEnded);
+    }
+}
+
+public class ThreatRulesTests
+{
+    private const int Never = int.MaxValue;
+
+    [Fact]
+    public void Melee_WithinReach_IsThreat()
+    {
+        Assert.True(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 2.5f, Never, lineOfSight: false));
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 2.6f, Never, lineOfSight: true));
+    }
+
+    [Fact]
+    public void Melee_RecentContact_ExtendsReachByOneTile()
+    {
+        Assert.True(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 3.4f, 10, lineOfSight: true));
+        Assert.True(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 3.5f, ThreatRules.ContactMemoryTicks, lineOfSight: true));
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 3.6f, 10, lineOfSight: true));
+    }
+
+    [Fact]
+    public void Melee_OldContact_NoExtension()
+    {
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 3f, ThreatRules.ContactMemoryTicks + 1, lineOfSight: true));
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Melee, 2.5f, 3f, -1, lineOfSight: true));
+    }
+
+    [Fact]
+    public void Ranged_NeedsLineOfSight_UnlessItJustTouchedUs()
+    {
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Ranged, 15f, 5f, Never, lineOfSight: false));
+        Assert.True(ThreatRules.IsThreat(WeaponStyle.Ranged, 15f, 5f, Never, lineOfSight: true));
+        Assert.True(ThreatRules.IsThreat(WeaponStyle.Ranged, 15f, 1f, 5, lineOfSight: false));
+        Assert.False(ThreatRules.IsThreat(WeaponStyle.Ranged, 15f, CombatStance.RangedMaxTiles + 0.1f, 5, lineOfSight: true));
     }
 }

@@ -50,8 +50,10 @@ public static class CombatKit
         Collision.CanHitLine(p.position, p.width, p.height, n.position, n.width, n.height);
 
     /// <summary>
-    /// Nearest visible attackable NPC the weapon can hit right now: within melee reach, or within the ranged band's
-    /// max with line of sight. Null if none.
+    /// Nearest visible attackable NPC the weapon can hit right now (<see cref="ThreatRules"/>): within melee reach, or
+    /// within the ranged band's max with line of sight; an NPC that hurt the player by contact within the last second
+    /// also counts up to one tile beyond melee reach. Distances are to the nearest point of the NPC's hitbox
+    /// (<see cref="Offset"/>). Null if none.
     /// </summary>
     public static NPC? NearestThreat(Player p, Weapon w)
     {
@@ -62,13 +64,33 @@ public static class CombatKit
         {
             if (!n.active || !TargetRules.IsAttackable(Traits(n)) || !Visibility.IsEntityVisible(n, screen, p)) continue;
             float d = Offset(p, n).Length();
-            float range = w.Style == WeaponStyle.Melee ? w.Reach : CombatStance.RangedMaxTiles;
-            if (d > range || d >= bestDist) continue;
-            if (w.Style == WeaponStyle.Ranged && !LineOfSight(p, n)) continue;
+            if (d >= bestDist) continue;
+            int sinceContact = TicksSinceContact(n);
+            if (d > ThreatRules.Range(w.Style, w.Reach, sinceContact)) continue;
+            if (ThreatRules.NeedsLineOfSight(w.Style, sinceContact) && !LineOfSight(p, n)) continue;
             best = n;
             bestDist = d;
         }
         return best;
+    }
+
+    // ---- contact hits -------------------------------------------------------------------------------------------
+
+    private static readonly (int Type, uint Tick)[] LastContact = new (int, uint)[Main.maxNPCs];
+
+    internal static void RecordContact(NPC npc)
+    {
+        if (npc.whoAmI >= 0 && npc.whoAmI < Main.maxNPCs) LastContact[npc.whoAmI] = (npc.type, Main.GameUpdateCount);
+    }
+
+    /// <summary>Ticks since this NPC last hurt the local player by touching it, or int.MaxValue if it never did.</summary>
+    public static int TicksSinceContact(NPC n)
+    {
+        if (n.whoAmI < 0 || n.whoAmI >= Main.maxNPCs) return int.MaxValue;
+        var (type, tick) = LastContact[n.whoAmI];
+        if (tick == 0 || type != n.type || tick > Main.GameUpdateCount) return int.MaxValue;
+        uint dt = Main.GameUpdateCount - tick;
+        return dt > int.MaxValue ? int.MaxValue : (int)dt;
     }
 
     // ---- weapons --------------------------------------------------------------------------------------------------
@@ -203,6 +225,16 @@ public static class CombatKit
     /// <summary>Did NPC slot <paramref name="id"/> (of <paramref name="type"/>) die at or after tick <paramref name="since"/>?</summary>
     public static bool WasKilled(int id, int type, uint since) =>
         id >= 0 && id < Main.maxNPCs && Killed[id].Type == type && Killed[id].Tick >= since && Killed[id].Tick != 0;
+}
+
+/// <summary>Records which NPC last hurt the local player by contact (auto-defend treats it as a threat a little
+/// beyond reach, <see cref="ThreatRules"/>).</summary>
+public sealed class CombatContactTracker : ModPlayer
+{
+    public override void OnHitByNPC(NPC npc, Player.HurtInfo hurtInfo)
+    {
+        if (Player.whoAmI == Main.myPlayer) CombatKit.RecordContact(npc);
+    }
 }
 
 /// <summary>Records NPC deaths so an attack can tell "killed" from "despawned".</summary>
