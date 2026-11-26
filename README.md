@@ -120,6 +120,7 @@ In game: *Workshop → Manage Mods → LLM Player → Config*.
 | QuickHealThreshold | 0.35 | Reflex: quick-heal below this fraction of max life |
 | PauseWhenIdle | off | Singleplayer only: pause while the AI is driving but has no task |
 | ShowPathOverlay | on | Draw the planned path in game |
+| DevCommands | off | Allow `dev_save_and_exit` (save and quit the game) for `scripts/dev-reload.sh`, see below |
 
 `set_reflexes` changes the reflex options at runtime.
 
@@ -133,6 +134,45 @@ scripts/build-mod.sh              # compile and package the mod
 ```
 
 The design and implementation plan are in `docs/superpowers/`.
+
+### Development: one-command reload
+
+tModLoader refuses to build the mod while it's loaded, and only the menus can load a world. From WSL,
+
+```bash
+scripts/dev-reload.sh
+```
+
+does the whole loop: it saves and quits the game, rebuilds the mod, relaunches tModLoader through Steam,
+re-enters the same character and world, then calls `request_control` to switch AI mode on.
+
+Enable it once: in game, *Workshop → Manage Mods → LLM Player → Config*, turn on **DevCommands**. It's off by
+default because anyone who can reach the bridge port (BindAddress `0.0.0.0` listens on your LAN too) could then
+close your game. It always saves first, but set BindAddress to `127.0.0.1` if you use mirrored networking.
+
+How it works:
+
+1. The script finds the game like the MCP server does (`TERRARIA_HOST`, else the WSL default gateway; port
+   `TERRARIA_PORT`, default 7878). It sends the bridge command `dev_save_and_exit {"reload":true}` (not an MCP
+   tool). The mod runs the same code as the in-game *Save & Exit* button: the player and the world are saved.
+   It writes `LlmPlayerAutoload.json` to `Documents/My Games/Terraria/tModLoader/` and exits the way the title
+   screen's *Exit* button does. The command only works in single player, and it refuses while an item is held
+   on the mouse cursor. At the title screen it just exits.
+2. The script waits up to 60 s for the port to close and the tModLoader process to end. It never kills the
+   game. If the game is running but the bridge doesn't answer, the script stops without doing anything.
+3. `scripts/build-mod.sh`, then `steam://rungameid/1281930`.
+4. At the title screen, once per launch, the mod reads the autoload file and deletes it before doing anything,
+   so it can't loop. It then picks that player and world and presses *Play* for you. If something doesn't
+   match (unknown name, Journey mode mismatch, a file older than 10 minutes), it shows the reason on screen and
+   loads nothing.
+5. The script waits up to 5 min for `get_state` to answer, prints it, and calls `request_control`. A freshly
+   launched game lets the AI take control, so the AI drives right away. Press **Insert** at any time to take
+   control back. After that, only your own Insert hands control over again in that game session. If the call
+   is refused (for example, the player is dead), the script tells you to press Insert.
+
+Options: `--player NAME --world NAME` enters a different save, which also works when the game isn't running.
+`--no-build` skips the build. `--no-launch` stops after the build. `scripts/test-dev-reload.sh` checks the
+script's argument handling.
 
 ## Status
 
