@@ -39,5 +39,12 @@ public sealed class LlmConfig : ModConfig
     [DefaultValue(true)]
     public bool ShowPathOverlay = true;
 
+    /// <summary>
+    /// Allow the developer bridge command dev_save_and_exit (scripts/dev-reload.sh): save the player and world, then
+    /// exit the game. Off by default: anyone who can reach the bridge port could close the game (it always saves first).
+    /// </summary>
+    [DefaultValue(false)]
+    public bool DevCommands = false;
+
     public override void OnChanged() => BridgeSystem.OnConfigChanged(this);
 }
