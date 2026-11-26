@@ -97,6 +97,19 @@ public class WeaponScoringTests
     }
 
     [Fact]
+    public void Best_PrefersABowOverAShortswordOfSimilarDps()
+    {
+        // Copper Shortsword: 6 dmg, 12-tick animation, 2.5-tile reach; Copper Bow + Wooden Arrow: 11 dmg, 27 ticks.
+        var shortsword = new WeaponCandidate(0, 6, 12, 12, 0, 4, AutoReuse: false, Channel: false, WeaponStyle.Melee, 0f, 2.5f, true);
+        var bow = new WeaponCandidate(1, 11, 27, 27, 0, 4, AutoReuse: false, Channel: false, WeaponStyle.Ranged, 7f, 15f, true);
+        Assert.True(WeaponScoring.Dps(shortsword) > WeaponScoring.Dps(bow) * 0.9);
+        Assert.Equal(1, WeaponScoring.Best(new[] { shortsword, bow })?.Slot);
+        // A much stronger sword still wins.
+        var broadsword = shortsword with { Slot = 2, Damage = 20, ReachTiles = 3.5f };
+        Assert.Equal(2, WeaponScoring.Best(new[] { broadsword, bow })?.Slot);
+    }
+
+    [Fact]
     public void Best_TieGoesToLowerSlot()
     {
         Assert.Equal(1, WeaponScoring.Best(new[] { Sword(4, 10, 20), Sword(1, 10, 20) })?.Slot);

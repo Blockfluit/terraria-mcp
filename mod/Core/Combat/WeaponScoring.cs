@@ -30,7 +30,18 @@ public static class WeaponScoring
         return w.Damage * (1 + Math.Clamp(w.CritChance, 0, 100) / 100.0) * uses * 60.0 / cycle;
     }
 
-    /// <summary>Highest-DPS usable weapon; ties go to the lower slot. Null if none.</summary>
+    /// <summary>
+    /// How much of a weapon's DPS counts when choosing: short melee means standing inside the enemy's contact range
+    /// for every hit. Seen in game: a Copper Shortsword (2.5 tiles) beat a Copper Bow of about the same DPS and the
+    /// player took 126 damage killing one zombie. Ranged 1.0; melee under 3 tiles 0.6, under 4 tiles 0.8, else 1.0.
+    /// </summary>
+    public static double SafetyFactor(in WeaponCandidate w) =>
+        w.Style == WeaponStyle.Ranged ? 1.0 : w.ReachTiles < 3f ? 0.6 : w.ReachTiles < 4f ? 0.8 : 1.0;
+
+    /// <summary>The value weapons are chosen by: <see cref="Dps"/> × <see cref="SafetyFactor"/>.</summary>
+    public static double Score(in WeaponCandidate w) => Dps(w) * SafetyFactor(w);
+
+    /// <summary>Best usable weapon by <see cref="Score"/>; ties go to the lower slot. Null if none.</summary>
     public static WeaponCandidate? Best(IEnumerable<WeaponCandidate> weapons)
     {
         WeaponCandidate? best = null;
@@ -38,7 +49,7 @@ public static class WeaponScoring
         foreach (var w in weapons)
         {
             if (!w.Usable) continue;
-            double dps = Dps(w);
+            double dps = Score(w);
             if (dps <= 0) continue;
             if (best is { } b && (dps < bestDps || (dps == bestDps && b.Slot < w.Slot))) continue;
             best = w;
