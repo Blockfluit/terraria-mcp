@@ -51,6 +51,7 @@ describe("registerTools", () => {
         "get_inventory", "get_task", "cancel_task", "move_to", "explore", "mine", "mine_area",
         "chop_tree", "pick_up_items", "select_hotbar", "equip", "use_item", "place", "craft",
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
+        "build_platforms", "unequip", "buy",
       ].sort(),
     );
   });
@@ -119,5 +120,70 @@ describe("registerTools", () => {
 
     const again = JSON.parse((await call(client, "get_state")).content[0].text);
     expect(again).toEqual({ x: 5, y: 6 });
+  });
+
+  it("build_platforms forwards row parameters", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "build_platforms" }));
+    const client = await setup(conn);
+    const res = await call(client, "build_platforms", { x1: 100, x2: 140, y: 250, rows: 3, spacing: 8 });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([
+      { method: "build_platforms", params: { x1: 100, x2: 140, y: 250, rows: 3, spacing: 8 } },
+    ]);
+  });
+
+  it("build_platforms rejects rows out of range before calling the mod", async () => {
+    const conn = new FakeConn();
+    const client = await setup(conn);
+    const res = await call(client, "build_platforms", { x1: 1, x2: 2, y: 3, rows: 0 });
+    expect(res.isError).toBe(true);
+    expect(conn.calls).toEqual([]);
+  });
+
+  it("unequip needs exactly one of item or slot", async () => {
+    const conn = new FakeConn(() => ({ unequipped: "Hermes Boots" }));
+    const client = await setup(conn);
+    const both = await call(client, "unequip", { item: "Hermes Boots", slot: 3 });
+    expect(both.isError).toBe(true);
+    expect(both.content[0].text).toMatch(/^bad_params: give exactly one of item or slot/);
+    const neither = await call(client, "unequip", {});
+    expect(neither.isError).toBe(true);
+    expect(conn.calls).toEqual([]);
+    const ok = await call(client, "unequip", { slot: 3 });
+    expect(ok.isError).toBeFalsy();
+    expect(conn.calls).toEqual([{ method: "unequip", params: { slot: 3 } }]);
+  });
+
+  it("equip forwards an optional accessory slot and validates its range", async () => {
+    const conn = new FakeConn(() => ({ equipped: "Cloud in a Bottle", armorSlot: 4 }));
+    const client = await setup(conn);
+    const res = await call(client, "equip", { item: "Cloud in a Bottle", slot: 4 });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([{ method: "equip", params: { item: "Cloud in a Bottle", slot: 4 } }]);
+    const bad = await call(client, "equip", { item: "Cloud in a Bottle", slot: 1 });
+    expect(bad.isError).toBe(true);
+    expect(conn.calls).toHaveLength(1);
+  });
+
+  it("craft forwards with_intermediates", async () => {
+    const conn = new FakeConn(() => ({ item: "Lesser Healing Potion", crafted: 1, intermediates: [] }));
+    const client = await setup(conn);
+    await call(client, "craft", { item: "Lesser Healing Potion", count: 2, with_intermediates: true });
+    expect(conn.calls).toEqual([
+      { method: "craft", params: { item: "Lesser Healing Potion", count: 2, with_intermediates: true } },
+    ]);
+  });
+
+  it("buy forwards npc, item and count; item is required", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "buy" }));
+    const client = await setup(conn);
+    const res = await call(client, "buy", { entity_id: 7, item: "Lesser Healing Potion", count: 5 });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([
+      { method: "buy", params: { entity_id: 7, item: "Lesser Healing Potion", count: 5 } },
+    ]);
+    const missing = await call(client, "buy", { entity_id: 7 });
+    expect(missing.isError).toBe(true);
+    expect(conn.calls).toHaveLength(1);
   });
 });

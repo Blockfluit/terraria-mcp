@@ -24,6 +24,14 @@ mod/LlmPlayer tModLoader mod inside Terraria
   vanilla movement.
 - **Gather, build, fight.** It can mine, chop trees, pick up items, place, craft (only with real
   ingredients and stations), equip, use items, attack, and talk to NPCs.
+- **Build bigger things.** `build_platforms` lays whole rows of platforms or blocks (bridges, floors,
+  stacked platform rows): it walks along, stands on what it just built and places every tile in reach
+  before moving on. Occupied tiles, NPC houses and tiles with nothing to attach to are skipped and
+  reported. `mine_area` likewise skips protected or unminable tiles instead of failing.
+- **Manage gear and supplies.** `equip` can target a specific accessory slot, and `unequip` takes
+  items off. `craft` with `with_intermediates` crafts missing ingredients first from what you have
+  (Sand → Glass → Bottle → Lesser Healing Potion). `buy` purchases from a town NPC's shop with your
+  own coins, at the shop's real price.
 - **Survive while thinking.** Reflexes auto-attack nearby hostiles and quick-heal while the LLM
   thinks. You can optionally pause the world while the AI is idle.
 - **Keep playing unfocused.** While the AI drives, the game keeps running when the Terraria window

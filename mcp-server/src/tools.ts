@@ -166,8 +166,10 @@ const TOOLS: ToolDef[] = [
   {
     name: "mine_area",
     description:
-      "Mine every tile in the rectangle (x1,y1)-(x2,y2), inclusive, at most 200 tiles, top row first. Air, trees and " +
-      "hammer-only tiles are skipped; a protected or not-visible tile inside the area fails the call, naming the tile." +
+      "Mine every tile in the rectangle (x1,y1)-(x2,y2), inclusive, at most 200 tiles, top row first. Tiles that can't or " +
+      "mustn't be mined are skipped, not fatal: air, trees, hammer-only, protected, locked (holding up an object), not " +
+      "visible, too hard for your pickaxe. The reply (and the finished task's report.result) has skipped, " +
+      "skippedReasons {reason: count} and skippedTiles [{x,y,reason}] (first 10, air omitted)." +
       COORDS +
       STARTS_TASK,
     shape: { x1: tileX(), y1: tileY(), x2: tileX(), y2: tileY() },
@@ -195,8 +197,24 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "equip",
-    description: "Equip armor or an accessory from the inventory, by item name." + INSTANT_ACTION,
-    shape: { item: z.string().min(1).describe("Item display name (case-insensitive) or internal name") },
+    description:
+      "Equip armor or an accessory from the inventory, by item name. Armor goes to its own slot; an accessory goes to the first free accessory slot unless `slot` picks one (3-9, the accessory slot numbers get_inventory shows; 8 needs expert mode + Demon Heart, 9 master mode), replacing what is there. Anything replaced goes back to the inventory slot the new item came from. Vanilla rules apply: no duplicate accessories, one pair of wings." +
+      INSTANT_ACTION,
+    shape: {
+      item: z.string().min(1).describe("Item display name (case-insensitive) or internal name"),
+      slot: int().min(3).max(9).optional().describe("Accessory slot 3-9 (get_inventory numbering); accessories only"),
+    },
+  },
+  {
+    name: "unequip",
+    description:
+      "Take off equipped armor or an accessory into the first empty inventory slot. Identify it by item name or by equipment slot (0-2 armor, 3-9 accessories as get_inventory shows them, 10-19 vanity). Fails if the inventory has no empty slot." +
+      INSTANT_ACTION,
+    shape: {
+      item: z.string().min(1).optional().describe("Equipped item name (case-insensitive)"),
+      slot: int().min(0).max(19).optional().describe("Equipment slot 0-19, instead of item"),
+    },
+    check: (a) => ((a.item === undefined) === (a.slot === undefined) ? "give exactly one of item or slot" : undefined),
   },
   {
     name: "use_item",
@@ -227,11 +245,29 @@ const TOOLS: ToolDef[] = [
   {
     name: "craft",
     description:
-      "Craft an item `count` times, consuming ingredients. Needs the station in range: fails with missing_station or missing_item naming what is needed. Check list_recipes first." +
+      "Craft an item `count` times, consuming ingredients. Needs the station in range: fails with missing_station or missing_item naming what is needed. Check list_recipes first. With with_intermediates=true, ingredients you are short of are crafted first from what you have, recursively (e.g. Lesser Healing Potion: Sand -> Glass -> Bottle at a Furnace, then the potion), using only owned items and stations in range now; the reply then lists intermediates [{item, crafted, planned}]. Nothing is ever crafted without real ingredients and stations." +
       INSTANT_ACTION,
     shape: {
       item: z.string().min(1).describe("Result item name (case-insensitive)"),
-      count: int().min(1).optional().describe("Times to craft, default 1"),
+      count: int().min(1).max(999).optional().describe("Times to craft, default 1"),
+      with_intermediates: z.boolean().optional().describe("Also craft missing intermediate ingredients first, default false"),
+    },
+  },
+
+  // Building
+  {
+    name: "build_platforms",
+    description:
+      "Build horizontal rows of platforms (or blocks): bridges over gaps, floors, platform rows to stand or fight on. Places tiles from x1 to x2 on row y; rows>1 adds more rows upward at y-spacing, y-2*spacing, ... At most 200 tiles per call. Uses `item` if given (a block or platform), else any platform you have, else a cheap block (dirt, stone, wood...). Walks along and stands on what it builds, placing every tile in reach before moving on; uses real placement (needs something to attach to: an adjacent block/platform or a wall). Tiles already occupied, in NPC houses, with nothing to attach to, or unreachable are skipped and reported. Stops when the item runs out. report.result: {item, placed, remaining, skipped, skippedReasons, skippedTiles}." +
+      COORDS +
+      STARTS_TASK,
+    shape: {
+      x1: tileX(),
+      x2: tileX(),
+      y: tileY(),
+      item: z.string().min(1).optional().describe("Block or platform item name; default: any platform, else a cheap block"),
+      rows: int().min(1).max(20).optional().describe("Number of rows, default 1"),
+      spacing: int().min(1).max(50).optional().describe("Tiles between rows (upward), default 8"),
     },
   },
 
@@ -268,9 +304,20 @@ const TOOLS: ToolDef[] = [
   {
     name: "talk_to_npc",
     description:
-      "Walk within talk range of a visible town NPC and open its chat. When the task succeeds, wait_for_task's report.result is {name, chat, shop?: [{name, price}]} (shop only if the NPC sells things; price after happiness discounts, e.g. '1 gold 50 silver'). Buying/selling is not supported." +
+      "Walk within talk range of a visible town NPC and open its chat. When the task succeeds, wait_for_task's report.result is {name, chat, shop?: [{name, price}]} (shop only if the NPC sells things; price after happiness discounts, e.g. '1 gold 50 silver'). Use buy to purchase." +
       STARTS_TASK,
     shape: { entity_id: int().describe("Town NPC id from get_entities") },
+  },
+  {
+    name: "buy",
+    description:
+      "Buy `count` of an item from a visible town NPC's shop with your own coins: walks to the NPC, opens its shop, buys through the game's normal shop purchase (price includes happiness and discounts), then closes the shop. All of the NPC's shops are searched. Stops early if money or inventory space runs out (still succeeds if at least one was bought). report.result: {npc, item, bought, requested, spent, stopped}. Use talk_to_npc first to see the shop and prices. Selling is not supported." +
+      STARTS_TASK,
+    shape: {
+      entity_id: int().describe("Town NPC id from get_entities"),
+      item: z.string().min(1).describe("Item name as the shop lists it (case-insensitive)"),
+      count: int().min(1).max(999).optional().describe("How many, default 1"),
+    },
   },
 ];
 

@@ -92,7 +92,7 @@ public sealed class TalkToNpcTask : IGameTask<GameCtx>
             (int)npc.position.X, (int)npc.position.Y, npc.width, npc.height);
 
     /// <summary>Same steps as vanilla's right-click on an NPC (Main.HoverOverNPCs), then the shop listing.</summary>
-    private static TalkResult OpenChat(Player p, NPC npc)
+    internal static TalkResult OpenChat(Player p, NPC npc)
     {
         Main.CancelHairWindow();
         Main.SetNPCShopIndex(0);

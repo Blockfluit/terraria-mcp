@@ -24,6 +24,8 @@ public static class CraftCommands
             int count = Params.Int(p, "count", 1);
             if (count < 1 || count > Crafting.MaxCraftCount)
                 throw new CommandError(ErrorCodes.BadParams, $"count must be 1..{Crafting.MaxCraftCount}");
+            if (Params.Bool(p, "with_intermediates", false))
+                return Crafting.CraftWithIntermediates(Main.LocalPlayer, Params.String(p, "item"), count);
             return Crafting.Craft(Main.LocalPlayer, Params.String(p, "item"), count);
         }, isAction: true);
     }

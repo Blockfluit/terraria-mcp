@@ -35,12 +35,16 @@ public static class GatherCommands
             var player = Main.LocalPlayer;
             var (px, py) = StateReader.StandingTile(player);
             var ordered = MiningOrder.Order(MiningOrder.Rect(x1, y1, x2, y2), new TilePoint(px, py));
-            var tiles = MineTask.Validate(player, ordered, area: true, out int skipped);
+            var tiles = MineTask.Validate(player, ordered, area: true, out var skipped);
             if (tiles.Count == 0)
-                throw new CommandError(ErrorCodes.BadParams, $"nothing a pickaxe can mine in that area ({skipped} tiles are air, trees or hammer-only)");
-            var task = new MineTask(tiles, "mine_area");
+                throw new CommandError(ErrorCodes.BadParams, $"nothing a pickaxe can mine in that area (skipped: {skipped.Summary()})");
+            var task = new MineTask(tiles, "mine_area", skipped);
             TaskHost.Start(task);
-            return new { Started = true, Task = task.Name, Tiles = tiles.Count, Skipped = skipped };
+            return new
+            {
+                Started = true, Task = task.Name, Tiles = tiles.Count,
+                Skipped = skipped.Count, SkippedReasons = skipped.ByReason, SkippedTiles = skipped.Examples,
+            };
         }, isAction: true);
 
         CommandRouter.Register("chop_tree", p =>
