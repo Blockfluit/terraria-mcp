@@ -19,6 +19,8 @@ const isAutoDefend = (e: ModEvent) =>
  *   (targets: name -> times engaged), at the position of the first one.
  * - More than DAMAGE_DETAIL_LIMIT took_damage events become one
  *   `{event:"took_damage", hits, total, sources, minLife, life, lifeMax}` summary at the first hit's position.
+ * - task_finished events lose their `result` payload (e.g. a whole shop list): wait_for_task / get_task already
+ *   return it in the report, so it was sent twice.
  * - Everything else is kept in order. Then, past MAX_EVENTS, the oldest events not in MUST_KEEP are dropped and an
  *   `{event:"omitted", count}` marker leads the list.
  */
@@ -49,6 +51,11 @@ export function compactEvents(events: ModEvent[]): ModEvent[] {
         damagePlaced = true;
         out.push(damageSummary(hits));
       }
+      continue;
+    }
+    if (e.event === "task_finished" && "result" in e) {
+      const { result: _dropped, ...rest } = e;
+      out.push(rest as ModEvent);
       continue;
     }
     out.push(e);

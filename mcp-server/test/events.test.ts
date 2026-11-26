@@ -52,4 +52,9 @@ describe("compactEvents", () => {
     expect(out[out.length - 1]).toEqual({ event: "task_finished", name: "explore" });
     expect(out[out.length - 2]).toEqual({ event: "picked_up", item: "thing59" }); // newest kept
   });
+
+  it("drops the result payload from task_finished (the report carries it)", () => {
+    const evs = [{ event: "task_finished", name: "talk_to_npc", status: "succeeded", result: { chat: "hi" } }];
+    expect(compactEvents(evs)).toEqual([{ event: "task_finished", name: "talk_to_npc", status: "succeeded" }]);
+  });
 });
