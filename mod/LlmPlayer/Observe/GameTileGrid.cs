@@ -22,7 +22,8 @@ namespace LlmPlayer.Observe;
 /// <item>Liquid at least half full in a non-solid cell → Water / Lava / Honey. Shimmer → Hazard (it drops you
 /// through blocks).</item>
 /// <item>PickPowerRequired: vanilla <see cref="PickPowerTable"/>, modded <c>ModTile.MinPick</c>; hammer-only
-/// tiles → int.MaxValue. Protected: <see cref="Protection.IsProtected"/>.</item>
+/// tiles → int.MaxValue. Protected: <see cref="Protection.IsProtected"/>, or locked right now
+/// (<c>WorldGen.CanKillTile</c> false, e.g. grass holding up a tree).</item>
 /// </list>
 /// </summary>
 public sealed class GameTileGrid : ITileGrid
@@ -53,6 +54,10 @@ public sealed class GameTileGrid : ITileGrid
         if (tile.HasTile && !tile.IsActuated)
         {
             int type = tile.TileType;
+            // Locked tiles (vanilla CanKillTile: e.g. the grass under a tree, a block holding up furniture) can't be
+            // broken right now: treat them as protected so neither the pathfinder nor explore's digging plans on
+            // breaking them (seen in game: explore swung at the grass under a tree root for 15 s).
+            if (!prot && !Main.tileAxe[type] && !WorldGen.CanKillTile(x, y)) prot = true;
             if (TileClass.IsTree(type)) return new TileInfo(TileKind.Air, 0, prot, 'T', TileClass.Name(type));
             if (Main.tileSolid[type] && TileLoader.IsClosedDoor(type))
                 return new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot, 'D', TileClass.Name(type),

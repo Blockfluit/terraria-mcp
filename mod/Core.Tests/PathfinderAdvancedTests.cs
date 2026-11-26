@@ -296,6 +296,15 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void GoalToleranceZero_EndsExactlyOnTheGoal()
+    {
+        var (g, m) = ArrayTileGrid.Parse("............", "............", "S.........G.", "############");
+        var r = Pathfinder.FindPath(g, m['S'], m['G'], new(), new(GoalTolerance: 0));
+        Assert.True(r.Success, r.FailureReason);
+        Assert.Equal(m['G'], r.Steps[^1].Pos);
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");

@@ -52,14 +52,14 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     public string? Reason { get; private set; }
     public string? Progress { get; private set; }
 
-    /// <param name="tolerance">Done when standing within this Chebyshev distance of the goal (min 1, as the
-    /// pathfinder's goal tolerance).</param>
+    /// <param name="tolerance">Done when standing within this Chebyshev distance of the goal. 0 = exactly on it
+    /// (TileWorker's stand spots, which may sit at the very edge of tool reach).</param>
     public MoveToTask(TilePoint goal, bool allowDig = true, bool allowBuild = true, int tolerance = 1, string name = "move_to")
     {
         _goal = goal;
         _allowDig = allowDig;
         _allowBuild = allowBuild;
-        _tolerance = Math.Max(1, tolerance);
+        _tolerance = Math.Max(0, tolerance);
         Name = name;
     }
 

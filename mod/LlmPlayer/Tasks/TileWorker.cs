@@ -113,7 +113,12 @@ internal sealed class TileWorker
                         ?? (_approachMargin > 1f ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending) : null)
                         ?? StandFinder.Best(ctx.Grid, here, _target, reach, _pending, margin: 0f);
             // No known spot (e.g. the tile is buried in rock): head for the tile itself and let the pathfinder dig.
-            _move = new MoveToTask(stand ?? _target, allowDig: true, allowBuild: true, tolerance: 1, name: _name);
+            // A stand spot is exact: it can sit at the very edge of reach, and stopping a tile short (tolerance 1)
+            // left the tile out of reach while every re-approach "arrived" instantly at the same spot (seen in game:
+            // "couldn't get within reach" after 4 approaches from far away).
+            _move = stand is { } st
+                ? new MoveToTask(st, allowDig: true, allowBuild: true, tolerance: 0, name: _name)
+                : new MoveToTask(_target, allowDig: true, allowBuild: true, tolerance: 1, name: _name);
         }
 
         var status = _move.Tick(ctx);
