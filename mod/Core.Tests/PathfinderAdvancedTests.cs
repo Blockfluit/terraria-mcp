@@ -374,4 +374,55 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
         Assert.True(r.NodesExpanded > 9000, $"only expanded {r.NodesExpanded}");
         Assert.True(ms < 300, $"took {ms:F2} ms");
     }
+
+    [Fact]
+    public void ClimbBuild_InOpenAir_OnlyOneTileAtATime()
+    {
+        // Open sky, a 9-high cliff and nothing to dig with: climbing next to it needs platforms, and vanilla only
+        // places a platform next to an existing tile, so the climb steps must stay anchored.
+        var (g, m) = new GridBuilder(20, 24).Fill(0, 20, 19, 23, '#').Fill(12, 11, 19, 19, '#')
+            .Put(2, 19, 'S').Put(15, 10, 'G').Parse();
+        var r = Pathfinder.FindPath(g, m['S'], m['G'], new(BuildItemCount: 30), new(AllowDig: false));
+        Assert.True(r.Success, r.FailureReason);
+        var placed = new HashSet<TilePoint>();
+        foreach (var s in r.Steps.Where(s => s.Kind == MoveKind.BuildPlatform))
+        {
+            var w = s.WorkTile!.Value;
+            bool anchored = false;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var n = new TilePoint(w.X + dx, w.Y + dy);
+                    if ((dx != 0 || dy != 0) && (g.Get(n).IsStandable || placed.Contains(n))) anchored = true;
+                }
+            Assert.True(anchored, $"platform at {w} has nothing to attach to");
+            placed.Add(w);
+        }
+    }
+
+    [Fact]
+    public void Swim_NoDiagonalCornerCutting()
+    {
+        // A water channel entered past solid corners: every diagonal swim step needs a free orthogonal neighbour.
+        var (g, m) = ArrayTileGrid.Parse(
+            "XXXXXXXXXXXX",
+            "X..........X",
+            "X..........X",
+            "X.S..#.....X",
+            "XX##~~~~...X",
+            "XXXX~~~~...X",
+            "XXXX~~~~..GX",
+            "XXXXXXXXXXXX");
+        var r = Pathfinder.FindPath(g, m['S'], m['G'], new(), new(AllowDig: false, AllowBuild: false));
+        var prev = m['S'];
+        foreach (var s in r.Steps)
+        {
+            if (s.Kind == MoveKind.Swim && s.Pos.X != prev.X && s.Pos.Y != prev.Y)
+                Assert.True(BodyFree(g, new TilePoint(s.Pos.X, prev.Y)) || BodyFree(g, new TilePoint(prev.X, s.Pos.Y)),
+                    $"corner cut {prev} -> {s.Pos}");
+            prev = s.Pos;
+        }
+    }
+
+    private static bool BodyFree(ArrayTileGrid g, TilePoint p) => Body(p).All(t => !g.Get(t).BlocksBody);
 }

@@ -11,7 +11,8 @@ namespace LlmPlayer.Core.Nav;
 /// Step semantics (what a follower should do to execute each step):
 /// <list type="bullet">
 /// <item>Walk: move horizontally one tile onto supported ground.</item>
-/// <item>StepUp: move one tile sideways and one up (Terraria auto-steps 1-tile ledges).</item>
+/// <item>StepUp: move one tile sideways and one up (Terraria auto-steps 1-tile ledges; onto a platform only while
+/// holding Up, and not onto a platform with another one right above it).</item>
 /// <item>Jump: from the previous position jump and steer to Pos. Clearance was checked for a
 /// conservative "rise, then across, then down" box path, so rising first is always safe.</item>
 /// <item>Fall: walk sideways off an edge (or, at a mid-air start, just fall) and land at Pos.</item>
@@ -40,6 +41,21 @@ public static class Pathfinder
             for (int dx = 0; dx < 2; dx++)
                 if (grid.Get(p.X + dx, p.Y - dy).BlocksBody) return false;
         return grid.Get(p.X, p.Y + 1).IsStandable || grid.Get(p.X + 1, p.Y + 1).IsStandable;
+    }
+
+    /// <summary>
+    /// How many tiles the feet may rise above <paramref name="s"/> on a jump to <paramref name="t"/> without the arc
+    /// ending up over a platform that lies above both feet rows (it would be risen through and then catch the
+    /// player on the way down): the feet must stay strictly below that many tiles. int.MaxValue when there is none within <paramref name="maxLevels"/> + 3 rows.
+    /// Same rule the search applies to jump edges; the follower uses it to release jump early.
+    /// </summary>
+    public static int JumpPlatformCeiling(ITileGrid grid, TilePoint s, TilePoint t, int maxLevels)
+    {
+        int x0 = Math.Min(s.X, t.X), x1 = Math.Max(s.X, t.X) + 1, lim = Math.Min(s.Y, t.Y);
+        for (int r = lim - 1; r >= s.Y - maxLevels - 3; r--)
+            for (int x = x0; x <= x1; x++)
+                if (grid.Get(x, r).Kind == TileKind.Platform) return s.Y - r;
+        return int.MaxValue;
     }
 
     public static PathResult FindPath(ITileGrid grid, TilePoint start, TilePoint goal,
@@ -346,6 +362,9 @@ public static class Pathfinder
             for (int r = ty - 2; r <= ty; r++)
                 if (Classify(tx, r) < 0 || Classify(tx + 1, r) < 0) return;
             if (BodyHas(tx, ty, TileCache.Liquid) || !HasSupport(tx, ty)) return;
+            // Vanilla auto-steps onto solid blocks; onto a platform only while Up is held (the follower does) and
+            // never when another platform sits right above it.
+            if (!StepSupport(tx, y) && !StepSupport(tx + 1, y)) return;
             Add(ni, tx, ty, builds, false, StepUpCost + DigPerTile * _digs.Count, MoveKind.StepUp, withDigs: true);
         }
 
@@ -369,7 +388,12 @@ public static class Pathfinder
             int c0 = x - maxGap - 1, nCols = 2 * maxGap + 4;
             Span<ulong> pass = stackalloc ulong[nCols], stand = stackalloc ulong[nCols],
                 desc = stackalloc ulong[nCols], liq = stackalloc ulong[nCols];
-            for (int i = 0; i < nCols; i++) _t.Column(c0 + i, top, out pass[i], out stand[i], out desc[i], out liq[i]);
+            Span<ulong> plat = stackalloc ulong[nCols];
+            for (int i = 0; i < nCols; i++)
+            {
+                _t.Column(c0 + i, top, out pass[i], out stand[i], out desc[i], out liq[i]);
+                plat[i] = stand[i] & pass[i]; // standable but passable = platform
+            }
             ulong src = Bits(y - 2, y, top); // the source body is clear (this path may have dug it)
             pass[x - c0] |= src;
             pass[x + 1 - c0] |= src;
@@ -384,8 +408,8 @@ public static class Pathfinder
             ulong bodyAtY = Bits(y - 2, y, top), supportRow = 1UL << (y + 1 - top);
             for (int dir = -1; dir <= 1; dir += 2)
             {
-                // across[a] = how far the body can move horizontally with feet at row y-a.
-                for (int a = 1; a <= rise; a++)
+                // across[a] = how far the body can move horizontally with feet at row y-a (a = 0: the source row).
+                for (int a = 0; a <= rise; a++)
                 {
                     ulong body = Bits(y - a - 2, y - a, top);
                     int k = 0;
@@ -408,9 +432,12 @@ public static class Pathfinder
                     walkReach = k;
                 }
 
+                // Platforms over the span the jump crosses (OR of the columns from the source body to the target body).
+                ulong platSpan = plat[x - c0] | plat[x + 1 - c0];
                 for (int k = dir > 0 ? 0 : 1; k <= maxGap; k++)
                 {
                     int tx = x + dir * k, i0 = tx - c0;
+                    platSpan |= plat[i0] | plat[i0 + 1];
                     ulong pp = pass[i0] & pass[i0 + 1], dd = desc[i0] & desc[i0 + 1];
                     ulong ss = stand[i0] | stand[i0 + 1], ll = liq[i0] | liq[i0 + 1];
                     for (int ty = y - maxUp; ty <= y + maxUp; ty++)
@@ -419,13 +446,38 @@ public static class Pathfinder
                         if (ty == y && k <= walkReach) continue;
                         int a = y - Math.Min(y, ty) + 1;
                         if (a > rise || across[a] < k) continue;
+                        // The real arc goes higher than the box path. It bonks on anything lower than its apex, so
+                        // the ceiling is the highest level the body can cross the whole distance at. A platform
+                        // above both feet rows is risen through and then lands the player on top of it, so the
+                        // apex must stay under it (the follower releases jump early: JumpPlatformCeiling).
+                        int ceiling = rise;
+                        while (ceiling > a && across[ceiling] < k) ceiling--;
+                        int lim = Math.Min(y, ty);
+                        ulong above = lim - top >= 64 ? ulong.MaxValue : (1UL << (lim - top)) - 1;
+                        ulong plats = platSpan & above;
+                        if (plats != 0)
+                        {
+                            int r = top + 63 - System.Numerics.BitOperations.LeadingZeroCount(plats);
+                            ceiling = Math.Min(ceiling, y - r);
+                            if (ceiling < a) continue;
+                        }
+                        if (_p.JumpReach != null)
+                        {
+                            // Launch level: the lowest level the body can cross the whole distance at. Anything
+                            // lower blocks sideways motion until the feet clear it (worst case: right in front).
+                            int launch = 0;
+                            while (launch < a && across[launch] < k) launch++;
+                            if (k > _p.JumpReachAt(ty - y, ceiling, launch)) continue;
+                        }
                         if (ty >= y)
                         {
                             // Straight down from row y-1 to ty; platforms would catch the body.
                             ulong need = Bits(y, ty, top);
                             if ((dd & need) != need) break; // deeper targets are blocked too
                         }
-                        else if (((pp >> (ty - top)) & 1) == 0) continue; // rows above ty: across[a]
+                        // Higher target: across at feet row ty-1, then down one row into ty. A platform in
+                        // t's feet row would catch the body one row early, so row ty must be descendable.
+                        else if (((dd >> (ty - top)) & 1) == 0) continue;
                         if (((ss >> (ty + 1 - top)) & 1) == 0) continue;
                         if ((ll & Bits(ty - 2, ty, top)) != 0) continue;
                         // 2 + |dx|: a jump never undercuts walking the same distance.
@@ -465,15 +517,41 @@ public static class Pathfinder
         {
             if (!_canBuild || builds >= _buildCap) return;
             int maxK = Math.Min(MaxBuildUp, _p.MaxJumpUp);
+            // A platform above (or in) the body would be risen through and land the player on it instead: the
+            // jump's apex must stay below it, yet get the feet above the new platform (follower: ApexAbove).
+            for (int r = y - 1; r >= y - maxK - 1; r--)
+                if (((_t.F(x, r) | _t.F(x + 1, r)) & TileCache.Plat) != 0)
+                {
+                    maxK = Math.Min(maxK, y - r - 1);
+                    break;
+                }
             for (int k = 1; k <= maxK; k++)
             {
                 int r = y - 2 - k; // new head row
                 if (!Passable(x, r) || !Passable(x + 1, r)) return;
                 int ty = y - k, wy = ty + 1;
                 if (_t.F(x, wy) != TileCache.Computed) continue; // must place into plain air
+                // Vanilla places a platform only next to an existing tile (3x3) or in front of a background wall,
+                // which the grid doesn't show. k = 1 is anchored by our own support; higher needs a grid anchor.
+                if (k > 1 && !Anchored(x, wy)) continue;
                 if (HasSupport(x, ty) || BodyHas(x, ty, TileCache.Liquid)) continue;
                 Add(ni, x, ty, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: x, wy: wy, hasWork: true);
             }
+        }
+
+        private bool StepSupport(int x, int y)
+        {
+            byte f = _t.F(x, y);
+            if ((f & TileCache.Block) != 0) return true;
+            return (f & TileCache.Plat) != 0 && (_t.F(x, y - 1) & TileCache.Plat) == 0;
+        }
+
+        private bool Anchored(int x, int y)
+        {
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if ((dx != 0 || dy != 0) && (_t.F(x + dx, y + dy) & TileCache.Stand) != 0) return true;
+            return false;
         }
 
         private void Swim(int ni, int x, int y, int builds)
@@ -484,6 +562,8 @@ public static class Pathfinder
                     if (dx == 0 && dy == 0) continue;
                     int tx = x + dx, ty = y + dy;
                     if (!BodyClear(tx, ty)) continue;
+                    // No corner cutting: a diagonal needs one of its two orthogonal neighbours clear too.
+                    if (dx != 0 && dy != 0 && !BodyClear(tx, y) && !BodyClear(x, ty)) continue;
                     if (!BodyHas(tx, ty, TileCache.Liquid) && !HasSupport(tx, ty)) continue;
                     Add(ni, tx, ty, builds, false, dx != 0 && dy != 0 ? SwimDiagCost : SwimCost, MoveKind.Swim);
                 }

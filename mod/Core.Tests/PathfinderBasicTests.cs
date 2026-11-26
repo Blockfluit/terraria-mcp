@@ -243,4 +243,25 @@ public class PathfinderBasicTests
         Assert.True(r.Success, r.FailureReason);
         Assert.Equal(new TilePoint(6, 3), r.Steps[^1].Pos);
     }
+
+    [Fact]
+    public void JumpUp_NeverTargetsAStanceWithAPlatformInItsFeetRow()
+    {
+        // Platform rows 6 and 7 (a "step"): the stance (4,6) has the upper platform (5,6) in its feet row. Coming
+        // down from the jump's across height the upper platform catches the player at row 5 instead.
+        var (g, m) = new GridBuilder(14, 12)
+            .Fill(0, 11, 13, 11, '#')
+            .Fill(5, 6, 9, 6, '=').Fill(5, 7, 12, 7, '=')
+            .Put(0, 10, 'S').Put(11, 6, 'G').Parse();
+        var r = Pathfinder.FindPath(g, m['S'], m['G'], new(), new(AllowDig: false, AllowBuild: false));
+        Assert.True(r.Success, r.FailureReason);
+        var prev = m['S'];
+        foreach (var s in r.Steps)
+        {
+            if (s.Kind == MoveKind.Jump && s.Pos.Y < prev.Y)
+                for (int x = s.Pos.X; x <= s.Pos.X + 1; x++)
+                    Assert.NotEqual(TileKind.Platform, g.Get(x, s.Pos.Y).Kind);
+            prev = s.Pos;
+        }
+    }
 }

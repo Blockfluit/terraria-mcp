@@ -25,8 +25,13 @@ public class PathFollowerTests
         "...#########",
         "############").Grid;
 
+    /// <summary>Player with the hitbox centred over body column x (hitbox left = x + 0.375).</summary>
     private static PlayerKinematics At(float x, float y, bool onGround = true, float vx = 0, float vy = 0)
-        => new(x, y, vx, vy, onGround);
+        => new(x + PlayerPhysics.CenterOffset, y, vx, vy, onGround);
+
+    /// <summary>Hitbox pressed against the ledge wall at x=3 (its right edge touching column 3).</summary>
+    private static PlayerKinematics AgainstLedge(float y = 5, bool onGround = true, float vy = 0)
+        => new(3 - PlayerPhysics.HitboxWidth, y, 0, vy, onGround);
 
     private static List<PathStep> WalkTo(int fromX, int toX, int y)
     {
@@ -56,11 +61,11 @@ public class PathFollowerTests
     }
 
     [Fact]
-    public void WithinDeadzone_ReleasesBothDirections()
+    public void Settled_ReleasesBothDirections()
     {
-        var f = new PathFollower(WalkTo(1, 3, 4));
-        // 0.2 tiles short of step 0 (x=2) horizontally but airborne -> not advanced, inside deadzone
-        var o = f.Tick(At(1.8f, 3.5f, onGround: false), Flat());
+        var f = new PathFollower(WalkTo(1, 2, 4), start: new TilePoint(1, 4));
+        // centred over the only step (x=2) and still, but airborne -> not advanced, nothing to steer
+        var o = f.Tick(At(2.03f, 3.5f, onGround: false), Flat());
         Assert.False(o.Intent.Left);
         Assert.False(o.Intent.Right);
     }
@@ -88,54 +93,79 @@ public class PathFollowerTests
     public void JumpStep_PressesJumpWhenOnGround()
     {
         var g = Ledge();
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) });
-        var o = f.Tick(At(1, 5), g);
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) }, start: new TilePoint(1, 5));
+        var o = f.Tick(AgainstLedge(), g);
         Assert.True(o.Intent.Jump);
         Assert.True(o.Intent.Right);
+    }
+
+    [Fact]
+    public void LongJump_RunsToTheEdgeBeforeTakingOff()
+    {
+        // ground ends at x=3; a 6-wide gap; far side from x=10
+        var (g, _) = ArrayTileGrid.Parse(
+            "................",
+            "................",
+            "................",
+            "................",
+            "####......######");
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(9, 3), MoveKind.Jump) }, start: new TilePoint(2, 3));
+        var o = f.Tick(At(2, 3), g);
+        Assert.False(o.Intent.Jump);
+        Assert.True(o.Intent.Right);
+        // at the edge, moving: next tick the hitbox would leave the support -> jump now
+        o = f.Tick(new PlayerKinematics(3.7f, 3, 0.18f, 0, true), g);
+        Assert.True(o.Intent.Jump);
     }
 
     [Fact]
     public void JumpStep_HeldWhileRisingAndReleasedAtApex()
     {
         var g = Ledge();
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) });
-        Assert.True(f.Tick(At(1, 5), g).Intent.Jump);
-        Assert.True(f.Tick(At(1.1f, 4.6f, onGround: false, vy: -0.5f), g).Intent.Jump);
-        Assert.True(f.Tick(At(1.2f, 4.0f, onGround: false, vy: -0.3f), g).Intent.Jump);
-        // rising stopped
-        Assert.False(f.Tick(At(1.3f, 3.9f, onGround: false, vy: 0.1f), g).Intent.Jump);
-    }
-
-    [Fact]
-    public void JumpStep_ReleasedWhenTargetHeightReached()
-    {
-        var g = Ledge();
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) });
-        f.Tick(At(1, 5), g);
-        var o = f.Tick(At(1.5f, 1.9f, onGround: false, vy: -0.2f), g);
-        Assert.False(o.Intent.Jump);
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) }, start: new TilePoint(1, 5));
+        Assert.True(f.Tick(AgainstLedge(), g).Intent.Jump);
+        Assert.True(f.Tick(AgainstLedge(4.6f, onGround: false, vy: -0.3f), g).Intent.Jump);
+        // held past the target height: full height buys air time to get over the edge
+        var o = f.Tick(AgainstLedge(1.9f, onGround: false, vy: -0.2f), g);
+        Assert.True(o.Intent.Jump);
         Assert.True(o.Intent.Right);
+        // rising stopped
+        Assert.False(f.Tick(AgainstLedge(1.5f, onGround: false, vy: 0.1f), g).Intent.Jump);
     }
 
     [Fact]
     public void JumpStep_NotPressedWhileAirborneBeforeTakeoff()
     {
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(5, 4), MoveKind.Jump) });
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(5, 4), MoveKind.Jump) }, start: new TilePoint(1, 4));
         var o = f.Tick(At(1, 3, onGround: false, vy: 0.3f), Flat());
         Assert.False(o.Intent.Jump);
     }
 
     [Fact]
-    public void JumpStep_ReleasesOneTickAfterLandingShortThenRejumps()
+    public void JumpStep_LandingBackOnSource_RetriesThenStuck()
     {
         var g = Ledge();
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) });
-        Assert.True(f.Tick(At(1, 5), g).Intent.Jump);
-        Assert.True(f.Tick(At(1, 4.5f, onGround: false, vy: -0.4f), g).Intent.Jump);
-        Assert.False(f.Tick(At(1, 4.0f, onGround: false, vy: 0.2f), g).Intent.Jump);
-        // landed short: Terraria needs jump released before it can jump again
-        Assert.False(f.Tick(At(1, 5), g).Intent.Jump);
-        Assert.True(f.Tick(At(1, 5), g).Intent.Jump);
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) }, start: new TilePoint(1, 5));
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            Assert.True(f.Tick(AgainstLedge(), g).Intent.Jump);
+            Assert.True(f.Tick(AgainstLedge(4.5f, onGround: false, vy: -0.4f), g).Intent.Jump);
+            // falling: released, so vanilla lets us jump again right on landing
+            Assert.False(f.Tick(AgainstLedge(4.0f, onGround: false, vy: 0.2f), g).Intent.Jump);
+        }
+        var o = f.Tick(AgainstLedge(), g);
+        Assert.Equal(FollowerStatus.Stuck, o.Status);
+    }
+
+    [Fact]
+    public void JumpStep_LandingOffPath_NeedsReplan()
+    {
+        var g = Ledge();
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(3, 2), MoveKind.Jump) }, start: new TilePoint(1, 5));
+        f.Tick(AgainstLedge(), g);
+        f.Tick(AgainstLedge(4.5f, onGround: false, vy: -0.4f), g);
+        var o = f.Tick(At(8, 2), g); // somewhere unexpected on top of the ledge
+        Assert.Equal(FollowerStatus.NeedsReplan, o.Status);
     }
 
     [Fact]
@@ -198,9 +228,9 @@ public class PathFollowerTests
             new PathStep(pos, MoveKind.Dig, new TilePoint(3, 3)),
             new PathStep(pos, MoveKind.Dig, new TilePoint(3, 2)),
         });
-        Assert.Equal(new TilePoint(3, 4), f.Tick(At(1, 4), g).Intent.CursorTile);
+        Assert.Equal(new TilePoint(3, 4), f.Tick(At(2, 4), g).Intent.CursorTile);
         g.Set(3, 4, TileInfo.Air);
-        var o = f.Tick(At(1, 4), g);
+        var o = f.Tick(At(2, 4), g);
         Assert.Equal(new TilePoint(3, 3), o.Intent.CursorTile);
         Assert.True(o.Intent.UseItem);
         Assert.False(o.Intent.Right);
@@ -217,14 +247,14 @@ public class PathFollowerTests
             "............",
             "##...#######");
         var work = new TilePoint(2, 5);
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(2, 4), MoveKind.BuildPlatform, work) });
-        var o = f.Tick(At(0, 4), g);
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(2, 4), MoveKind.BuildPlatform, work) }, start: new TilePoint(1, 4));
+        var o = f.Tick(At(1, 4), g);
         Assert.True(o.Intent.UseItem);
         Assert.Equal(work, o.Intent.CursorTile);
         Assert.False(o.Intent.Right);
 
         g.Set(2, 5, new TileInfo(TileKind.Platform));
-        o = f.Tick(At(0, 4), g);
+        o = f.Tick(At(1, 4), g);
         Assert.False(o.Intent.UseItem);
         Assert.True(o.Intent.Right);
     }
@@ -255,10 +285,14 @@ public class PathFollowerTests
             "~~~~~~~~~~~~",
             "~~~~~~~~~~~~",
             "############");
-        var f = new PathFollower(new[] { new PathStep(new TilePoint(4, 2), MoveKind.Swim) });
-        var o = f.Tick(At(2, 4, onGround: false), g);
-        Assert.True(o.Intent.Jump);
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(4, 2), MoveKind.Swim) }, start: new TilePoint(2, 4));
+        // vanilla has no swimming without Flippers: mid-water, sinking, a jump press does nothing
+        var o = f.Tick(At(2, 3, onGround: false, vy: 0.1f), g);
+        Assert.False(o.Intent.Jump);
         Assert.True(o.Intent.Right);
+        // on the bottom: jump
+        o = f.Tick(At(2, 4), g);
+        Assert.True(o.Intent.Jump);
         // reached without ground contact
         o = f.Tick(At(4.2f, 2.2f, onGround: false), g);
         Assert.Equal(FollowerStatus.Arrived, o.Status);
