@@ -14,6 +14,9 @@ public readonly record struct PathStep(TilePoint Pos, MoveKind Kind, TilePoint? 
 /// CloseDoor step; the follower gives up on it if the door won't close).</param>
 /// <param name="DigToGoal">A goal inside diggable rock is kept (the path digs the body out) instead of snapping to
 /// the nearest open cell. For reaching a tile to mine when no open spot is in reach; needs AllowDig.</param>
+/// <param name="BestEffort">When the goal can't be reached, return a path to the reached spot closest to it (if
+/// that is closer than the start) instead of failing; ResolvedGoal is that spot. Used for goals beyond the planning
+/// window.</param>
 public sealed record PathOptions(
     bool AllowDig = true,
     bool AllowBuild = true,
@@ -21,7 +24,8 @@ public sealed record PathOptions(
     int GoalTolerance = 1,
     bool OpenDoors = true,
     bool CloseDoorsBehind = true,
-    bool DigToGoal = false);
+    bool DigToGoal = false,
+    bool BestEffort = false);
 
 /// <param name="ResolvedGoal">Where the search actually aimed: the requested goal, or the nearest standable cell
 /// when the requested one wasn't (snapped up to <see cref="Pathfinder.GoalSearchRadius"/> tiles). A successful

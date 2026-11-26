@@ -134,8 +134,12 @@ public static class Pathfinder
         public PathResult Run()
         {
             if (!ResolveGoal(out _goal))
-                return new PathResult(false, Array.Empty<PathStep>(),
-                    $"goal_not_standable: no standable position within {GoalSearchRadius} tiles of {_requestedGoal}", 0);
+            {
+                if (!_o.BestEffort)
+                    return new PathResult(false, Array.Empty<PathStep>(),
+                        $"goal_not_standable: no standable position within {GoalSearchRadius} tiles of {_requestedGoal}", 0);
+                _goal = _requestedGoal; // heuristic target only
+            }
 
             BodyHas(_start.X, _start.Y, 0xFF); // classify the start body (seeds TileCache.Seen)
             _count = 1;
@@ -143,12 +147,18 @@ public static class Pathfinder
             Slot(_start.X, _start.Y) = 1;
             _open.Enqueue(0, H(_start.X, _start.Y));
 
-            int expanded = 0, fallback = -1, fallbackDeadline = 0;
+            int expanded = 0, fallback = -1, fallbackDeadline = 0, closest = 0;
+            float closestH = H(_start.X, _start.Y);
             while (_open.TryDequeue(out int ni, out _))
             {
                 ref var n = ref _nodes[ni];
                 if (n.Closed) continue;
                 n.Closed = true;
+                if (_o.BestEffort && !n.Built && H(n.X, n.Y) < closestH)
+                {
+                    closestH = H(n.X, n.Y);
+                    closest = ni;
+                }
 
                 if (n.X == _goal.X && n.Y == _goal.Y) return Success(ni, expanded);
                 if (fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance)
@@ -164,6 +174,11 @@ public static class Pathfinder
                 Expand(ni);
             }
             if (fallback >= 0) return Success(fallback, expanded);
+            if (_o.BestEffort && closest != 0)
+            {
+                var r = Success(closest, expanded);
+                return r with { ResolvedGoal = new TilePoint(_nodes[closest].X, _nodes[closest].Y) };
+            }
             return new PathResult(false, Array.Empty<PathStep>(), $"unreachable: searched {expanded} nodes", expanded);
         }
 

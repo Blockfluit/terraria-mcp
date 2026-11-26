@@ -126,6 +126,13 @@ public sealed class PlanJob
             if (r.Success) return (r, c, true);
             last = r;
         }
+        // Every candidate sits somewhere unreachable (seen in game: all five in one sealed pocket): head for the
+        // reachable spot closest to the goal and replan from there.
+        if (!_cancelled)
+        {
+            var best = Pathfinder.FindPath(g, Start, RequestedGoal, _profile, _options with { BestEffort = true });
+            if (best.Success && best.Steps.Count > 0 && best.ResolvedGoal is { } end) return (best, end, true);
+        }
         return (last!, candidates[0], true);
     }
 

@@ -371,6 +371,22 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void BestEffort_SealedGoal_PathsToTheClosestReachableSpot()
+    {
+        // Floor with an unbreakable wall at x=12; the goal is behind it. Best effort walks up to the wall.
+        var b = new GridBuilder(24, 10).Fill(0, 7, 23, 9, '#').Fill(12, 0, 12, 6, 'X');
+        b.Put(1, 6, 'S');
+        var (g, m) = b.Parse();
+        var goal = new TilePoint(20, 6);
+        var plain = Pathfinder.FindPath(g, m['S'], goal, new(), new(AllowDig: false, AllowBuild: false));
+        Assert.False(plain.Success);
+        var best = Pathfinder.FindPath(g, m['S'], goal, new(), new(AllowDig: false, AllowBuild: false, BestEffort: true));
+        Assert.True(best.Success, best.FailureReason);
+        Assert.Equal(new TilePoint(10, 6), best.ResolvedGoal); // body x=10..11, next to the wall
+        Assert.Equal(best.ResolvedGoal, best.Steps[^1].Pos);
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");
