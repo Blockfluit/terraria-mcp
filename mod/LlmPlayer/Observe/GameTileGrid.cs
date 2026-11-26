@@ -38,16 +38,30 @@ public sealed class GameTileGrid : ITileGrid
     public GameTileGrid(Player? player = null, bool fairVision = true)
     {
         _player = player ?? Main.LocalPlayer;
+        // (Touching reads _player's live position; one grid is used within one frame.)
         _fairVision = fairVision;
         _screen = Visibility.Screen; // snapshot: one grid is used within one frame
         _pick = new PickContext(Main.worldSurface, Main.UnderworldLayer, Main.maxTilesX);
+    }
+
+    /// <summary>
+    /// Tiles within one tile of the player's hitbox count as known even in the dark: the player feels what it stands
+    /// on and bumps into. Seen in game: standing on an unlit cave floor, the pathfinder planned a fall through the
+    /// "unknown" floor and got stuck replanning it.
+    /// </summary>
+    private bool Touching(int x, int y)
+    {
+        var p = _player.position;
+        int left = (int)Math.Floor(p.X / 16f) - 1, right = (int)Math.Floor((p.X + _player.width - 1) / 16f) + 1;
+        int top = (int)Math.Floor(p.Y / 16f) - 1, bottom = (int)Math.Floor((p.Y + _player.height - 1) / 16f) + 1;
+        return x >= left && x <= right && y >= top && y <= bottom;
     }
 
     public TileInfo Get(int x, int y)
     {
         if (!WorldGen.InWorld(x, y)) return TileInfo.Unbreakable;
         bool prot = Protection.IsProtected(x, y);
-        if (_fairVision && !Visibility.IsTileVisible(x, y, _screen, _player))
+        if (_fairVision && !Touching(x, y) && !Visibility.IsTileVisible(x, y, _screen, _player))
             return new TileInfo(TileKind.Unknown, Protected: prot);
 
         var tile = Main.tile[x, y];
