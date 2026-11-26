@@ -88,9 +88,12 @@ public static class TileClass
     public static (int X, int Y) ObjectOrigin(int x, int y, Tile tile)
     {
         var data = TileObjectData.GetTileData(tile.TileType, 0);
-        if (data == null) return (x, y);
-        int ox = tile.TileFrameX / 18 % Math.Max(1, data.Width);
-        int oy = tile.TileFrameY / 18 % Math.Max(1, data.Height);
+        // Pots and life crystals have no TileObjectData but are always 2x2 (explore_caves listed each pot 4 times).
+        (int w, int h) = data != null ? (data.Width, data.Height)
+            : tile.TileType is TileID.Pots or TileID.Heart or TileID.LifeFruit ? (2, 2) : (1, 1);
+        if (w == 1 && h == 1) return (x, y);
+        int ox = tile.TileFrameX / 18 % Math.Max(1, w);
+        int oy = tile.TileFrameY / 18 % Math.Max(1, h);
         return (x - ox, y - oy);
     }
 }

@@ -16,7 +16,25 @@ public static class RecentEvents
 
 public sealed class RecentEventsPlayer : ModPlayer
 {
-    public override void OnEnterWorld() => RecentEvents.Log.Clear();
+    private static int _worldId = int.MinValue;
+
+    /// <summary>Clear only when a different world is entered: OnEnterWorld also runs on respawn, and wiping the log
+    /// then hid what killed the player (seen in game).</summary>
+    public override void OnEnterWorld()
+    {
+        if (Main.worldID == _worldId) return;
+        _worldId = Main.worldID;
+        RecentEvents.Log.Clear();
+    }
+
+    /// <summary>Vanilla's death message ("Bot was slain by a Zombie") as a recent event and a player_died event.</summary>
+    public override void Kill(double damage, int hitDirection, bool pvp, PlayerDeathReason damageSource)
+    {
+        if (Player.whoAmI != Main.myPlayer) return;
+        string text = damageSource.GetDeathText(Player.name).ToString();
+        RecentEvents.Add($"died: {text}");
+        BridgeSystem.Emit("player_died", new { Text = text, X = (int)(Player.position.X / 16f), Y = (int)(Player.Bottom.Y / 16f) });
+    }
 
     /// <summary>One call per hit: feeds both get_state's recent events and the <c>took_damage</c> wire event.
     /// PostHurt, not OnHurt: OnHurt runs before vanilla subtracts the damage, so it reported the life before the
