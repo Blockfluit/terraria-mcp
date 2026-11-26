@@ -57,8 +57,8 @@ public static class StateReader
     }
 
     /// <summary>
-    /// Every active boss in the world, visible or not: vanilla shows a boss's health bar wherever it is, so knowing it
-    /// is alive (and where it is) is fair. Eater of Worlds segments merge into one entry.
+    /// Every active boss in the world: vanilla shows a boss's health bar wherever it is, so its name and life are fair to
+    /// know. Where it is only while the player can see it (fair vision). Eater of Worlds segments merge into one entry.
     /// </summary>
     private static List<BossStatus> Bosses(Player p, int px, int py)
     {
@@ -68,7 +68,8 @@ public static class StateReader
             if (!npc.active || npc.life <= 0 || !EntityReader.IsBoss(npc)) continue;
             var (bx, by) = EntityReader.TileOf(npc);
             double d = Math.Round(Math.Sqrt((double)(bx - px) * (bx - px) + (double)(by - py) * (by - py)), 1);
-            sightings.Add(new BossSighting(npc.whoAmI, npc.GivenOrTypeName, npc.life, npc.lifeMax, bx, by, d, Segment: !npc.boss));
+            sightings.Add(new BossSighting(npc.whoAmI, npc.GivenOrTypeName, npc.life, npc.lifeMax, bx, by, d, Segment: !npc.boss,
+                Visible: Visibility.IsEntityVisible(npc)));
         }
         return BossSummary.Collapse(sightings);
     }

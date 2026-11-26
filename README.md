@@ -20,7 +20,7 @@ mod/LlmPlayer tModLoader mod inside Terraria
   widen its view the same way they widen yours.
 - **Read a fight at a glance.** `get_entities` shows each enemy's velocity, contact damage and defense,
   flags bosses (always listed first), and includes visible hostile projectiles. `get_state` counts nearby
-  hostiles, lists every living boss with its health (like the vanilla boss bar), and names events such as
+  hostiles, lists every living boss with its health (like the vanilla boss bar; its position only while visible), and names events such as
   a blood moon or goblin army. `get_inventory` tags items as weapon (with damage), heal, ammo, consumable,
   placeable, or pickaxe/axe/hammer power.
 - **Move smartly.** `move_to` plans an A* route over the real tile grid. The route walks, jumps,
@@ -57,8 +57,8 @@ mod/LlmPlayer tModLoader mod inside Terraria
   Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
   threshold with no healing potion available, it retreats and reports "low life". The result reports kills,
   damage taken, duration and dodges. This movement is also tested against the physics simulation.
-- **Fight bosses.** When the target is a boss (`target: "boss"` picks the nearest living one, even off screen, since
-  the vanilla boss bar shows it anyway), `attack` switches to arena mode. It never pathfinds and never leaves the arena
+- **Fight bosses.** When the target is a boss (`target: "boss"` picks the nearest one in sight; out of sight it goes by
+  the last sighting, never the real position), `attack` switches to arena mode. It never pathfinds and never leaves the arena
   (`arena: {x1, x2}`, by default the walkable ground or platform span around you, up to 50 tiles each way). With a bow
   it kites back and forth across the arena and shoots with lead aim. It dodges dashes sideways, by jumping, or by
   dropping through the platform under it to the row below. Servants and other minions about to reach you get shot

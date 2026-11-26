@@ -66,10 +66,17 @@ public static class EntityRanking
 
 /// <summary>One boss NPC alive in the world. <paramref name="Segment"/>: part of a multi-NPC boss (Eater of Worlds)
 /// that the game counts as a boss but isn't flagged boss itself.</summary>
-public readonly record struct BossSighting(int Id, string Name, int Life, int LifeMax, int X, int Y, double Distance, bool Segment);
+/// <param name="Visible">The player can see it (or this segment). Out of sight only what the vanilla boss bar shows
+/// (name, life) is known: position and distance are left out (fair vision).</param>
+public readonly record struct BossSighting(int Id, string Name, int Life, int LifeMax, int X, int Y, double Distance, bool Segment,
+    bool Visible = true);
 
-/// <summary>get_state's boss entry. Segments: how many living segments were merged (only for segmented bosses).</summary>
-public sealed record BossStatus(int Id, string Name, int Life, int LifeMax, int X, int Y, double Distance,
+/// <summary>get_state's boss entry. Segments: how many living segments were merged (only for segmented bosses).
+/// X/Y/Distance are null (omitted) while it's out of sight.</summary>
+public sealed record BossStatus(int Id, string Name, int Life, int LifeMax,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? X,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Y,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Distance,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Segments = null);
 
 public static class BossSummary
@@ -78,20 +85,27 @@ public static class BossSummary
 
     /// <summary>
     /// Real bosses are listed one by one; segments are merged per name into one entry (life summed, position and id of
-    /// the nearest segment) like the vanilla boss bar. Nearest first, at most <see cref="MaxBosses"/>.
+    /// the nearest visible segment) like the vanilla boss bar. Position only while visible. Nearest first, at most <see cref="MaxBosses"/>.
     /// </summary>
     public static List<BossStatus> Collapse(IEnumerable<BossSighting> sightings)
     {
         var list = new List<BossStatus>();
         var all = sightings.ToList();
         foreach (var b in all.Where(s => !s.Segment))
-            list.Add(new BossStatus(b.Id, b.Name, b.Life, b.LifeMax, b.X, b.Y, b.Distance));
+            list.Add(b.Visible
+                ? new BossStatus(b.Id, b.Name, b.Life, b.LifeMax, b.X, b.Y, b.Distance)
+                : new BossStatus(b.Id, b.Name, b.Life, b.LifeMax, null, null, null));
         foreach (var g in all.Where(s => s.Segment).GroupBy(s => s.Name))
         {
-            var near = g.OrderBy(s => s.Distance).First();
-            list.Add(new BossStatus(near.Id, g.Key, g.Sum(s => s.Life), g.Sum(s => s.LifeMax), near.X, near.Y, near.Distance, g.Count()));
+            // Position of the nearest *visible* segment; none visible → no position.
+            var near = g.Where(s => s.Visible).OrderBy(s => s.Distance).FirstOrDefault();
+            int id = near.Name != null ? near.Id : g.First().Id;
+            list.Add(near.Name != null
+                ? new BossStatus(id, g.Key, g.Sum(s => s.Life), g.Sum(s => s.LifeMax), near.X, near.Y, near.Distance, g.Count())
+                : new BossStatus(id, g.Key, g.Sum(s => s.Life), g.Sum(s => s.LifeMax), null, null, null, g.Count()));
         }
-        return list.OrderBy(b => b.Distance).Take(MaxBosses).ToList();
+        // Visible first (nearest first), then the ones only the boss bar knows about.
+        return list.OrderBy(b => b.Distance ?? double.MaxValue).Take(MaxBosses).ToList();
     }
 }
 

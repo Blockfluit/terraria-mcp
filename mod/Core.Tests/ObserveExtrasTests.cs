@@ -90,6 +90,19 @@ public class EntityRankingTests
 public class BossSummaryTests
 {
     [Fact]
+    public void OutOfSight_NameAndLifeOnly()
+    {
+        var r = BossSummary.Collapse(new[]
+        {
+            new BossSighting(7, "Eye of Cthulhu", 2000, 2800, 50, 5, 40, Segment: false, Visible: false),
+            new BossSighting(1, "Eater of Worlds", 65, 65, 10, 10, 30, Segment: true, Visible: false),
+            new BossSighting(2, "Eater of Worlds", 150, 150, 12, 10, 20, Segment: true, Visible: true),
+        });
+        Assert.Equal(new BossStatus(2, "Eater of Worlds", 215, 215, 12, 10, 20, 2), r[0]); // visible segment's position
+        Assert.Equal(new BossStatus(7, "Eye of Cthulhu", 2000, 2800, null, null, null), r[1]);
+    }
+
+    [Fact]
     public void RealBossesListedIndividually_SegmentsMergedByName()
     {
         var s = new[]

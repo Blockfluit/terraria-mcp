@@ -376,3 +376,20 @@ public sealed class AttackStats
         new(_kills.Count, _kills.ToArray(), DamageTaken, MathF.Round((nowTick - _startTick) / 60f, 1), Dodges, Retreated,
             PotionsUsed, Boss, Boss == null ? null : BossKilled, Boss == null || BossKilled ? null : BossLifeLeftPct, AmmoLeft);
 }
+
+/// <summary>
+/// Where to assume an enemy is that the player can no longer see (fair vision: no peeking at its real position).
+/// The last sighting carried along its velocity for up to <see cref="MaxCarryTicks"/> (it keeps going the way it was
+/// going), then held still there with zero velocity, the way a player would guess.
+/// </summary>
+public static class LastSeen
+{
+    public const int MaxCarryTicks = 60;
+
+    public static EnemyMotion Extrapolate(EnemyMotion seen, uint ticksSince)
+    {
+        int t = (int)Math.Min(ticksSince, MaxCarryTicks);
+        var moved = seen with { CX = seen.CX + seen.VX * t, CY = seen.CY + seen.VY * t };
+        return ticksSince >= MaxCarryTicks ? moved with { VX = 0f, VY = 0f } : moved;
+    }
+}

@@ -120,6 +120,7 @@ public static class CombatCommands
         foreach (var n in Main.npc)
         {
             if (!n.active || n.life <= 0 || !EntityReader.IsBoss(n) || !TargetRules.IsAttackable(CombatKit.Traits(n))) continue;
+            if (!Visibility.IsEntityVisible(n)) continue; // fair vision: only a boss the player can see
             float d = Vector2.Distance(n.Center, player.Center) + (n.boss ? 0f : 100000f);
             if (d < bestD)
             {
@@ -154,7 +155,8 @@ public static class CombatCommands
         {
             string? word = t.GetString()?.Trim();
             if (string.Equals(word, "boss", StringComparison.OrdinalIgnoreCase))
-                return NearestBoss(player) ?? throw new CommandError(ErrorCodes.NotVisible, "no boss is alive");
+                return NearestBoss(player) ?? throw new CommandError(ErrorCodes.NotVisible,
+                    "no boss in sight (get_state lists living bosses; wait until it shows up on screen)");
             if (!string.Equals(word, "nearest", StringComparison.OrdinalIgnoreCase))
                 throw new CommandError(ErrorCodes.BadParams, "target must be an entity id, \"nearest\", \"boss\" or \"all\"");
             return Nearest(player, EntityReader.DefaultRadius);

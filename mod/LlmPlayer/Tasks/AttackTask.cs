@@ -228,13 +228,17 @@ public sealed class AttackTask : IGameTask<GameCtx>
     /// sideways, a jump, or a drop through the platform underfoot (Down for a few ticks).</item>
     /// <item>Minions (<c>kill_minions</c>): one about to reach the player (<see cref="MinionFocus"/>) is shot first,
     /// then back to the boss.</item>
-    /// <item>The boss stays the target when it leaves the screen: its position is public (the vanilla boss bar shows
-    /// it), so kiting goes on; shooting waits until it's visible again. Succeeds when it dies; fails with "boss fled"
-    /// when it despawns without dying (dawn, or the player went too far).</item>
+    /// <item>The boss stays the target when it leaves the screen, but fairly: the player can't see where it is, so
+    /// movement uses the last sighting carried along its last velocity for a second, then held there
+    /// (<see cref="LastSeen"/>); shooting waits until it's visible again. Its life (the vanilla boss bar) and whether it
+    /// died or fled (the game announces both) stay known. Succeeds when it dies; fails with "boss fled" when it
+    /// despawns without dying (dawn, or the player went too far).</item>
     /// <item>Ammo: vanilla picks the next matching stack by itself; with no ammo left the weapon is re-chosen
     /// (another bow, or a melee weapon).</item>
     /// </list>
     /// </summary>
+    private EnemyMotion? _bossSeen;
+
     private GameTaskStatus TickBoss(GameCtx ctx)
     {
         var p = ctx.Player;
@@ -254,7 +258,15 @@ public sealed class AttackTask : IGameTask<GameCtx>
         }
         _stats.ObserveBoss(_targetName, npc.life, npc.lifeMax);
         bool visible = Visibility.IsEntityVisible(npc);
-        if (visible) _lastSeen = Main.GameUpdateCount;
+        if (visible)
+        {
+            _lastSeen = Main.GameUpdateCount;
+            _bossSeen = Motion(npc);
+        }
+        // Fair vision: out of sight, use where it was last seen (carried along its velocity), never its real position.
+        var bossMotion = visible || _bossSeen is not { } seenMotion
+            ? Motion(npc)
+            : LastSeen.Extrapolate(seenMotion, Main.GameUpdateCount - _lastSeen);
         TrackMinionKill();
 
         bool unusable = _weapon != null && !CombatKit.StillUsable(p, _weapon);
@@ -291,7 +303,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
         int? minionId = _killMinions ? _focus.Tick(contenders) : null;
 
         bool los = CombatKit.LineOfSight(p, npc);
-        var d = _bossMove.Tick(new BossMoveInputs(k, ctx.Grid, _arena, Motion(npc), others, w.Style, w.Reach, visible, los));
+        var d = _bossMove.Tick(new BossMoveInputs(k, ctx.Grid, _arena, bossMotion, others, w.Style, w.Reach, visible, los));
         if (d.DodgeStarted) _stats.AddDodge();
 
         ControlIntent intent = default;
@@ -329,7 +341,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
         _stats.AmmoLeft = ammo;
         bool sick = p.HasBuff(BuffID.PotionSickness);
         Progress = $"{_targetName} {_stats.BossLifeLeftPct}% ({npc.life}/{npc.lifeMax}), {d.DistTiles:0} tiles"
-            + (visible ? "" : " (off screen, following)")
+            + (visible ? "" : $" (out of sight {(Main.GameUpdateCount - _lastSeen) / 60} s, going by its last sighting)")
             + $", {w.Item.Name}" + (ammo is { } a ? $" ({a} ammo)" : "")
             + (aimAt != npc ? $", shooting {aimAt.GivenOrTypeName} first" : "")
             + (d.Evading ? ", dodging" : "")
