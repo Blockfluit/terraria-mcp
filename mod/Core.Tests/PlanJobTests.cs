@@ -89,4 +89,23 @@ public class PlanJobTests
         Assert.False(job.Result!.Success);
         Assert.Contains("cancelled", job.Result.FailureReason);
     }
+
+    [Fact]
+    public void PartialPlan_SkipsAnUnreachableNearestCandidate()
+    {
+        // Goal far right beyond the window. Near the window's right edge, the cell nearest the goal is a sealed pocket
+        // (unbreakable box); the open floor a bit further left is reachable. Without retries the job failed.
+        int w = 400;
+        var b = new GridBuilder(w, 30).Fill(0, 20, w - 1, 29, '#');
+        int edge = PlanJob.MaxWidth - PlanJob.Margin; // roughly where the window ends going right
+        // A sealed pocket high up near the edge, closer to the goal row than the floor.
+        b.Fill(edge - 12, 3, edge - 4, 9, 'X').Fill(edge - 11, 4, edge - 5, 8, '.').Fill(edge - 11, 9, edge - 5, 9, 'X');
+        b.Put(2, 19, 'S');
+        var (g, m) = b.Parse();
+        var goal = new TilePoint(w - 5, 8); // high, so the pocket is nearer than the floor
+        var job = new PlanJob(m['S'], goal, new MovementProfile(), new PathOptions(AllowDig: false, AllowBuild: false));
+        var r = RunToEnd(job, g, out _);
+        Assert.True(r.Success, r.FailureReason);
+        Assert.True(job.IsPartial);
+    }
 }

@@ -102,39 +102,59 @@ public sealed class PlanJob
         return true;
     }
 
+    /// <summary>Partial plans try this many intermediate targets (nearest the goal first, spread apart) before giving
+    /// up: the single nearest one can sit in a pocket the player can't reach (seen in game: a long trip from spawn
+    /// failed "unreachable" while the same trip from 30 tiles further along worked).</summary>
+    public const int MaxPartialCandidates = 5;
+    private const int CandidateSpacing = 6;
+
     private (PathResult, TilePoint, bool) Search(ArrayTileGrid g)
     {
         var goal = RequestedGoal;
-        bool partial = false;
-        if (!Inside(goal, EdgeKeepOut))
+        if (Inside(goal, EdgeKeepOut))
+            return (Pathfinder.FindPath(g, Start, goal, _profile, _options), goal, false);
+
+        var candidates = KnownStandableTowardGoal(g, goal, MaxPartialCandidates);
+        if (candidates.Count == 0)
+            return (new PathResult(false, Array.Empty<PathStep>(),
+                $"unreachable: no known standable ground toward {RequestedGoal} within the planning window", 0), RequestedGoal, false);
+        PathResult? last = null;
+        foreach (var c in candidates)
         {
-            if (!NearestKnownStandable(g, goal, out goal))
-                return (new PathResult(false, Array.Empty<PathStep>(),
-                    $"unreachable: no known standable ground toward {RequestedGoal} within the planning window", 0), RequestedGoal, false);
-            partial = true;
+            if (_cancelled) break;
+            var r = Pathfinder.FindPath(g, Start, c, _profile, _options);
+            if (r.Success) return (r, c, true);
+            last = r;
         }
-        return (Pathfinder.FindPath(g, Start, goal, _profile, _options), goal, partial);
+        return (last!, candidates[0], true);
     }
 
-    private bool Inside(TilePoint p, int keepOut) =>
-        p.X - 1 >= _x0 + keepOut && p.X + 2 <= _x0 + _w - 1 - keepOut && p.Y - 3 >= _y0 + keepOut && p.Y + 1 <= _y0 + _h - 1 - keepOut;
-
-    /// <summary>The standable cell (fully known body and support, inside the window) nearest the goal.</summary>
-    private bool NearestKnownStandable(ArrayTileGrid g, TilePoint goal, out TilePoint best)
+    /// <summary>Known standable cells inside the window nearest the goal, at least <see cref="CandidateSpacing"/>
+    /// tiles apart, nearest first.</summary>
+    private List<TilePoint> KnownStandableTowardGoal(ArrayTileGrid g, TilePoint goal, int max)
     {
-        best = default;
-        long bestD = long.MaxValue;
+        var all = new List<(long D, TilePoint P)>();
         for (int y = _y0; y < _y0 + _h; y++)
             for (int x = _x0; x < _x0 + _w; x++)
             {
                 var p = new TilePoint(x, y);
-                long dx = goal.X - x, dy = goal.Y - y, d = dx * dx + dy * dy;
-                if (d >= bestD || !Inside(p, EdgeKeepOut) || !Pathfinder.CanStand(g, p) || HasUnknown(g, p)) continue;
-                bestD = d;
-                best = p;
+                if (!Inside(p, EdgeKeepOut) || !Pathfinder.CanStand(g, p) || HasUnknown(g, p)) continue;
+                long dx = goal.X - x, dy = goal.Y - y;
+                all.Add((dx * dx + dy * dy, p));
             }
-        return bestD != long.MaxValue;
+        all.Sort((a, b) => a.D.CompareTo(b.D));
+        var picked = new List<TilePoint>();
+        foreach (var (_, p) in all)
+        {
+            if (picked.Any(q => Math.Max(Math.Abs(q.X - p.X), Math.Abs(q.Y - p.Y)) < CandidateSpacing)) continue;
+            picked.Add(p);
+            if (picked.Count >= max) break;
+        }
+        return picked;
     }
+
+    private bool Inside(TilePoint p, int keepOut) =>
+        p.X - 1 >= _x0 + keepOut && p.X + 2 <= _x0 + _w - 1 - keepOut && p.Y - 3 >= _y0 + keepOut && p.Y + 1 <= _y0 + _h - 1 - keepOut;
 
     private static bool HasUnknown(ITileGrid g, TilePoint p)
     {
