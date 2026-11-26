@@ -74,6 +74,15 @@ mod/LlmPlayer tModLoader mod inside Terraria
   stacked platform rows): it walks along, stands on what it just built and places every tile in reach
   before moving on. Occupied tiles, NPC houses and tiles with nothing to attach to are skipped and
   reported. `mine_area` likewise skips protected or unminable tiles instead of failing.
+- **House town NPCs.** `build_house` builds a valid NPC house with the player's own items and reach: a frame of
+  blocks (Wood first), a door, background walls on every inside tile, a table, a chair and a torch. Without `x,y` it
+  picks the nearest flat, clear spot it can see. Before it starts it works out the full bill of materials, crafts what
+  it can (walls 4 per block, door, chair and table at a Work Bench in range; torches from Gel), and fails with exact
+  counts if anything is still short. It builds from inside, walks out through the door, then runs vanilla's housing
+  query and reports valid or vanilla's reason. `check_housing` runs that same query on any room, lists which town NPCs
+  live in the world and which are homeless, and says which useful NPCs (Merchant, Nurse, Arms Dealer,
+  Demolitionist, Dryad…) could move in now, or what they still need. `get_state` shows homeless NPCs and NPCs ready
+  to move in.
 - **Manage gear and supplies.** `equip` can target a specific accessory slot, and `unequip` takes
   items off. `craft` with `with_intermediates` crafts missing ingredients first from what you have
   (Sand → Glass → Bottle → Lesser Healing Potion). `buy` purchases from a town NPC's shop with your

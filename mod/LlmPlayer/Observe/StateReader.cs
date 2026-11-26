@@ -49,6 +49,7 @@ public static class StateReader
         if (LlmPlayer.Interact.ChestAccess.OpenInfo(p) is { } chest) state["OpenChest"] = chest;
         var events = WorldEvents();
         if (events.Count > 0) state["WorldEvents"] = events;
+        if (LlmPlayer.Interact.Housing.StateSummary() is { } housing) state["Housing"] = housing;
         state["Driver"] = LlmPlayer.Control.ControlState.Driver.WireName();
         state["Task"] = LlmPlayer.Tasks.TaskHost.Runner.Current;
         state["RecentEvents"] = RecentEvents.Log.Drain();
