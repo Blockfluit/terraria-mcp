@@ -128,6 +128,13 @@ public sealed class PlanJob
         }
         // Every candidate sits somewhere unreachable (seen in game: all five in one sealed pocket): head for the
         // reachable spot closest to the goal and replan from there.
+        // Known routes first (no digging): digging made "straight down toward the goal" look cheapest and the player
+        // dug a new shaft into unlit rock instead of taking the known shaft and tunnels (seen in game).
+        if (!_cancelled && _options.AllowDig)
+        {
+            var walk = Pathfinder.FindPath(g, Start, RequestedGoal, _profile, _options with { BestEffort = true, AllowDig = false });
+            if (walk.Success && walk.Steps.Count > 0 && walk.ResolvedGoal is { } wend) return (walk, wend, true);
+        }
         if (!_cancelled)
         {
             var best = Pathfinder.FindPath(g, Start, RequestedGoal, _profile, _options with { BestEffort = true });
