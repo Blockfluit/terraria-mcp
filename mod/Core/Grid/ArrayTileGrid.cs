@@ -25,12 +25,14 @@ public sealed class ArrayTileGrid : ITileGrid
 
     public void Set(int x, int y, TileInfo t) => _tiles[x - _originX, y - _originY] = t;
 
+    public static readonly TileInfo ClosedDoor = new(TileKind.Solid, int.MaxValue, Protected: true, Glyph: 'D', Name: "Door", Door: true);
+
     private const string MarkerLetters = "SGABCD";
 
     /// <summary>
     /// Parse ASCII rows (origin 0,0, row 0 = top). Glyphs: '#' solid, 'X' unbreakable,
     /// 'P' protected solid, '=' platform, '.' air, '~' water, 'L' lava, '^' hazard,
-    /// '?' unknown; any of "SGABCD" is air recorded as a marker.
+    /// '?' unknown, '|' closed door (protected solid that can be opened); any of "SGABCD" is air recorded as a marker.
     /// </summary>
     public static (ArrayTileGrid Grid, Dictionary<char, TilePoint> Markers) Parse(params string[] rows)
     {
@@ -59,6 +61,7 @@ public sealed class ArrayTileGrid : ITileGrid
                     'h' => new TileInfo(TileKind.Honey),
                     '^' => new TileInfo(TileKind.Hazard),
                     '?' => new TileInfo(TileKind.Unknown),
+                    '|' => ClosedDoor,
                     _ => throw new ArgumentException($"Unknown glyph '{c}' at ({x},{y})"),
                 };
             }

@@ -63,14 +63,14 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_state",
     description:
-      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x, y, distance, segments?}] (every boss alive in the world, like the vanilla boss health bar; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'). Start every decision here." +
+      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x, y, distance, segments?}] (every boss alive in the world, like the vanilla boss health bar; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest). Start every decision here." +
       COORDS,
     readOnly: true,
   },
   {
     name: "get_map",
     description:
-      "ASCII map centred on the player with a legend and the top-left corner's coordinates. '@' player, '#' solid, '.' air, '=' platform, '~' water, 'L' lava, 'T' tree, 'C' chest, 'W' crafting station, lowercase letters = ores (see legend), 'E' enemy, 'N' town NPC, 'i' dropped item, '?' unknown (not yet seen — may be anything). Row r, column c is tile (left+c, top+r)." +
+      "ASCII map centred on the player with a legend and the top-left corner's coordinates. '@' player, '#' solid, '.' air, '=' platform, '~' water, 'L' lava, 'T' tree, 'C' chest, 'W' crafting station, 'D' closed door (move_to opens and closes doors on its way), lowercase letters = ores (see legend), 'E' enemy, 'N' town NPC, 'i' dropped item, '?' unknown (not yet seen — may be anything). Row r, column c is tile (left+c, top+r)." +
       COORDS,
     shape: { radius: int().min(1).max(40).optional().describe("Half-width in tiles, default 20, max 40") },
     readOnly: true,
@@ -85,10 +85,10 @@ const TOOLS: ToolDef[] = [
   {
     name: "find",
     description:
-      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests, crafting stations, NPCs or dropped items. Only searches tiles the player has seen; explore to reveal more." +
+      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests (any container), crafting stations, beds, NPCs or dropped items. Only searches tiles the player has seen; explore to reveal more." +
       COORDS,
     shape: {
-      category: z.enum(["ore", "tree", "chest", "station", "npc", "item"]),
+      category: z.enum(["ore", "tree", "chest", "station", "bed", "npc", "item"]),
       name: z.string().optional().describe("Optional name filter, e.g. 'Copper Ore', 'Work Bench', 'Guide'"),
       radius: int().min(1).optional().describe("Search radius in tiles, default 60"),
     },
@@ -324,6 +324,64 @@ const TOOLS: ToolDef[] = [
       item: z.string().min(1).describe("Item name as the shop lists it (case-insensitive)"),
       count: int().min(1).max(999).optional().describe("How many, default 1"),
     },
+  },
+
+  // Chests, beds
+  {
+    name: "open_chest",
+    description:
+      "Walk within reach of a chest (or dresser, piggy bank, safe, defender's forge, void vault, modded container) and open it like a right-click. Give any tile of it as x,y, or omit both for the nearest visible one you can open. When the task succeeds, wait_for_task's report.result is {x, y, name, items: [{slot, name, stack}]} — contents are only visible once opened. The chest stays open (get_state shows openChest) for chest_deposit / chest_withdraw until close_chest, another task starts, you walk out of reach (vanilla closes it) or control goes back to the user. Fails on locked chests ('locked': keys are never used automatically), trapped Dead Man's Chests ('rigged') and chests another player has open ('in_use')." +
+      COORDS +
+      STARTS_TASK,
+    shape: { x: tileX().optional(), y: tileY().optional() },
+    check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
+  },
+  {
+    name: "chest_deposit",
+    description:
+      "Put items into the open chest. Exactly one of: item (+ optional count, default the whole amount; like shift-clicking stacks into the chest, fills partial stacks first; favorited items are never moved), all: true (vanilla 'Deposit All': main inventory and coins, never the hotbar or favorites), quick_stack: true (vanilla 'Quick Stack': only items the chest already holds). Returns {moved: [{name, count}], chest: {x, y, name}, items: [{slot, name, stack}]}; what doesn't fit stays in the inventory (error chest_full if nothing fit)." +
+      INSTANT_ACTION,
+    shape: {
+      item: z.string().min(1).optional().describe("Item name (case-insensitive)"),
+      count: int().min(1).optional().describe("How many, default all of them (only with item)"),
+      all: z.boolean().optional().describe("Deposit All"),
+      quick_stack: z.boolean().optional().describe("Quick Stack onto matching stacks"),
+    },
+    check: (a) => {
+      const modes = [a.item !== undefined, a.all === true, a.quick_stack === true].filter(Boolean).length;
+      if (modes !== 1) return "give exactly one of item, all: true or quick_stack: true";
+      if (a.count !== undefined && a.item === undefined) return "count only goes with item";
+      return undefined;
+    },
+  },
+  {
+    name: "chest_withdraw",
+    description:
+      "Take items out of the open chest into the inventory. Exactly one of: item (+ optional count, default all of it) or all: true (vanilla 'Loot All'). Items go in the way vanilla picks things up (stacking onto existing stacks first); whatever doesn't fit stays in the chest — nothing is ever dropped or deleted (error inventory_full if nothing fit). Returns {moved: [{name, count}], chest, items} like chest_deposit." +
+      INSTANT_ACTION,
+    shape: {
+      item: z.string().min(1).optional().describe("Item name (case-insensitive)"),
+      count: int().min(1).optional().describe("How many, default all of them (only with item)"),
+      all: z.boolean().optional().describe("Loot All"),
+    },
+    check: (a) => {
+      if ((a.item !== undefined) === (a.all === true)) return "give exactly one of item or all: true";
+      if (a.count !== undefined && a.item === undefined) return "count only goes with item";
+      return undefined;
+    },
+  },
+  {
+    name: "close_chest",
+    description: "Close the open chest (and the inventory, if opening the chest opened it). Returns {closed, chest}; closed is false if none was open." + INSTANT_ACTION,
+  },
+  {
+    name: "use_bed",
+    description:
+      "Walk to a bed and set your spawn point there, like right-clicking the bed's foot (vanilla rules: the bed must be in valid housing and not obstructed). Give any tile of the bed as x,y, or omit both for the nearest visible bed. When the task succeeds, report.result is {spawnX, spawnY, message}; on failure the reason is vanilla's (e.g. obstructed, room too small, not valid housing)." +
+      COORDS +
+      STARTS_TASK,
+    shape: { x: tileX().optional(), y: tileY().optional() },
+    check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
   },
 ];
 

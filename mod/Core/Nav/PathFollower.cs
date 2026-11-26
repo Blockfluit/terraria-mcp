@@ -9,8 +9,10 @@ namespace LlmPlayer.Core.Nav;
 public readonly record struct PlayerKinematics(float X, float Y, float VelX, float VelY, bool OnGround);
 
 /// <summary>Controls to apply for one tick. CursorTile, when set, is where to aim the cursor. Up is only used to
-/// step up onto platforms (vanilla's Collision.StepUp needs it held for those).</summary>
-public record struct ControlIntent(bool Left, bool Right, bool Jump, bool Down, bool UseItem, TilePoint? CursorTile, bool Up = false);
+/// step up onto platforms (vanilla's Collision.StepUp needs it held for those). Interact, when set, asks the game
+/// glue to interact with that tile the way a right-click does (open/close a door); it is not a key press.</summary>
+public record struct ControlIntent(bool Left, bool Right, bool Jump, bool Down, bool UseItem, TilePoint? CursorTile, bool Up = false,
+    TilePoint? Interact = null);
 
 public enum FollowerStatus { Running, Arrived, Stuck, NeedsReplan }
 
@@ -33,6 +35,10 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 /// once the feet are above it, land on it.</item>
 /// <item>DropThrough / straight-down Fall: centre first, then hold Down for a tick (or wait for the dig).</item>
 /// <item>Swim (vanilla has no swimming without Flippers): jump off the bottom, holding while rising.</item>
+/// <item>OpenDoor: asks for the door (Interact) already while walking up to it (within
+/// <see cref="DoorLookahead"/> steps), so an opened door doesn't break the run; otherwise stops and interacts.
+/// CloseDoor: stands still and interacts; given up after <see cref="CloseDoorPatience"/> ticks (someone in the
+/// doorway) so a door never strands the path.</item>
 /// </list>
 /// </summary>
 public sealed class PathFollower
@@ -46,6 +52,7 @@ public sealed class PathFollower
     private const int MaxJumpAttempts = 3;
     private const int MaxLookahead = 64;
     private const int ResyncWindow = 12, ValidateWindow = 48;
+    public const int CloseDoorPatience = 30, DoorLookahead = 4;
 
     private readonly IReadOnlyList<PathStep> _steps;
     private readonly int _stuckTicks;
@@ -61,6 +68,8 @@ public sealed class PathFollower
     private bool _airborne, _walkRest;
     private int _attempts;
     private bool _jumpHeld;
+    private int _closeTicks;
+    private ITileGrid? _grid;
 
     /// <param name="start">Where the path starts (the planner's start); defaults to the standing tile on the first tick.</param>
     /// <param name="physics">Run constants; braking distances are planned with RunSlowdown.</param>
@@ -89,6 +98,7 @@ public sealed class PathFollower
     {
         if (_terminal != FollowerStatus.Running) return new(default, _terminal, Current);
         _prev ??= NavMath.StandingTile(k);
+        _grid = grid;
 
         if (PathInvalidated(grid)) return Finish(FollowerStatus.NeedsReplan);
 
@@ -129,23 +139,32 @@ public sealed class PathFollower
         _walkRest = false;
         _attempts = 0;
         _ceiling = null;
+        _closeTicks = 0;
     }
 
     private static float Tx(TilePoint p) => p.X + PlayerPhysics.CenterOffset;
-    private static bool IsWork(MoveKind kind) => kind is MoveKind.Dig or MoveKind.BuildPlatform;
+    private static bool IsWork(MoveKind kind) => kind is MoveKind.Dig or MoveKind.BuildPlatform or MoveKind.OpenDoor;
+    private static bool IsDoor(MoveKind kind) => kind is MoveKind.OpenDoor or MoveKind.CloseDoor;
 
     private static bool WorkDone(PathStep s, ITileGrid grid)
     {
         if (s.WorkTile is not { } w) return true;
         var t = grid.Get(w);
-        return s.Kind == MoveKind.Dig ? !t.IsSolid : t.IsStandable;
+        return s.Kind switch
+        {
+            MoveKind.Dig => !t.IsSolid,
+            MoveKind.OpenDoor => !t.BlocksBody,
+            MoveKind.CloseDoor => t.BlocksBody,
+            _ => t.IsStandable,
+        };
     }
 
     // ---- completion --------------------------------------------------------------------------------------------
 
     private bool Satisfied(PathStep s, PlayerKinematics k, ITileGrid grid) => s.Kind switch
     {
-        MoveKind.Dig => WorkDone(s, grid),
+        MoveKind.Dig or MoveKind.OpenDoor => WorkDone(s, grid),
+        MoveKind.CloseDoor => WorkDone(s, grid) || _closeTicks >= CloseDoorPatience,
         MoveKind.BuildPlatform => WorkDone(s, grid) && StandingAt(s.Pos, k),
         MoveKind.Swim => SwimReached(s.Pos, k),
         // Falling/jumping into water: the player sinks (no swimming without Flippers), so anywhere at or below
@@ -180,7 +199,7 @@ public sealed class PathFollower
         for (int j = end - 1; j > _index; j--)
         {
             var s = _steps[j];
-            if (IsWork(s.Kind)) continue;
+            if (IsWork(s.Kind) || s.Kind == MoveKind.CloseDoor) continue;
             bool there = s.Kind == MoveKind.Swim ? Math.Abs(k.X - Tx(s.Pos)) <= ArriveTolerance && Math.Abs(k.Y - s.Pos.Y) <= ArriveTolerance
                 : StandingAt(s.Pos, k);
             if (!there) continue;
@@ -202,6 +221,14 @@ public sealed class PathFollower
         {
             case MoveKind.Walk:
                 Flow(k, ref intent);
+                intent.Interact = UpcomingDoor(grid);
+                return null;
+
+            case MoveKind.OpenDoor:
+            case MoveKind.CloseDoor:
+                if (step.Kind == MoveKind.CloseDoor) _closeTicks++;
+                Steer(Tx(prev), k, ref intent);
+                intent.Interact = step.WorkTile;
                 return null;
 
             case MoveKind.StepUp:
@@ -376,6 +403,20 @@ public sealed class PathFollower
         return false;
     }
 
+    /// <summary>The door of an OpenDoor step coming up within <see cref="DoorLookahead"/> steps (only plain walks in
+    /// between), still closed: ask for it early so the walk can flow through.</summary>
+    private TilePoint? UpcomingDoor(ITileGrid grid)
+    {
+        int end = Math.Min(_steps.Count, _index + 1 + DoorLookahead);
+        for (int j = _index + 1; j < end; j++)
+        {
+            var s = _steps[j];
+            if (s.Kind == MoveKind.OpenDoor) return WorkDone(s, grid) ? null : s.WorkTile;
+            if (s.Kind != MoveKind.Walk) return null;
+        }
+        return null;
+    }
+
     /// <summary>Steer toward the stop point of the run of same-direction flowing steps starting here.</summary>
     private void Flow(PlayerKinematics k, ref ControlIntent intent)
     {
@@ -387,6 +428,8 @@ public sealed class PathFollower
         for (int j = _index; j < end; j++)
         {
             var s = _steps[j];
+            // A door that is already open (or shut) behind us doesn't stop the run.
+            if (j > _index && IsDoor(s.Kind) && _grid != null && WorkDone(s, _grid)) continue;
             int d = Math.Sign(s.Pos.X - prev.X);
             bool air = s.Kind is MoveKind.Jump or MoveKind.Fall;
             if (j > _index)
@@ -492,13 +535,17 @@ public sealed class PathFollower
         for (int i = _index; i < end; i++)
         {
             var s = _steps[i];
-            if (s.Kind is MoveKind.Swim or MoveKind.Dig) continue;
+            if (s.Kind is MoveKind.Swim or MoveKind.Dig or MoveKind.OpenDoor or MoveKind.CloseDoor) continue;
             var p = s.Pos;
 
             for (int bx = p.X; bx <= p.X + 1; bx++)
                 for (int by = p.Y - 2; by <= p.Y; by++)
-                    if (grid.Get(bx, by).BlocksBody && !IsPlannedWork(new TilePoint(bx, by), MoveKind.Dig, i))
+                {
+                    var t = grid.Get(bx, by);
+                    if (t.BlocksBody && !IsPlannedWork(new TilePoint(bx, by), MoveKind.Dig, i)
+                        && !(t.IsClosedDoor && IsPlannedDoor(bx, by, i)))
                         return true;
+                }
 
             bool inLiquid = false, supported = false;
             for (int bx = p.X; bx <= p.X + 1; bx++)
@@ -511,6 +558,16 @@ public sealed class PathFollower
             }
             if (!supported && !inLiquid) return true;
         }
+        return false;
+    }
+
+    /// <summary>Does an OpenDoor step at or before `upTo` open the door that (x,y) belongs to (same column, a door is
+    /// 3 tall)?</summary>
+    private bool IsPlannedDoor(int x, int y, int upTo)
+    {
+        for (int j = _index; j <= upTo; j++)
+            if (_steps[j].Kind == MoveKind.OpenDoor && _steps[j].WorkTile is { } w && w.X == x && Math.Abs(w.Y - y) <= 2)
+                return true;
         return false;
     }
 

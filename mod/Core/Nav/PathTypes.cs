@@ -2,17 +2,23 @@ using LlmPlayer.Core.Grid;
 
 namespace LlmPlayer.Core.Nav;
 
-public enum MoveKind { Walk, StepUp, Jump, Fall, DropThrough, Swim, Dig, BuildPlatform }
+public enum MoveKind { Walk, StepUp, Jump, Fall, DropThrough, Swim, Dig, BuildPlatform, OpenDoor, CloseDoor }
 
 /// <summary>One step of a path. Pos is the standing position (feet-left tile) after the step.
-/// WorkTile is the tile to dig (Dig) or place a platform on (BuildPlatform).</summary>
+/// WorkTile is the tile to dig (Dig), place a platform on (BuildPlatform) or the door tile to open/close
+/// (OpenDoor/CloseDoor: Pos = the previous position, the player stands still and interacts).</summary>
 public readonly record struct PathStep(TilePoint Pos, MoveKind Kind, TilePoint? WorkTile = null);
 
+/// <param name="OpenDoors">Walk through closed doors, opening them on the way (an OpenDoor step before the Walk).</param>
+/// <param name="CloseDoorsBehind">Close each door the path opened once the body is past it (best effort: a
+/// CloseDoor step; the follower gives up on it if the door won't close).</param>
 public sealed record PathOptions(
     bool AllowDig = true,
     bool AllowBuild = true,
     int MaxNodes = 20000,
-    int GoalTolerance = 1);
+    int GoalTolerance = 1,
+    bool OpenDoors = true,
+    bool CloseDoorsBehind = true);
 
 /// <param name="ResolvedGoal">Where the search actually aimed: the requested goal, or the nearest standable cell
 /// when the requested one wasn't (snapped up to <see cref="Pathfinder.GoalSearchRadius"/> tiles). A successful

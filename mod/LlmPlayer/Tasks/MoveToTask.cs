@@ -2,6 +2,7 @@ using LlmPlayer.Control;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Nav;
 using LlmPlayer.Core.Tasks;
+using LlmPlayer.Interact;
 using LlmPlayer.Nav;
 using LlmPlayer.Observe;
 using Terraria;
@@ -20,6 +21,8 @@ namespace LlmPlayer.Tasks;
 /// without completing any step), with the last reason.</item>
 /// <item>Dig steps hold the best pickaxe, build steps a platform (else the cheapest block); the previously held
 /// item comes back when the task ends (<see cref="HeldItemLease"/>).</item>
+/// <item>Doors: when the follower asks to interact with a door (OpenDoor / CloseDoor steps) it is opened or closed
+/// like a right-click (<see cref="DoorActions"/>, vanilla reach), at most every <see cref="DoorRetryTicks"/> ticks.</item>
 /// </list>
 /// As a sub-task: construct it, call <see cref="Tick"/> from the parent's Tick until it returns non-Running, and
 /// call <see cref="OnCancel"/> if the parent is cancelled or abandons it. It finishes cleanly on its own
@@ -28,7 +31,8 @@ namespace LlmPlayer.Tasks;
 public sealed class MoveToTask : IGameTask<GameCtx>
 {
     public const int MaxConsecutiveFailures = 5;
-    private const int UnknownReplanTicks = 120, EntityReplanTicks = 60, RetryDelayTicks = 20;
+    private const int UnknownReplanTicks = 120, EntityReplanTicks = 60, RetryDelayTicks = 20, DoorRetryTicks = 10;
+    private int _doorCooldown;
 
     private TilePoint _goal;
     private readonly int? _entityId;
@@ -132,8 +136,18 @@ public sealed class MoveToTask : IGameTask<GameCtx>
 
         var intent = o.Intent;
         if (!HoldToolFor(p, o.Current)) intent.UseItem = false; // wait for the right item before swinging
+        UseDoor(p, intent, o.Current);
         ControlState.Pending = intent;
         return GameTaskStatus.Running;
+    }
+
+    /// <summary>Open (or, on a CloseDoor step, close) the door the follower asks for.</summary>
+    private void UseDoor(Player p, ControlIntent intent, PathStep? step)
+    {
+        if (_doorCooldown > 0) _doorCooldown--;
+        if (intent.Interact is not { } door || _doorCooldown > 0) return;
+        bool done = step?.Kind == MoveKind.CloseDoor ? DoorActions.TryClose(p, door.X, door.Y) : DoorActions.TryOpen(p, door.X, door.Y);
+        if (!done && DoorActions.InReach(p, door.X, door.Y)) _doorCooldown = DoorRetryTicks;
     }
 
     public void OnCancel(GameCtx ctx) => Cleanup(ctx);
@@ -183,6 +197,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         }
         var intent = o.Intent;
         if (!HoldToolFor(ctx.Player, o.Current)) intent.UseItem = false;
+        UseDoor(ctx.Player, intent, o.Current);
         ControlState.Pending = intent;
     }
 

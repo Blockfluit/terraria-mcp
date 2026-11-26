@@ -397,4 +397,76 @@ public class PathFollowerTests
         });
         Assert.Equal(FollowerStatus.Running, f.Tick(At(1, 4), g).Status);
     }
+
+    // Flat floor with a closed door at column 6 (rows 2..4).
+    private static ArrayTileGrid DoorGrid() => ArrayTileGrid.Parse(
+        "............",
+        "............",
+        "......|.....",
+        "......|.....",
+        "......|.....",
+        "############").Grid;
+
+    [Fact]
+    public void OpenDoor_InteractsWhileWalkingUp_AndStopsIfStillClosed()
+    {
+        var steps = new List<PathStep>
+        {
+            new(new TilePoint(2, 4), MoveKind.Walk), new(new TilePoint(3, 4), MoveKind.Walk),
+            new(new TilePoint(4, 4), MoveKind.Walk), new(new TilePoint(4, 4), MoveKind.OpenDoor, new TilePoint(6, 4)),
+            new(new TilePoint(5, 4), MoveKind.Walk),
+        };
+        var g = DoorGrid();
+        var f = new PathFollower(steps, start: new TilePoint(1, 4));
+        var o = f.Tick(At(1, 4), g);
+        Assert.Equal(new TilePoint(6, 4), o.Intent.Interact); // asked for early
+        // Standing in front of the still-closed door: the OpenDoor step holds still and keeps interacting.
+        o = f.Tick(At(4, 4), g);
+        Assert.Equal(MoveKind.OpenDoor, o.Current!.Value.Kind);
+        Assert.Equal(new TilePoint(6, 4), o.Intent.Interact);
+        Assert.False(o.Intent.Right);
+        // The door opens: the step is done and the walk goes on.
+        for (int y = 2; y <= 4; y++) g.Set(6, y, TileInfo.Air);
+        o = f.Tick(At(4, 4), g);
+        Assert.Equal(MoveKind.Walk, o.Current!.Value.Kind);
+        Assert.Null(o.Intent.Interact);
+        Assert.True(o.Intent.Right);
+    }
+
+    [Fact]
+    public void CloseDoor_GivesUpAfterPatience()
+    {
+        // The door at column 6 is open (air) and never closes (someone in the doorway): the step is dropped.
+        var g = Flat();
+        var steps = new List<PathStep>
+        {
+            new(new TilePoint(8, 4), MoveKind.CloseDoor, new TilePoint(6, 4)),
+            new(new TilePoint(9, 4), MoveKind.Walk),
+        };
+        var f = new PathFollower(steps, start: new TilePoint(8, 4));
+        FollowerOutput o = default;
+        for (int i = 0; i < PathFollower.CloseDoorPatience; i++)
+        {
+            o = f.Tick(At(8, 4), g);
+            Assert.Equal(MoveKind.CloseDoor, o.Current!.Value.Kind);
+            Assert.Equal(new TilePoint(6, 4), o.Intent.Interact);
+        }
+        o = f.Tick(At(8, 4), g);
+        Assert.Equal(FollowerStatus.Running, o.Status);
+        Assert.Equal(MoveKind.Walk, o.Current!.Value.Kind);
+    }
+
+    [Fact]
+    public void ClosedDoorThePathOpens_DoesNotInvalidateThePath()
+    {
+        var steps = new List<PathStep>
+        {
+            new(new TilePoint(4, 4), MoveKind.OpenDoor, new TilePoint(6, 3)),
+            new(new TilePoint(5, 4), MoveKind.Walk), new(new TilePoint(6, 4), MoveKind.Walk),
+        };
+        var f = new PathFollower(steps, start: new TilePoint(4, 4));
+        var o = f.Tick(At(4, 4), DoorGrid());
+        Assert.Equal(FollowerStatus.Running, o.Status);
+        Assert.Equal(MoveKind.OpenDoor, o.Current!.Value.Kind);
+    }
 }

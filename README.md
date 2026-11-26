@@ -25,7 +25,8 @@ mod/LlmPlayer tModLoader mod inside Terraria
   placeable, or pickaxe/axe/hammer power.
 - **Move smartly.** `move_to` plans an A* route over the real tile grid. The route walks, jumps,
   drops through platforms, swims, digs with your best pickaxe, and places platforms to cross gaps
-  or climb out of shafts. The route-following code is tested against a physics simulation of
+  or climb out of shafts. It opens doors in its way like a player does (right-click, normal reach)
+  and closes them again behind itself, so it can walk in and out of houses without letting zombies in. The route-following code is tested against a physics simulation of
   vanilla movement.
 - **Gather, build, fight.** It can mine, chop trees, pick up items, place, craft (only with real
   ingredients and stations), equip, use items, attack, and talk to NPCs.
@@ -42,6 +43,13 @@ mod/LlmPlayer tModLoader mod inside Terraria
   items off. `craft` with `with_intermediates` crafts missing ingredients first from what you have
   (Sand → Glass → Bottle → Lesser Healing Potion). `buy` purchases from a town NPC's shop with your
   own coins, at the shop's real price.
+- **Use chests and beds.** `open_chest` walks to a chest (or dresser, piggy bank, safe, ...) and opens
+  it the way your right-click does; only then does the AI see what's inside. `chest_deposit` /
+  `chest_withdraw` move items like shift-click, or use the chest's own *Deposit All*, *Quick Stack* and
+  *Loot All* buttons, and never drop or delete an item that doesn't fit. Locked chests, trapped Dead
+  Man's Chests and chests someone else has open are refused; keys are never used up. The chest closes
+  when the AI is done (`close_chest`), starts another task, walks away, or hands control back.
+  `use_bed` sets your spawn point at a bed, with the game's housing rules and failure messages.
 - **Survive while thinking.** Reflexes auto-attack nearby hostiles and quick-heal while the LLM
   thinks. You can optionally pause the world while the AI is idle.
 - **Keep playing unfocused.** While the AI drives, the game keeps running when the Terraria window

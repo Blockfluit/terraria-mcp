@@ -56,6 +56,7 @@ public sealed class PathOverlay : ModSystem
         MoveKind.Fall or MoveKind.DropThrough => new Color(255, 150, 60),
         MoveKind.Swim => new Color(80, 140, 255),
         MoveKind.Dig => new Color(255, 80, 80),
+        MoveKind.OpenDoor or MoveKind.CloseDoor => new Color(200, 140, 255),
         _ => new Color(120, 255, 120), // BuildPlatform
     };
 
