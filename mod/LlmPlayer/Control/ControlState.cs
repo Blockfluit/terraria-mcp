@@ -6,11 +6,15 @@ namespace LlmPlayer.Control;
 
 /// <summary>
 /// Who drives the local player, plus the AI's control intent for the next frame. Main thread only.
-/// The AI never takes control itself: only the toggle hotkey (<see cref="AiModPlayer"/>) sets <see cref="Driver.Ai"/>.
+/// The user's toggle hotkey (<see cref="AiModPlayer"/>) hands control over or takes it back. The AI may also switch
+/// AI mode on itself (<see cref="TryAiTakeover"/>, the request_control command), unless the user took control back
+/// with the hotkey: that sticks until the user hands control over again (<see cref="TakeoverPolicy"/>). Only the
+/// hotkey (or leaving the world) ever takes control away from the AI.
 /// </summary>
 public static class ControlState
 {
     private static readonly DriverSwitch Switch = new();
+    private static readonly TakeoverPolicy Takeover = new();
 
     static ControlState() => Switch.Changed += OnSwitchChanged;
 
@@ -33,7 +37,6 @@ public static class ControlState
     /// </summary>
     public static event Action<Driver, string>? Changed;
 
-    /// <summary>Change the driver. No-op if unchanged. Emits <c>control_changed {driver, reason}</c>.</summary>
     /// <summary>Change the driver. Taking control away from the AI is refused unless
     /// <see cref="HandoverPolicy.ReleasesControl"/> allows the reason (hotkey or leaving the world).</summary>
     public static void SetDriver(Driver d, string reason)
@@ -42,8 +45,28 @@ public static class ControlState
         Switch.Set(d, reason);
     }
 
+    /// <summary>The user cancelled AI mode with the hotkey and hasn't handed control over since.</summary>
+    public static bool RevokedByUser => Takeover.RevokedByUser;
+
+    /// <summary>
+    /// The AI switches AI mode on (request_control). Refused (null → granted, else the reason) when the user took
+    /// control back with the hotkey, while the player is dead, or when the session's save backup fails — the same
+    /// backup-first rule as the hotkey. Tells the user in chat how to take control back.
+    /// </summary>
+    public static string? TryAiTakeover(Terraria.Player p)
+    {
+        if (Driver == Driver.Ai) return null;
+        string key = LlmPlayerMod.ToggleKeyName();
+        if (Takeover.Refusal(Driver, p.dead, key) is { } why) return why;
+        if (!Safety.SaveBackup.EnsureForSession(out var error)) return $"save backup failed, not taking control: {error}";
+        SetDriver(Driver.Ai, "requested");
+        Terraria.Main.NewText($"LlmPlayer: the AI took control. Press {key} to take it back.", 120, 220, 255);
+        return null;
+    }
+
     private static void OnSwitchChanged(Driver d, string reason)
     {
+        Takeover.OnDriverChanged(d, reason);
         if (d == Driver.User) Pending = default;
         BridgeSystem.Emit("control_changed", new { Driver = d.WireName(), Reason = reason });
 
