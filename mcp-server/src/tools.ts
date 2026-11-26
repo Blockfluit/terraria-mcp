@@ -85,10 +85,10 @@ const TOOLS: ToolDef[] = [
   {
     name: "find",
     description:
-      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests (any container), crafting stations, beds, NPCs, dropped items, or blocks by name (category block + name, e.g. 'Stone', 'Sand', 'Clay': get_map shows every solid tile as '#'). Only searches tiles the player has seen; explore to reveal more." +
+      "Nearest visible things of a category (max 10, nearest first): ores, trees, chests (any container), crafting stations, beds, NPCs, dropped items, blocks by name (category block + name, e.g. 'Stone', 'Sand', 'Clay': get_map shows every solid tile as '#'), or valuable: cave loot and landmarks — 'Life Crystal' (collect it: +20 max life), 'Life Fruit', 'Pot' (collect: coins, potions, torches), chests by their in-game name ('Gold Chest', 'Locked Gold Chest' = dungeon, needs a key: refused), 'Enchanted Sword (in stone)' / 'Sword in Stone (maybe a decoy)' (collect), 'Demon Altar' / 'Crimson Altar' (crafting station for boss summons, e.g. Suspicious Looking Eye; can't be broken), 'Shadow Orb (don't break)' / 'Crimson Heart (don't break)' (breaking one has world effects; the third summons a boss — never broken by the AI) and 'Fallen Star' items on the ground. Objects report their top-left tile. Only searches tiles the player has seen; explore / explore_caves to reveal more." +
       COORDS,
     shape: {
-      category: z.enum(["ore", "tree", "chest", "station", "bed", "npc", "item", "block"]),
+      category: z.enum(["ore", "tree", "chest", "station", "bed", "npc", "item", "block", "valuable"]),
       name: z.string().optional().describe("Name filter, e.g. 'Copper Ore', 'Work Bench', 'Guide'; required for block ('Stone', 'Sand')"),
       radius: int().min(1).optional().describe("Search radius in tiles, default 60"),
     },
@@ -164,7 +164,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "mine",
     description:
-      "Mine one tile: walks within reach, picks the best pickaxe and digs it. Fails on protected tiles or if the pickaxe is too weak." +
+      "Mine one tile: walks within reach, picks the best pickaxe and digs it. Fails on protected tiles or if the pickaxe is too weak. To break a pot or life crystal and also pick up what drops, use collect." +
       COORDS +
       STARTS_TASK,
     shape: { x: tileX(), y: tileY() },
@@ -401,6 +401,44 @@ const TOOLS: ToolDef[] = [
       STARTS_TASK,
     shape: { x: tileX().optional(), y: tileY().optional() },
     check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
+  },
+
+  // Caves: loot and exploration
+  {
+    name: "collect",
+    description:
+      "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}]}." +
+      COORDS +
+      STARTS_TASK,
+    shape: { x: tileX(), y: tileY() },
+  },
+  {
+    name: "loot_chest",
+    description:
+      "open_chest + chest_withdraw all + close_chest in one: walks to the chest, opens it like a right-click, presses vanilla 'Loot All' and closes it. Give any tile of it, or omit both for the nearest visible chest you can open. Whatever doesn't fit stays in the chest (nothing is dropped). Locked chests (e.g. dungeon 'Locked Gold Chest': keys are never used automatically), trapped Dead Man's Chests and chests in use are refused. When the task succeeds, report.result is {x, y, name, looted: [{name, count}], left: [{slot, name, stack}]}. Use open_chest instead to see the contents and take only some items." +
+      COORDS +
+      STARTS_TASK,
+    shape: { x: tileX().optional(), y: tileY().optional() },
+    check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
+  },
+  {
+    name: "explore_caves",
+    description:
+      "Explore caves systematically through their open space, revealing the map: repeatedly walks to the nearest reachable edge between known open space and unknown tiles (no mass digging; move_to may dig a tile or two to connect), lights it with torches from your inventory (underground, when dark and no torch within ~10 tiles), looks, and moves on. Avoids lava (never walks through it, skips openings within 3 tiles of it) and unsafe drops. " +
+      "Stops (succeeded) when something in stop_on that wasn't visible at the start comes into view — report.reason says what and where, report.result.stoppedAt has it — or when max_seconds is up or no reachable opening is left within radius tiles of the start; fails after 6 walks in a row that revealed nothing. " +
+      "Kinds: life_crystal, life_fruit, pot, chest, enchanted_sword, altar, orb, ore, fallen_star (default stop_on: life_crystal, chest, enchanted_sword, life_fruit; [] = only time/radius). collect_pots: true breaks visible pots within 12 tiles on the way. " +
+      "Result: {revealedTiles (approximate), found: [{kind, name, x, y}] (everything newly seen, max 30), torchesPlaced, potsBroken, legs, stoppedBecause, stoppedAt?}. Then: collect for life crystals/pots, loot_chest for chests, mine_vein for ore." +
+      STARTS_TASK,
+    shape: {
+      radius: int().min(10).max(200).optional().describe("Max distance in tiles from the start, default 80"),
+      max_seconds: int().min(5).max(600).optional().describe("Time limit, default 120"),
+      stop_on: z
+        .array(z.enum(["life_crystal", "life_fruit", "pot", "chest", "enchanted_sword", "altar", "orb", "ore", "fallen_star"]))
+        .optional()
+        .describe("Stop when one of these comes into view; default life_crystal, chest, enchanted_sword, life_fruit"),
+      collect_pots: z.boolean().optional().describe("Break pots seen on the way (within 12 tiles), default false"),
+      torches: z.boolean().optional().describe("Place torches in the dark, default true"),
+    },
   },
 ];
 

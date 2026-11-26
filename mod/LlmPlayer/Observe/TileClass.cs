@@ -1,3 +1,4 @@
+using LlmPlayer.Core.Observe;
 using Terraria;
 using Terraria.ID;
 using Terraria.Map;
@@ -11,10 +12,6 @@ public static class TileClass
 {
     private static HashSet<int>? _stations;
     private static readonly Dictionary<int, string> Names = new();
-
-    /// <summary>World-generated multi-tile objects that are loot, not the user's builds, so they aren't protected:
-    /// pots, life crystals, life fruit.</summary>
-    private static readonly HashSet<int> NaturalBreakables = new() { TileID.Pots, TileID.Heart, TileID.LifeFruit };
 
     public static void Reset()
     {
@@ -51,10 +48,21 @@ public static class TileClass
         return data != null && (data.Width > 1 || data.Height > 1);
     }
 
-    /// <summary>Furniture/objects the AI must never break (type-based part of Protection).</summary>
+    /// <summary>Furniture/objects the AI must never break (type-based part of Protection). World-generated loot
+    /// (pots, life crystals, life fruit: <see cref="Valuables.IsLootType"/>) isn't; shadow orbs, altars, chests,
+    /// doors and stations are.</summary>
     public static bool IsProtectedType(int type) =>
-        !IsTree(type) && !NaturalBreakables.Contains(type)
+        !IsTree(type) && !Valuables.IsLootType(type)
         && (IsContainer(type) || IsStation(type) || IsDoor(type) || IsMultiTileObject(type));
+
+    /// <summary><see cref="IsProtectedType"/> with the frame: also lets the sword in stone of an Enchanted Sword
+    /// shrine be broken (<see cref="Valuables.IsBreakableLoot"/>).</summary>
+    public static bool IsProtectedTile(Tile tile) =>
+        IsProtectedType(tile.TileType) && !Valuables.IsBreakableLoot(tile.TileType, tile.TileFrameX);
+
+    /// <summary>Which cave valuable the tile is (<see cref="Valuables.Classify"/>), or null.</summary>
+    public static ValuableKind? Valuable(Tile tile) =>
+        tile.HasTile ? Valuables.Classify(tile.TileType, tile.TileFrameX, IsContainer(tile.TileType)) : null;
 
     /// <summary>Localized tile name ("Copper Ore", "Chest"), cached per type.</summary>
     public static string Name(int type)
