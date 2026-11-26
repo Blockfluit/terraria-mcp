@@ -35,7 +35,10 @@ internal sealed class TileWorker
     private TilePoint _target;
     private IReadOnlySet<TilePoint>? _pending;
     private MoveToTask? _move;
-    private int _approaches, _swingTicks;
+    private int _approaches, _swingTicks, _settleWait;
+
+    /// <summary>Ticks to let the player come to rest after arriving before judging reach again.</summary>
+    private const int SettleTicks = 20;
     private bool _working;
 
     public string? Reason { get; private set; }
@@ -60,7 +63,7 @@ internal sealed class TileWorker
         StopMove(ctx);
         _target = target;
         _pending = pending;
-        _approaches = _swingTicks = 0;
+        _approaches = _swingTicks = _settleWait = 0;
         _working = false;
         Reason = null;
     }
@@ -103,6 +106,15 @@ internal sealed class TileWorker
         }
 
         _working = false;
+        // Just arrived: while still sliding the 0.25-tile margin applies, so a tile at the very edge of reach looks
+        // out of reach for a few ticks. Re-approaching then "arrived" instantly and burned every approach within a
+        // few ticks of stopping (seen in game). Wait for the player to settle first.
+        if (_move == null && _settleWait > 0 && !settled)
+        {
+            _settleWait--;
+            ControlState.Pending = default;
+            return GameTaskStatus.Running;
+        }
         if (_move == null)
         {
             if (++_approaches > MaxApproaches) return Fail(ctx, $"couldn't get within reach of {_target}");
@@ -127,7 +139,8 @@ internal sealed class TileWorker
         _move = null; // it cleaned up after itself
         ControlState.Pending = default;
         if (status == GameTaskStatus.Failed) return Fail(ctx, $"can't reach {_target}: {why}");
-        return GameTaskStatus.Running; // arrived: next tick re-checks reach
+        _settleWait = SettleTicks;
+        return GameTaskStatus.Running; // arrived: re-check reach once settled
     }
 
     public void Cancel(GameCtx ctx)
