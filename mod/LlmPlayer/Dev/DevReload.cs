@@ -53,9 +53,13 @@ public static class DevCommands
 
         if (!InWorld)
         {
-            // Only from the title screen: elsewhere (character creation, world generation, loading) work could be lost.
-            if (!Main.gameMenu || Main.menuMode != 0)
-                throw new CommandError(ErrorCodes.NotInWorld, "busy in a menu (not the title screen); exit manually");
+            // Any menu outside a world is safe to leave (everything was saved on leaving the world) — except while a
+            // world is being generated or saved. A failed auto-load leaves the game on a status screen, and refusing
+            // there (title screen only, as before) stranded the automated loop on the first real run.
+            // menuMode 10 is the status screen vanilla shows while saving/loading/generating (SaveAndQuitCallBack sets
+            // it before saving); our own auto-load failure screen is 1000000, which is safe to leave.
+            if (WorldGen.generatingWorld || Main.menuMode == 10)
+                throw new CommandError(ErrorCodes.NotInWorld, "a world is being generated, loaded or saved; try again when it's done");
             _exiting = true;
             LlmPlayerMod.Log("dev_save_and_exit: at the title screen, exiting");
             RequestExit();
