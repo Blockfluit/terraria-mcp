@@ -10,7 +10,8 @@ namespace LlmPlayer.Safety;
 
 /// <summary>
 /// Tiles the AI must never break: containers, crafting stations, doors and other frame-important
-/// multi-tile objects (trees, pots, life crystals and life fruit excepted); every tile within
+/// multi-tile objects (trees and natural loot excepted: pots, life crystals, life fruit, the sword in stone;
+/// <see cref="LlmPlayer.Core.Observe.Valuables"/>; shadow orbs and altars stay protected); every tile within
 /// ProtectSpawnRadius of the world spawn and of the player's bed spawn; every tile in or bounding the
 /// room of a housed town NPC. Rooms are recomputed by <see cref="Refresh"/> every 600 ticks.
 /// </summary>
@@ -27,7 +28,7 @@ public static class Protection
     {
         if (!WorldGen.InWorld(x, y)) return true;
         var tile = Main.tile[x, y];
-        if (tile.HasTile && TileClass.IsProtectedType(tile.TileType)) return true;
+        if (tile.HasTile && TileClass.IsProtectedTile(tile)) return true;
         if (SupportRules.SupportsProtectedObject(IsProtectedObject, x, y)) return true;
         return IsProtectedArea(x, y);
     }
@@ -82,7 +83,7 @@ public static class Protection
     }
 
     private static bool IsProtectedObject(int x, int y) =>
-        WorldGen.InWorld(x, y) && Main.tile[x, y].HasTile && TileClass.IsProtectedType(Main.tile[x, y].TileType);
+        WorldGen.InWorld(x, y) && Main.tile[x, y].HasTile && TileClass.IsProtectedTile(Main.tile[x, y]);
 }
 
 public sealed class ProtectionSystem : ModSystem

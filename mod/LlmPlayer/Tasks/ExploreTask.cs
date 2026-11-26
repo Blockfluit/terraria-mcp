@@ -368,7 +368,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     }
 
     /// <summary>Inventory slot of a torch (plain torches first), or -1.</summary>
-    private static int TorchSlot(Player p)
+    internal static int TorchSlot(Player p)
     {
         int any = -1;
         for (int i = 0; i < 58; i++)
@@ -381,7 +381,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
         return any;
     }
 
-    private static float BodyBrightness(TilePoint here)
+    internal static float BodyBrightness(TilePoint here)
     {
         float sum = 0f;
         for (int y = here.Y - 2; y <= here.Y; y++)
@@ -391,7 +391,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     }
 
     /// <summary>Chebyshev distance from the body to the nearest torch tile within <paramref name="radius"/>, or null.</summary>
-    private static int? NearestTorch(TilePoint here, int radius)
+    internal static int? NearestTorch(TilePoint here, int radius)
     {
         int? best = null;
         for (int y = here.Y - 1 - radius; y <= here.Y - 1 + radius; y++)

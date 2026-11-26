@@ -6,13 +6,13 @@ using Terraria;
 namespace LlmPlayer.Observe;
 
 /// <summary>
-/// find: nearest visible ore / tree / chest / station / bed / npc / item, at most 10.
+/// find: nearest visible ore / tree / chest / station / bed / npc / item / block / valuable (<see cref="ValuableScan"/>), at most 10.
 /// Ores: one result per vein (same name within 3 tiles collapses). Trees: the bottom of the trunk (or a root beside it).
 /// Chests, stations and beds: the object's top-left tile. NPCs and items: their standing tile.
 /// </summary>
 public static class Finder
 {
-    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item", "block" };
+    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item", "block", "valuable" };
     public const int DefaultRadius = 60;
     public const int MaxRadius = 100;
     private const int OreClusterRadius = 3;
@@ -35,6 +35,14 @@ public static class Finder
                 .Where(e => cat == "item" ? e.Kind == EntityKind.Item : e.Kind != EntityKind.Item)
                 .Select(e => new FindCandidate(e.Name, e.X, e.Y));
             return FindSelector.Select(entities, px, py, FindSelector.MaxResults, 0, name);
+        }
+
+        if (cat == "valuable")
+        {
+            // Life crystals, pots, chests, the Enchanted Sword shrine, altars, orbs, Fallen Stars: one result per object.
+            var hits = ValuableScan.Scan(p, px, py, radius, includeOre: false)
+                .Select(h => new FindCandidate(h.Name, h.X, h.Y));
+            return FindSelector.Select(hits, px, py, FindSelector.MaxResults, 0, name);
         }
 
         var cands = ScanTiles(p, cat, px, py, radius);
