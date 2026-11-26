@@ -42,8 +42,9 @@ mod/LlmPlayer tModLoader mod inside Terraria
   with `category: "block"` and a name, blocks like Stone, Sand or Clay. Mining walks to a spot in reach,
   builds a platform to stand on in a shaft, or digs toward a tile no open spot can reach.
 - **Explore caves and loot them.** `explore_caves` explores underground through the open cave space, frontier by
-  frontier: it walks to the nearest reachable edge between known open space and unknown tiles (digging at most a
-  tile or two to connect), lights it with your torches, looks, and moves on. It never walks through lava, skips
+  frontier: it walks to a known ledge next to the nearest reachable edge between known open space and unknown
+  tiles (digging only through walls up to 3 tiles thick to reach the next cave), lights the dark opening with your
+  torches, looks, and moves on. It never walks through lava, skips
   openings next to it and keeps to safe falls. It stops when something you asked for comes into view (`stop_on`:
   life crystals, chests, the Enchanted Sword shrine, pots, ore, altars, orbs, Fallen Stars), when time is up or when
   nothing reachable is left within `radius`, and reports what it found, tiles revealed and torches placed.
