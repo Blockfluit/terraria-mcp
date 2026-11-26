@@ -43,9 +43,9 @@ public sealed class AiModPlayer : ModPlayer
     public override void OnEnterWorld()
     {
         if (!IsLocal) return;
-        var keys = LlmPlayerMod.ToggleAiControl?.GetAssignedKeys(InputMode.Keyboard);
-        LlmPlayerMod.Log($"toggle keybind assigned keys: [{(keys == null ? "keybind missing" : string.Join(", ", keys))}]"
-            + (keys is { Count: > 0 } ? "" : $"; falling back to raw {FallbackKey}"));
+        var keys = LlmPlayerMod.ToggleKeys();
+        LlmPlayerMod.Log($"toggle keybind assigned keys: [{string.Join(", ", keys)}]"
+            + (keys.Count > 0 ? "" : $"; falling back to raw {FallbackKey}"));
     }
 
     private const Keys FallbackKey = Keys.Insert;
@@ -57,9 +57,17 @@ public sealed class AiModPlayer : ModPlayer
     private static bool TogglePressed()
     {
         var kb = LlmPlayerMod.ToggleAiControl;
-        if (kb is { JustPressed: true }) return true;
-        if (kb != null && kb.GetAssignedKeys(InputMode.Keyboard).Count > 0) return false;
+        bool bound = LlmPlayerMod.ToggleKeys().Count > 0;
+        if (bound && kb != null && SafeJustPressed(kb)) return true;
+        if (bound) return false;
         return Main.keyState.IsKeyDown(FallbackKey) && !Main.oldKeyState.IsKeyDown(FallbackKey) && !Main.drawingPlayerChat;
+    }
+
+    /// <summary>JustPressed reads the same input-profile dictionary that can miss the key right after launch.</summary>
+    private static bool SafeJustPressed(ModKeybind kb)
+    {
+        try { return kb.JustPressed; }
+        catch (Exception) { return false; }
     }
 
     private void HandleToggle()

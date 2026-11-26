@@ -141,7 +141,7 @@ public static class DevCommands
 public sealed class DevAutoloadSystem : ModSystem
 {
     /// <summary>Frames the title screen must be up before acting (lets the menu settle after mod loading).</summary>
-    private const int SettleFrames = 30;
+    private const int SettleFrames = 180; // 3 s: input profiles/keybinds must be ready before entering a world
 
     private static bool _done;
     private static int _titleFrames;
