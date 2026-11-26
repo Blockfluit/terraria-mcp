@@ -20,6 +20,9 @@ public sealed class TaskRunner<TCtx>
 
     public TaskReport? LastFinished { get; private set; }
     public bool IsIdle => _task == null;
+
+    /// <summary>The running task object (null when idle), e.g. for reflexes to see what kind of task runs.</summary>
+    public IGameTask<TCtx>? CurrentTask => _task;
     public event Action<TaskReport>? Finished;
 
     public TaskReport? Current => _task == null

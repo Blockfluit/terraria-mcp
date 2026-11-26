@@ -125,4 +125,17 @@ public class TaskRunnerTests
         r.Tick(0);
         Assert.Equal("5 tiles left", r.Current!.Progress);
     }
+
+    [Fact]
+    public void CurrentTask_ExposesTheRunningTaskObject()
+    {
+        var r = new TaskRunner<int>();
+        Assert.Null(r.CurrentTask);
+        var t = new FakeTask();
+        r.Start(t, 0);
+        Assert.Same(t, r.CurrentTask);
+        t.Next = GameTaskStatus.Succeeded;
+        r.Tick(0);
+        Assert.Null(r.CurrentTask);
+    }
 }

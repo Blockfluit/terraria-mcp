@@ -67,15 +67,22 @@ public sealed class TaskHost : ModSystem
     public override void OnWorldUnload()
     {
         if (!Runner.IsIdle && Main.LocalPlayer != null) Cancel("left_world");
+        Reflexes.Reset(null);
         PathOverlayState.Clear();
     }
 
+    /// <summary>
+    /// One writer of <see cref="ControlState.Pending"/> per tick: <see cref="Reflexes"/> run first (quick-heal never
+    /// touches controls); if auto-defend owns the controls the task is not ticked this tick (paused, not cancelled),
+    /// otherwise the task ticks; with neither, keys are released.
+    /// </summary>
     private static void OnTick()
     {
-        if (Main.gameMenu || Main.LocalPlayer is not { active: true }) return;
+        if (Main.gameMenu || Main.LocalPlayer is not { active: true } p) return;
         if (ControlState.Driver != Driver.Ai) return;
-        if (!Runner.IsIdle) Runner.Tick(GameCtx.ForLocalPlayer());
-        if (Runner.IsIdle)
+        bool reflexOwnsControls = Reflexes.Tick(p, Runner.CurrentTask);
+        if (!reflexOwnsControls && !Runner.IsIdle) Runner.Tick(GameCtx.ForLocalPlayer());
+        if (Runner.IsIdle && !reflexOwnsControls)
         {
             ControlState.Pending = default;
             PathOverlayState.Clear();
@@ -84,7 +91,9 @@ public sealed class TaskHost : ModSystem
 
     private static void OnDriverChanged(Driver d, string reason)
     {
-        if (d == Driver.User) Cancel(reason);
+        if (d != Driver.User) return;
+        Cancel(reason);
+        Reflexes.Reset(Main.LocalPlayer is { active: true } p ? p : null);
     }
 
     private static void OnFinished(TaskReport report) => BridgeSystem.Emit("task_finished", report);
