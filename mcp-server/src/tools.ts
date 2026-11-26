@@ -10,7 +10,7 @@ export interface ModClient {
 }
 
 export const SERVER_INSTRUCTIONS = `You control the user's own Terraria character through the LlmPlayer mod.
-- Control: the user must hand over control by pressing the toggle key in game (default Insert). Until then observation tools work but action tools fail with user_has_control: ask the user to press Insert. Only the user pressing Insert again takes control back (it cancels the current task); dying cancels the current task but you keep control.
+- Control: action tools need AI mode. Call request_control to switch it on yourself; the user can also hand control over with the toggle key (default Insert). The user pressing Insert takes control back at once and cancels the current task; after that request_control is refused until the user hands control over again — respect that, stop, and ask them. Dying cancels the current task but you keep control.
 - Coordinates: absolute tile coordinates, y grows DOWNWARD (smaller y = higher up). The player's position (x,y) is the bottom-left tile of its 2-wide x 3-tall body (feet-left): it occupies x..x+1, y-2..y, standing on tile row y+1.
 - Fair vision: you only see what the player could see. '?' in get_map = unknown/unrevealed tiles; find/get_entities only report visible things (exception: get_state lists every living boss, as the vanilla boss health bar does).
 - Actions start asynchronous tasks and return immediately. Only one task runs at a time; starting a new one cancels the old. Follow an action with wait_for_task (blocks until done) or get_task (poll).
@@ -25,7 +25,7 @@ const INSTANT_ACTION =
   " Instant action (no task). Fails with user_has_control unless the user pressed Insert to hand over control.";
 
 const TOGGLE_HINT =
-  "The user is driving. Ask the user to press Insert in Terraria to hand control to the AI, then retry. Observation tools still work meanwhile.";
+  "The user is driving. Call request_control to take control; if it is refused (the user took control back with Insert), stop and ask the user to press Insert when they want you to continue. Observation tools still work meanwhile.";
 
 const int = () => z.number().int();
 const tileX = () => int().describe("Absolute tile x");
@@ -56,8 +56,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "request_control",
     description:
-      "Check whether the user has handed control to you. It cannot take control by itself: if granted is false, ask the user to press Insert in Terraria, then call this again.",
-    readOnly: true,
+      "Switch AI mode on so action tools work: {driver, granted, reason?}. Refused (granted false, with the reason) after the user took control back with Insert — then only the user can hand it over again, so ask them — and while the player is dead.",
   },
 
   // Observation

@@ -53,7 +53,7 @@ The AI plays on your real saves, so the mod enforces these rules:
 
 - It never cheats. There's no teleporting or item spawning. Every action uses your real controls,
   with normal reach, tool power and cooldowns.
-- It never takes control on its own. Only your hotkey hands control over, and only the hotkey takes it back.
+- The AI may switch AI mode on itself (`request_control`), but only your hotkey takes control back, and it cancels the running task at once. After you take control back, the AI cannot take it again until you hand it over with the hotkey (or restart the game).
 - The first time you hand over control in a session, it backs up your `.plr` and `.wld` files to
   `Documents/My Games/Terraria/tModLoader/LlmPlayerBackups/<timestamp>/`. It keeps the newest 5.
 - It never breaks chests, furniture, doors, crafting stations, anything inside an NPC house, or
