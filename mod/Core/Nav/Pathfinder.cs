@@ -188,7 +188,8 @@ public static class Pathfinder
         /// anchored air tile under the left foot where a platform can go (mid-shaft spots the search reaches by
         /// climbing with platforms; e.g. a stand to mine ore beside a shaft).</summary>
         private bool GoalOk(int x, int y) =>
-            BodyClear(x, y) && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid)
+            (BodyClear(x, y) || (_o.DigToGoal && _canDig && BodyDiggable(x, y)))
+            && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid)
                                 || (_canBuild && _buildCap > 0 && _t.F(x, y + 1) == TileCache.Computed && Anchored(x, y + 1)));
 
         private PathResult Success(int ni, int expanded)
@@ -303,6 +304,19 @@ public static class Pathfinder
             InSource(x, y) || (_t.F(x, y) & (TileCache.Block | TileCache.Deadly)) == 0;
 
         private bool HasSupport(int x, int y) => ((_t.F(x, y + 1) | _t.F(x + 1, y + 1)) & TileCache.Stand) != 0;
+
+        /// <summary>Every body cell is open or a block the current pickaxe can dig (not deadly, not protected).</summary>
+        private bool BodyDiggable(int x, int y)
+        {
+            for (int r = y - 2; r <= y; r++)
+                for (int c = x; c <= x + 1; c++)
+                {
+                    if (Passable(c, r)) continue;
+                    ushort f = _t.F(c, r);
+                    if ((f & TileCache.Deadly) != 0 || (f & TileCache.Diggable) == 0) return false;
+                }
+            return true;
+        }
 
         private bool BodyClear(int x, int y)
         {

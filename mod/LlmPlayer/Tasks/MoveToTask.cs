@@ -37,6 +37,9 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private TilePoint _goal;
     private readonly int? _entityId;
     private readonly bool _allowDig, _allowBuild;
+
+    /// <summary>Keep a goal inside diggable rock and dig to it (PathOptions.DigToGoal) instead of snapping.</summary>
+    public bool DigToGoal { get; init; }
     private readonly int _tolerance;
     private readonly HeldItemLease _lease = new();
 
@@ -205,7 +208,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     {
         _job?.Cancel();
         var profile = ProfileBuilder.From(p, _allowDig, _allowBuild);
-        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance));
+        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig));
     }
 
     private void DropFollower()

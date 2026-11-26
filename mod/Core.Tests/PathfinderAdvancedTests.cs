@@ -324,6 +324,25 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void DigToGoal_KeepsAGoalInsideRockAndDigsToIt()
+    {
+        // Open floor on the left, solid rock from x=8. Goal 4 tiles into the rock at floor level.
+        var b = new GridBuilder(20, 10).Fill(0, 7, 19, 9, '#').Fill(8, 0, 19, 6, '#');
+        b.Put(1, 6, 'S');
+        var (g, m) = b.Parse();
+        var goal = new TilePoint(12, 6);
+        var dug = Pathfinder.FindPath(g, m['S'], goal, new(PickPower: 35), new(GoalTolerance: 0, DigToGoal: true));
+        Assert.True(dug.Success, dug.FailureReason);
+        Assert.Equal(goal, dug.ResolvedGoal);
+        Assert.Equal(goal, dug.Steps[^1].Pos);
+        Assert.Contains(dug.Steps, s => s.Kind == MoveKind.Dig);
+
+        // Default: the goal snaps out of the rock (documented move_to behaviour) or is refused.
+        var snapped = Pathfinder.FindPath(g, m['S'], goal, new(PickPower: 35), new(GoalTolerance: 0));
+        Assert.NotEqual(goal, snapped.ResolvedGoal);
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");

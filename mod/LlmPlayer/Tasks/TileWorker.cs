@@ -134,7 +134,9 @@ internal sealed class TileWorker
             // "couldn't get within reach" after 4 approaches from far away).
             _move = stand is { } st
                 ? new MoveToTask(st, allowDig: true, allowBuild: true, tolerance: 0, name: _name)
-                : new MoveToTask(_target, allowDig: true, allowBuild: true, tolerance: 1, name: _name);
+                // No spot at all (the tile is out of reach behind rock): dig toward it; the path digs the body out,
+                // usually through the target itself (seen in game: ore 4 tiles into a shaft wall).
+                : new MoveToTask(_target, allowDig: true, allowBuild: true, tolerance: 1, name: _name) { DigToGoal = true };
         }
 
         var status = _move.Tick(ctx);

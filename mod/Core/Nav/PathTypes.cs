@@ -12,13 +12,16 @@ public readonly record struct PathStep(TilePoint Pos, MoveKind Kind, TilePoint? 
 /// <param name="OpenDoors">Walk through closed doors, opening them on the way (an OpenDoor step before the Walk).</param>
 /// <param name="CloseDoorsBehind">Close each door the path opened once the body is past it (best effort: a
 /// CloseDoor step; the follower gives up on it if the door won't close).</param>
+/// <param name="DigToGoal">A goal inside diggable rock is kept (the path digs the body out) instead of snapping to
+/// the nearest open cell. For reaching a tile to mine when no open spot is in reach; needs AllowDig.</param>
 public sealed record PathOptions(
     bool AllowDig = true,
     bool AllowBuild = true,
     int MaxNodes = 20000,
     int GoalTolerance = 1,
     bool OpenDoors = true,
-    bool CloseDoorsBehind = true);
+    bool CloseDoorsBehind = true,
+    bool DigToGoal = false);
 
 /// <param name="ResolvedGoal">Where the search actually aimed: the requested goal, or the nearest standable cell
 /// when the requested one wasn't (snapped up to <see cref="Pathfinder.GoalSearchRadius"/> tiles). A successful
