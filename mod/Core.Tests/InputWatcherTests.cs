@@ -66,4 +66,42 @@ public class InputWatcherTests
         Assert.False(InputWatcher.IsUserInput(Snap(x: 0, y: 0), Snap(x: 8, y: 0), Toggle));
         Assert.True(InputWatcher.IsUserInput(Snap(x: 0, y: 0), Snap(x: 6, y: 6), Toggle));
     }
+
+    private const int LeftAlt = 164, RightAlt = 165, LeftWin = 91, RightWin = 92, Tab = 9;
+
+    [Theory]
+    [InlineData(LeftAlt)]
+    [InlineData(RightAlt)]
+    [InlineData(LeftWin)]
+    [InlineData(RightWin)]
+    public void OsSwitchModifierAlone_NotUserInput(int key)
+        => Assert.False(InputWatcher.IsUserInput(Snap(), Snap(new[] { key }), Toggle));
+
+    [Fact]
+    public void AltTab_NotUserInput()
+        => Assert.False(InputWatcher.IsUserInput(Snap(new[] { LeftAlt }), Snap(new[] { LeftAlt, Tab }), Toggle));
+
+    [Fact]
+    public void WinChord_NotUserInput()
+        => Assert.False(InputWatcher.IsUserInput(Snap(new[] { LeftWin }), Snap(new[] { LeftWin, 68 }), Toggle));
+
+    [Fact]
+    public void KeyAfterAltReleased_IsUserInput()
+        => Assert.True(InputWatcher.IsUserInput(Snap(new[] { LeftAlt }), Snap(new[] { Tab }), Toggle));
+
+    [Fact]
+    public void ClickWhileAltHeld_IsUserInput()
+        => Assert.True(InputWatcher.IsUserInput(Snap(new[] { LeftAlt }), Snap(new[] { LeftAlt }, left: true), Toggle));
+
+    [Fact]
+    public void IgnoreMouseMove_LargeMoveNotUserInput()
+        => Assert.False(InputWatcher.IsUserInput(Snap(x: 0), Snap(x: 500), Toggle, ignoreMouseMove: true));
+
+    [Fact]
+    public void IgnoreMouseMove_ClicksScrollAndKeysStillCount()
+    {
+        Assert.True(InputWatcher.IsUserInput(Snap(), Snap(left: true), Toggle, ignoreMouseMove: true));
+        Assert.True(InputWatcher.IsUserInput(Snap(), Snap(scroll: 120), Toggle, ignoreMouseMove: true));
+        Assert.True(InputWatcher.IsUserInput(Snap(), Snap(new[] { 65 }), Toggle, ignoreMouseMove: true));
+    }
 }

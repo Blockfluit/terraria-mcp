@@ -79,11 +79,13 @@ about tModLoader listening on port 7878. Allow it on private networks.
 
 1. Load a world in tModLoader.
 2. Press **F8** (rebindable under *Controls → Mod Controls*). "AI driving" appears at the top of
-   the screen.
+   the screen. Then switch to your MCP client with Alt+Tab, or move the mouse to it within 3 seconds and
+   click it there. Alt and Win key chords don't take control back, and for 3 seconds after F8 neither does
+   moving the mouse. The game keeps running while it is unfocused and the AI drives.
 3. Ask your MCP client to play, for example: *"Gather wood, make a workbench and wooden tools, then
    find some copper."*
-4. Press any key or click to take control back. Clicking into the Terraria window, or Alt+Tabbing to it,
-   also counts, so leave the window alone while the AI plays.
+4. Press any key or click to take control back. Clicking into the Terraria window, or moving the mouse
+   over it while it has focus, also counts, so leave the window alone while the AI plays.
 
 A good loop for the LLM is `get_state` → `get_map` → an action → `wait_for_task`.
 

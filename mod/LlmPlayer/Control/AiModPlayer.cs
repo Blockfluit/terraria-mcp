@@ -24,6 +24,14 @@ public sealed class AiModPlayer : ModPlayer
 {
     private RawInputSnapshot _prevRaw = Empty;
 
+    /// <summary>
+    /// After the hotkey hands control over, mouse movement alone doesn't count as user takeover for this long, so the
+    /// user can move the mouse off the game window to their terminal. Clicks, scrolling and keys still count at once.
+    /// </summary>
+    private static readonly TimeSpan HandoverMouseGrace = TimeSpan.FromSeconds(3);
+
+    private DateTime _handedOverAt = DateTime.MinValue;
+
     private static readonly RawInputSnapshot Empty = new(new HashSet<int>(), false, false, 0, 0, 0);
 
     private bool IsLocal => Player.whoAmI == Main.myPlayer;
@@ -69,6 +77,7 @@ public sealed class AiModPlayer : ModPlayer
             return;
         }
         ControlState.SetDriver(Driver.Ai, "hotkey");
+        _handedOverAt = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -148,7 +157,8 @@ public sealed class AiModPlayer : ModPlayer
 
         // Unfocused: nothing counts as user input (the user may be typing in a terminal while the AI plays).
         if (ControlState.Driver != Driver.Ai || !Main.instance.IsActive) return;
-        if (InputWatcher.IsUserInput(prev, cur, toggleKey))
+        var inGrace = DateTime.UtcNow - _handedOverAt < HandoverMouseGrace;
+        if (InputWatcher.IsUserInput(prev, cur, toggleKey, ignoreMouseMove: inGrace))
             ControlState.SetDriver(Driver.User, "user_input");
     }
 
