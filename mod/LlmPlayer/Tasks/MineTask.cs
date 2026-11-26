@@ -24,6 +24,7 @@ public sealed class MineTask : IGameTask<GameCtx>
     private readonly HeldItemLease _lease = new();
     private readonly TileWorker _worker;
     private readonly SkipReport? _skips;
+    private readonly Dictionary<TilePoint, ushort> _typeAtStart = new();
     private int _index = -1, _mined, _failsInARow;
     private string? _lastFailure;
     private const int MaxFailsInARow = 5;
@@ -55,6 +56,8 @@ public sealed class MineTask : IGameTask<GameCtx>
         _skips = skips;
         _tiles = tiles;
         _pending = new HashSet<TilePoint>(tiles);
+        foreach (var t in tiles)
+            if (WorldGen.InWorld(t.X, t.Y) && Main.tile[t.X, t.Y].HasTile) _typeAtStart[t] = Main.tile[t.X, t.Y].TileType;
         Name = name;
         _worker = new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease);
         Progress = $"mined 0/{tiles.Count}";
@@ -66,7 +69,10 @@ public sealed class MineTask : IGameTask<GameCtx>
         while (_index < _tiles.Count)
         {
             var t = _tiles[_index];
-            bool gone = !HasMinableTile(t.X, t.Y);
+            // Gone also when a different tile now sits there: walking to a stand spot can dig the tile out and put a
+            // platform in its place (seen in game mining a vein beside a shaft: it then tried to mine its own platform).
+            bool gone = !HasMinableTile(t.X, t.Y)
+                        || (_typeAtStart.TryGetValue(t, out var type0) && Main.tile[t.X, t.Y].TileType != type0);
             if (!gone && Protection.IsProtected(t.X, t.Y))
             {
                 if (_skips == null) return Finish(ctx, GameTaskStatus.Failed, $"{t} became protected; stopped");

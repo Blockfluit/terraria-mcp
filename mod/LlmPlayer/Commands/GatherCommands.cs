@@ -5,6 +5,7 @@ using LlmPlayer.Core.Grid;
 using LlmPlayer.Observe;
 using LlmPlayer.Tasks;
 using Terraria;
+using Terraria.ID;
 
 namespace LlmPlayer.Commands;
 
@@ -24,6 +25,33 @@ public static class GatherCommands
             var task = new MineTask(tiles, "mine");
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name };
+        }, isAction: true);
+
+        // One ore vein: every visible tile of the same type 8-connected to (x,y), without the stone around it.
+        CommandRouter.Register("mine_vein", p =>
+        {
+            int x = Params.Int(p, "x"), y = Params.Int(p, "y");
+            var player = Main.LocalPlayer;
+            if (!WorldGen.InWorld(x, y, 10)) throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
+            if (!Visibility.IsTileVisible(x, y)) throw new CommandError(ErrorCodes.NotVisible, $"({x},{y}) is not visible");
+            var start = Main.tile[x, y];
+            if (!start.HasTile || !TileID.Sets.Ore[start.TileType])
+                throw new CommandError(ErrorCodes.BadParams, $"no ore at ({x},{y}) (find category=ore lists visible ore)");
+            ushort type = start.TileType;
+            var vein = VeinMath.Collect((tx, ty) => WorldGen.InWorld(tx, ty, 10) && Visibility.IsTileVisible(tx, ty)
+                && Main.tile[tx, ty] is { HasTile: true } t && t.TileType == type, new TilePoint(x, y));
+            var (px, py) = StateReader.StandingTile(player);
+            var ordered = MiningOrder.Order(vein, new TilePoint(px, py));
+            var tiles = MineTask.Validate(player, ordered, area: true, out var skipped);
+            if (tiles.Count == 0)
+                throw new CommandError(ErrorCodes.BadParams, $"nothing in that vein can be mined (skipped: {skipped.Summary()})");
+            var task = new MineTask(tiles, "mine_vein", skipped);
+            TaskHost.Start(task);
+            return new
+            {
+                Started = true, Task = task.Name, Ore = TileClass.Name(type), Tiles = tiles.Count,
+                Skipped = skipped.Count, SkippedReasons = skipped.ByReason,
+            };
         }, isAction: true);
 
         CommandRouter.Register("mine_area", p =>

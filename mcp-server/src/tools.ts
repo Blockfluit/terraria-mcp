@@ -181,6 +181,14 @@ const TOOLS: ToolDef[] = [
     shape: { x1: tileX(), y1: tileY(), x2: tileX(), y2: tileY() },
   },
   {
+    name: "mine_vein",
+    description:
+      "Mine one whole ore vein: give any visible ore tile; every visible tile of the same ore connected to it (8-neighbourhood, at most 200) is mined nearest-first, without the stone around it. Tiles it can't reach or break are skipped and reported (report.result.skippedReasons). Use find category=ore to get a tile." +
+      COORDS +
+      STARTS_TASK,
+    shape: { x: tileX(), y: tileY() },
+  },
+  {
     name: "chop_tree",
     description:
       "Chop down a tree with the best axe. Give the trunk's x,y, or omit both to chop the nearest visible tree." +
