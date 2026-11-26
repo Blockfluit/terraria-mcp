@@ -1,7 +1,6 @@
 using LlmPlayer.Core.Control;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Safety;
-using Microsoft.Xna.Framework.Input;
 using Terraria;
 using Terraria.DataStructures;
 using Terraria.GameInput;
@@ -10,8 +9,8 @@ using Terraria.ModLoader;
 namespace LlmPlayer.Control;
 
 /// <summary>
-/// Applies the AI's controls to the local player while it drives, and hands control back on real user input,
-/// death, or the toggle hotkey.
+/// Applies the AI's controls to the local player while it drives. Only the toggle hotkey (or leaving the world)
+/// hands control back (<see cref="HandoverPolicy"/>); the user's own input is ignored while the AI drives.
 ///
 /// Order inside vanilla Player.Update (local player, window focused; verified by decompiling 1.4.4):
 ///   ResetControls → Triggers.CopyInto (user input) → <b>SetControls</b> → hotbar/scroll handling →
@@ -22,21 +21,7 @@ namespace LlmPlayer.Control;
 /// </summary>
 public sealed class AiModPlayer : ModPlayer
 {
-    private RawInputSnapshot _prevRaw = Empty;
-
-    /// <summary>
-    /// After the hotkey hands control over, mouse movement alone doesn't count as user takeover for this long, so the
-    /// user can move the mouse off the game window to their terminal. Clicks, scrolling and keys still count at once.
-    /// </summary>
-    private static readonly TimeSpan HandoverMouseGrace = TimeSpan.FromSeconds(3);
-
-    private DateTime _handedOverAt = DateTime.MinValue;
-
-    private static readonly RawInputSnapshot Empty = new(new HashSet<int>(), false, false, 0, 0, 0);
-
     private bool IsLocal => Player.whoAmI == Main.myPlayer;
-
-    public override void OnEnterWorld() => _prevRaw = ReadRawInput(out _);
 
     public override void ProcessTriggers(TriggersSet triggersSet)
     {
@@ -45,14 +30,13 @@ public sealed class AiModPlayer : ModPlayer
 
     /// <summary>
     /// Called instead of Player.Update while single player is auto-paused (incl. <see cref="PauseWhenIdle"/>), when
-    /// ProcessTriggers and PostUpdate don't run. While the AI drives, keep the hotkey and user-input takeover working
-    /// here so the user can always take control back from a paused world (which also unpauses it).
+    /// ProcessTriggers doesn't run. While the AI drives, keep the hotkey working here so the user can always take
+    /// control back from a paused world (which also unpauses it).
     /// </summary>
     public override void UpdateAutopause()
     {
         if (!IsLocal || ControlState.Driver != Driver.Ai) return;
         HandleToggle();
-        CheckUserTakeover();
     }
 
     private void HandleToggle()
@@ -77,12 +61,11 @@ public sealed class AiModPlayer : ModPlayer
             return;
         }
         ControlState.SetDriver(Driver.Ai, "hotkey");
-        _handedOverAt = DateTime.UtcNow;
     }
 
     /// <summary>
     /// While the AI drives, own every control: clear everything the user's triggers wrote this frame, then apply
-    /// <see cref="ControlState.Pending"/>. Nothing user-derived leaks through (e.g. a key held while pressing F8).
+    /// <see cref="ControlState.Pending"/>. Nothing user-derived leaks through (the user's keys and mouse do nothing while the AI drives).
     /// </summary>
     public override void SetControls()
     {
@@ -130,7 +113,6 @@ public sealed class AiModPlayer : ModPlayer
     /// Player.tileTargetX/Y directly. Vanilla's tileTarget recompute after SetControls then lands on the same tile,
     /// and Main.MouseWorld (item swing direction, projectile aim) points at it too. Main.mouseX is recomputed from
     /// the real device every frame (PlayerInput.SetZoom_MouseInWorld), so the override lasts only for this update.
-    /// It never feeds user-input detection: that reads raw XNA Keyboard/Mouse state only (<see cref="ReadRawInput"/>).
     /// Reach, tool power and cooldowns are still enforced by vanilla ItemCheck.
     /// </summary>
     private void AimAt(TilePoint tile)
@@ -144,55 +126,10 @@ public sealed class AiModPlayer : ModPlayer
         Player.tileTargetY = tile.Y;
     }
 
-    public override void PostUpdate()
-    {
-        if (IsLocal) CheckUserTakeover();
-    }
-
-    private void CheckUserTakeover()
-    {
-        var cur = ReadRawInput(out var toggleKey);
-        var prev = _prevRaw;
-        _prevRaw = cur;
-
-        // Unfocused: nothing counts as user input (the user may be typing in a terminal while the AI plays).
-        if (ControlState.Driver != Driver.Ai || !Main.instance.IsActive) return;
-        var inGrace = DateTime.UtcNow - _handedOverAt < HandoverMouseGrace;
-        if (InputWatcher.IsUserInput(prev, cur, toggleKey, ignoreMouseMove: inGrace))
-            ControlState.SetDriver(Driver.User, "user_input");
-    }
-
     public override void Kill(double damage, int hitDirection, bool pvp, PlayerDeathReason damageSource)
     {
-        if (IsLocal) ControlState.SetDriver(Driver.User, "player_died");
+        // The AI keeps control (only the hotkey takes it back); the current task can't continue though.
+        if (IsLocal && ControlState.Driver == Driver.Ai) LlmPlayer.Tasks.TaskHost.Cancel("player_died");
     }
 
-    /// <summary>
-    /// Raw device state straight from XNA/FNA — never Main.mouseX/PlayerInput, which the AI's aim overrides.
-    /// Keys bound to the toggle keybind are removed so pressing it isn't "user input"; <paramref name="toggleKey"/>
-    /// is the first of them (or -1).
-    /// </summary>
-    private static RawInputSnapshot ReadRawInput(out int toggleKey)
-    {
-        var toggle = ToggleKeys();
-        toggleKey = toggle.Count > 0 ? toggle[0] : -1;
-
-        var keys = new HashSet<int>();
-        foreach (var k in Keyboard.GetState().GetPressedKeys())
-            if (!toggle.Contains((int)k)) keys.Add((int)k);
-
-        var m = Mouse.GetState();
-        return new RawInputSnapshot(keys, m.LeftButton == ButtonState.Pressed, m.RightButton == ButtonState.Pressed,
-            m.X, m.Y, m.ScrollWheelValue);
-    }
-
-    private static List<int> ToggleKeys()
-    {
-        var result = new List<int>();
-        var bound = LlmPlayerMod.ToggleAiControl?.GetAssignedKeys(InputMode.Keyboard);
-        if (bound == null) return result;
-        foreach (var name in bound)
-            if (Enum.TryParse<Keys>(name, out var k)) result.Add((int)k);
-        return result;
-    }
 }

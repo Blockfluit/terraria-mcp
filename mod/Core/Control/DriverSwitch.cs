@@ -35,3 +35,13 @@ public sealed class DriverSwitch
     /// <summary>Back to <see cref="Driver.User"/> without raising <see cref="Changed"/> (mod unload).</summary>
     public void Reset() => Driver = Driver.User;
 }
+
+/// <summary>
+/// What may take control away from the AI once the user handed it over: only the user pressing the toggle key again,
+/// or leaving the world. The user's own keyboard/mouse input and the character dying do not (dying only cancels the
+/// current task).
+/// </summary>
+public static class HandoverPolicy
+{
+    public static bool ReleasesControl(string reason) => reason is "hotkey" or "left_world";
+}

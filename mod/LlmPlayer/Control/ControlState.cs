@@ -34,7 +34,13 @@ public static class ControlState
     public static event Action<Driver, string>? Changed;
 
     /// <summary>Change the driver. No-op if unchanged. Emits <c>control_changed {driver, reason}</c>.</summary>
-    public static void SetDriver(Driver d, string reason) => Switch.Set(d, reason);
+    /// <summary>Change the driver. Taking control away from the AI is refused unless
+    /// <see cref="HandoverPolicy.ReleasesControl"/> allows the reason (hotkey or leaving the world).</summary>
+    public static void SetDriver(Driver d, string reason)
+    {
+        if (d == Driver.User && Switch.Driver == Driver.Ai && !HandoverPolicy.ReleasesControl(reason)) return;
+        Switch.Set(d, reason);
+    }
 
     private static void OnSwitchChanged(Driver d, string reason)
     {

@@ -64,7 +64,7 @@ describe("registerTools", () => {
     expect(JSON.parse(res.content[0].text)).toEqual({ started: "move_to" });
   });
 
-  it("user_has_control becomes isError with F8 hint text", async () => {
+  it("user_has_control becomes isError with toggle-key hint text", async () => {
     const conn = new FakeConn(() => {
       throw new ModError("user_has_control", "the user is driving");
     });
@@ -72,7 +72,7 @@ describe("registerTools", () => {
     const res = await call(client, "move_to", { x: 1, y: 2 });
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/^user_has_control: the user is driving/);
-    expect(res.content[0].text).toContain("F8");
+    expect(res.content[0].text).toContain("Insert");
   });
 
   it("wait_for_task polls until succeeded", async () => {

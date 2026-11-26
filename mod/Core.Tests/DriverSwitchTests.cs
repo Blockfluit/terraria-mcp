@@ -67,3 +67,14 @@ public class DriverSwitchTests
     public void WireName(Driver d, string expected)
         => Assert.Equal(expected, d.WireName());
 }
+
+public class HandoverPolicyTests
+{
+    [Theory]
+    [InlineData("hotkey", true)]
+    [InlineData("left_world", true)]
+    [InlineData("user_input", false)]
+    [InlineData("player_died", false)]
+    public void OnlyHotkeyOrLeavingWorld_ReleasesControl(string reason, bool releases) =>
+        Assert.Equal(releases, LlmPlayer.Core.Control.HandoverPolicy.ReleasesControl(reason));
+}

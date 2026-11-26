@@ -1,5 +1,5 @@
 Lets an LLM (through an MCP server) drive your own character when you hand over control.
 
-Press F8 to give the AI control; any input of your own takes it back.
+Press Insert to give the AI control (a coloured border shows it is playing); press Insert again to take it back.
 The mod listens for a single local client on TCP port 7878 (configurable).
 No cheating: the AI uses normal controls, reach, tools and cooldowns, and only sees what you could see.

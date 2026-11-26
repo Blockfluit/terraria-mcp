@@ -1,8 +1,8 @@
 # terraria-mcp
 
-Let an LLM play Terraria **as your character**. You play normally. When you press **F8**, the AI
-takes over through an [MCP](https://modelcontextprotocol.io) server. Touch the keyboard or mouse
-and control comes straight back to you.
+Let an LLM play Terraria **as your character**. You play normally. When you press **Insert**, the AI
+takes over through an [MCP](https://modelcontextprotocol.io) server, and a pulsing border plus an "AI IS PLAYING"
+banner show it has the controls. Press **Insert** again to take control back.
 
 ```
 MCP client (e.g. Claude Code)
@@ -35,7 +35,7 @@ The AI plays on your real saves, so the mod enforces these rules:
 
 - It never cheats. There's no teleporting or item spawning. Every action uses your real controls,
   with normal reach, tool power and cooldowns.
-- It never takes control on its own. Only your hotkey hands control over.
+- It never takes control on its own. Only your hotkey hands control over, and only the hotkey takes it back.
 - The first time you hand over control in a session, it backs up your `.plr` and `.wld` files to
   `Documents/My Games/Terraria/tModLoader/LlmPlayerBackups/<timestamp>/`. It keeps the newest 5.
 - It never breaks chests, furniture, doors, crafting stations, anything inside an NPC house, or
@@ -78,14 +78,13 @@ about tModLoader listening on port 7878. Allow it on private networks.
 ### 3. Play
 
 1. Load a world in tModLoader.
-2. Press **F8** (rebindable under *Controls → Mod Controls*). "AI driving" appears at the top of
-   the screen. Then switch to your MCP client with Alt+Tab, or move the mouse to it within 3 seconds and
-   click it there. Alt and Win key chords don't take control back, and for 3 seconds after F8 neither does
-   moving the mouse. The game keeps running while it is unfocused and the AI drives.
+2. Press **Insert** (rebindable under *Settings → Controls*, mod keybinds). A pulsing cyan border and an
+   "AI IS PLAYING" banner appear. Switch to your MCP client however you like: while the AI drives your own
+   keys and mouse do nothing in game, and the game keeps running while its window is unfocused.
 3. Ask your MCP client to play, for example: *"Gather wood, make a workbench and wooden tools, then
    find some copper."*
-4. Press any key or click to take control back. Clicking into the Terraria window, or moving the mouse
-   over it while it has focus, also counts, so leave the window alone while the AI plays.
+4. Press **Insert** again (in the Terraria window) to take control back. Nothing else does: if the character
+   dies, its current task is cancelled but the AI keeps control. Leaving the world also hands control back.
 
 A good loop for the LLM is `get_state` → `get_map` → an action → `wait_for_task`.
 

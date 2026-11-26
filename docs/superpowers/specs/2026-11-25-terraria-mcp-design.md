@@ -26,9 +26,9 @@ the architecture should not block.
   raw dumps.
 - Long-running actions are asynchronous tasks the LLM can poll, cancel, and get a clear
   success/failure reason from.
-- **Shared control:** an in-game hotkey toggles AI control on/off; any real keyboard/mouse
-  input from the user while the AI is driving immediately takes control back (cancels the
-  task, AI off). Clear on-screen indicator of who is in control.
+- **Shared control:** an in-game hotkey (default `Insert`) toggles AI control on/off. Only
+  that hotkey (or leaving the world) takes control back; the user's other input is ignored
+  while the AI drives. A pulsing screen border and banner make it obvious the AI is in control.
 - **Fair vision:** the AI only sees what the player could — see Observation rules.
 - Basic reflexes so the player doesn't die while the LLM is thinking (auto-defend,
   auto-heal), toggleable.
@@ -139,14 +139,16 @@ At most one active task. Starting a new task cancels the current one. Each task 
 
 ### Control handoff
 
-- States: `user` (default) and `ai`. Hotkey (tModLoader keybind, default `F8`) toggles.
-  MCP tool `request_control` cannot take control by itself; it only succeeds if the user
-  has toggled to `ai` (Claude's call — the user always grants control).
-- While `ai`: the mod overrides controls each frame. If any real user input is detected
-  (keys, mouse buttons, mouse movement beyond a small threshold), control flips to `user`,
-  the active task is cancelled, and a `control_lost` event is sent.
+- States: `user` (default) and `ai`. Hotkey (tModLoader keybind, default `Insert`; changed
+  from `F8` at the user's request) toggles. MCP tool `request_control` cannot take control by
+  itself; it only succeeds if the user has toggled to `ai`.
+- While `ai`: the mod owns the controls each frame; the user's keyboard/mouse input is ignored.
+  Only the hotkey (or leaving the world) switches back to `user` (user's decision, replacing the
+  earlier "any input takes control back"). Dying cancels the active task but keeps `ai`.
+  Every switch sends a `control_changed {driver, reason}` event.
 - While `user`: observation tools work; action tools return error `user_has_control`.
-- On-screen indicator (small text/icon) shows "AI driving: <task>" vs. nothing.
+- On-screen: pulsing cyan border around the screen plus an "AI IS PLAYING" banner showing the
+  current task and the key to take control back.
 
 ### Safety (real saves)
 
@@ -239,7 +241,6 @@ docs/
 - Exact tModLoader hooks for input override and cursor aiming; whether mining uses
   simulated use-item with cursor at target or the equivalent `Player.PickTile` call under
   the same reach/power/cooldown rules.
-- How to detect "real user input" robustly (raw keyboard/mouse state vs. game triggers).
 - Physics constants for the movement model (verify against game source/decompile).
 - Map legend details and size budgets.
 - How the mod source gets into `ModSources` from WSL (copy script vs. symlink).

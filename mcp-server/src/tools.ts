@@ -10,7 +10,7 @@ export interface ModClient {
 }
 
 export const SERVER_INSTRUCTIONS = `You control the user's own Terraria character through the LlmPlayer mod.
-- Control: the user must hand over control by pressing F8 in game. Until then observation tools work but action tools fail with user_has_control: ask the user to press F8. Any key/mouse input from the user takes control back and cancels the current task.
+- Control: the user must hand over control by pressing the toggle key in game (default Insert). Until then observation tools work but action tools fail with user_has_control: ask the user to press Insert. Only the user pressing Insert again takes control back (it cancels the current task); dying cancels the current task but you keep control.
 - Coordinates: absolute tile coordinates, y grows DOWNWARD (smaller y = higher up). The player's position (x,y) is the bottom-left tile of its 2-wide x 3-tall body (feet-left): it occupies x..x+1, y-2..y, standing on tile row y+1.
 - Fair vision: you only see what the player could see. '?' in get_map = unknown/unrevealed tiles; find/get_entities only report visible things.
 - Actions start asynchronous tasks and return immediately. Only one task runs at a time; starting a new one cancels the old. Follow an action with wait_for_task (blocks until done) or get_task (poll).
@@ -20,12 +20,12 @@ export const SERVER_INSTRUCTIONS = `You control the user's own Terraria characte
 const COORDS =
   " Coordinates are absolute tiles, y grows downward; player position = feet-left tile of its 2x3 body.";
 const STARTS_TASK =
-  " Starts an async task and returns immediately: follow with wait_for_task (or get_task). Replaces any running task. Fails with user_has_control unless the user pressed F8 to hand over control.";
+  " Starts an async task and returns immediately: follow with wait_for_task (or get_task). Replaces any running task. Fails with user_has_control unless the user pressed Insert to hand over control.";
 const INSTANT_ACTION =
-  " Instant action (no task). Fails with user_has_control unless the user pressed F8 to hand over control.";
+  " Instant action (no task). Fails with user_has_control unless the user pressed Insert to hand over control.";
 
-const F8_HINT =
-  "The user is driving. Ask the user to press F8 in Terraria to hand control to the AI, then retry. Observation tools still work meanwhile.";
+const TOGGLE_HINT =
+  "The user is driving. Ask the user to press Insert in Terraria to hand control to the AI, then retry. Observation tools still work meanwhile.";
 
 const int = () => z.number().int();
 const tileX = () => int().describe("Absolute tile x");
@@ -56,7 +56,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "request_control",
     description:
-      "Check whether the user has handed control to you. It cannot take control by itself: if granted is false, ask the user to press F8 in Terraria, then call this again.",
+      "Check whether the user has handed control to you. It cannot take control by itself: if granted is false, ask the user to press Insert in Terraria, then call this again.",
     readOnly: true,
   },
 
@@ -290,7 +290,7 @@ function ok(conn: ModClient, value: unknown): CallToolResult {
 
 function fail(conn: ModClient, code: string, message: string): CallToolResult {
   let text = `${code}: ${message}`;
-  if (code === "user_has_control") text += `\n${F8_HINT}`;
+  if (code === "user_has_control") text += `\n${TOGGLE_HINT}`;
   const events = conn.drainEvents();
   if (events.length) text += `\nevents: ${JSON.stringify(events)}`;
   return { isError: true, content: [{ type: "text", text }] };
