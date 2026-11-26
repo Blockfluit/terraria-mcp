@@ -24,13 +24,20 @@ namespace LlmPlayer.Core.Nav;
 /// <item>BuildPlatform: place a platform at WorkTile, which ends up directly under Pos. Either
 /// bridging (Pos is one tile sideways, WorkTile under it at the current feet+1 row) or climbing
 /// (Pos is straight up 1..3 tiles: jump, place WorkTile below the feet near the apex, land).</item>
+/// <item>OpenDoor: stand at Pos (= the previous position) and open the closed door at WorkTile (any of its tiles);
+/// always followed by the Walk into the door's column. Only plain walks pass doors (no digging, jumping or
+/// falling through a door column).</item>
+/// <item>CloseDoor: stand at Pos (= the previous position, the body clear of the door column) and close the door
+/// at WorkTile that an earlier OpenDoor opened (<see cref="PathOptions.CloseDoorsBehind"/>). Best effort.</item>
 /// </list>
 /// </summary>
 public static class Pathfinder
 {
     private const float WalkCost = 1f, StepUpCost = 1.5f, JumpBase = 2f, DropCost = 1.5f;
     private const float FallBase = 1f, FallPerTile = 0.2f, DigPerTile = 3f, BuildCost = 4f;
-    private const float SwimCost = 2f, SwimDiagCost = 2.5f, UnknownPenalty = 2f;
+    private const float SwimCost = 2f, SwimDiagCost = 2.5f, UnknownPenalty = 2f, DoorCost = 2f;
+    /// <summary>A CloseDoor step is only added while the door is at most this many tiles from the body.</summary>
+    private const int CloseDoorReach = 3;
     /// <summary>A goal the body can't occupy snaps to the nearest standable cell within this many tiles.</summary>
     public const int GoalSearchRadius = 3;
     private const int MaxBuildUp = 3, MaxBuildsTracked = 511;
@@ -73,7 +80,7 @@ public static class Pathfinder
     {
         public int X, Y, Parent, Builds, DigStart, DigCount, WX, WY;
         public float G;
-        public bool Built, Closed, HasWork;
+        public bool Built, Closed, HasWork, Door;
         public MoveKind Kind;
     }
 
@@ -192,11 +199,45 @@ public static class Pathfinder
                 var from = new TilePoint(parent.X, parent.Y);
                 for (int d = 0; d < n.DigCount; d++)
                     steps.Add(new PathStep(from, MoveKind.Dig, _digPool[n.DigStart + d]));
+                if (n.Door)
+                {
+                    steps.Add(new PathStep(from, MoveKind.OpenDoor, new TilePoint(n.WX, n.WY)));
+                    steps.Add(new PathStep(new TilePoint(n.X, n.Y), n.Kind));
+                    continue;
+                }
                 steps.Add(new PathStep(new TilePoint(n.X, n.Y), n.Kind,
                     n.HasWork ? new TilePoint(n.WX, n.WY) : null));
             }
+            if (_o.CloseDoorsBehind) AddDoorCloses(steps);
             return new PathResult(true, steps, null, expanded, _goal);
         }
+
+        /// <summary>
+        /// After each OpenDoor, close the door again at the first standing position whose body is clear of the door
+        /// column (and within <see cref="CloseDoorReach"/> of it), unless the path still has to pass that column later.
+        /// </summary>
+        private static void AddDoorCloses(List<PathStep> steps)
+        {
+            for (int i = 0; i < steps.Count; i++)
+            {
+                if (steps[i].Kind != MoveKind.OpenDoor || steps[i].WorkTile is not { } door) continue;
+                int j = i + 1;
+                while (j < steps.Count && (!Standing(steps[j].Kind) || Covers(steps[j].Pos, door.X))) j++;
+                if (j >= steps.Count) continue;
+                var at = steps[j].Pos;
+                int gap = at.X > door.X ? at.X - door.X : door.X - (at.X + 1);
+                if (gap > CloseDoorReach || Math.Abs(at.Y - door.Y) > CloseDoorReach) continue;
+                bool again = false;
+                for (int k = j + 1; k < steps.Count && !again; k++) again = Covers(steps[k].Pos, door.X);
+                if (again) continue;
+                steps.Insert(j + 1, new PathStep(at, MoveKind.CloseDoor, door));
+            }
+        }
+
+        private static bool Standing(MoveKind k) =>
+            k is MoveKind.Walk or MoveKind.StepUp or MoveKind.Jump or MoveKind.Fall or MoveKind.DropThrough;
+
+        private static bool Covers(TilePoint body, int column) => column == body.X || column == body.X + 1;
 
         private int Chebyshev(int x, int y) => Math.Max(Math.Abs(x - _goal.X), Math.Abs(y - _goal.Y));
         private float H(int x, int y) => Math.Abs(x - _goal.X) + Math.Abs(y - _goal.Y);
@@ -216,7 +257,7 @@ public static class Pathfinder
         }
 
         private void Add(int parent, int x, int y, int builds, bool built, float cost, MoveKind kind,
-            bool withDigs = false, int wx = 0, int wy = 0, bool hasWork = false)
+            bool withDigs = false, int wx = 0, int wy = 0, bool hasWork = false, bool door = false)
         {
             float g = _nodes[parent].G + cost;
             if (BodyHas(x, y, TileCache.Unknown)) g += UnknownPenalty;
@@ -243,7 +284,7 @@ public static class Pathfinder
             _nodes[idx] = new Node
             {
                 X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind,
-                DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy,
+                DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy, Door = door,
             };
             _open.Enqueue(idx, g + H(x, y));
         }
@@ -265,7 +306,7 @@ public static class Pathfinder
             return true;
         }
 
-        private bool BodyHas(int x, int y, byte flag)
+        private bool BodyHas(int x, int y, ushort flag)
         {
             // Rare kinds (liquid, unknown) can't be in a body if the search never classified one.
             // Every move classifies its target body before asking, so this is exact in practice.
@@ -279,7 +320,7 @@ public static class Pathfinder
         private int Classify(int x, int y)
         {
             if (InSource(x, y)) return 0;
-            byte f = _t.F(x, y);
+            ushort f = _t.F(x, y);
             if ((f & TileCache.Deadly) != 0) return -1;
             if ((f & TileCache.Block) == 0) return 0;
             if (!_canDig || (f & TileCache.Diggable) == 0) return -1;
@@ -328,8 +369,24 @@ public static class Pathfinder
             int tx = x + dx;
             int col = dx > 0 ? x + 2 : x - 1;
             _digs.Clear();
+            int doorRow = int.MinValue;
             for (int r = y - 2; r <= y; r++)
+            {
+                if (_o.OpenDoors && !InSource(col, r) && (_t.F(col, r) & TileCache.Door) != 0)
+                {
+                    doorRow = r;
+                    continue;
+                }
                 if (Classify(col, r) < 0) return;
+            }
+
+            if (doorRow != int.MinValue)
+            {
+                // Open the door, then walk into its column. Kept simple: no digging, falling or swimming with it.
+                if (_digs.Count > 0 || BodyHas(tx, y, TileCache.Liquid) || !HasSupport(tx, y)) return;
+                Add(ni, tx, y, builds, false, WalkCost + DoorCost, MoveKind.Walk, wx: col, wy: doorRow, door: true);
+                return;
+            }
 
             if (BodyHas(tx, y, TileCache.Liquid))
             {
@@ -494,7 +551,7 @@ public static class Pathfinder
 
         private void DropThrough(int ni, int x, int y, int builds)
         {
-            byte a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
+            ushort a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
             if (((a | b) & TileCache.Block) != 0) return;
             if (((a | b) & TileCache.Plat) == 0) return;
             if (!Passable(x, y + 1) || !Passable(x + 1, y + 1)) return;
@@ -543,7 +600,7 @@ public static class Pathfinder
 
         private bool StepSupport(int x, int y)
         {
-            byte f = _t.F(x, y);
+            ushort f = _t.F(x, y);
             if ((f & TileCache.Block) != 0) return true;
             return (f & TileCache.Plat) != 0 && (_t.F(x, y - 1) & TileCache.Plat) == 0;
         }
@@ -619,12 +676,13 @@ public static class Pathfinder
     /// </summary>
     private sealed class TileCache : IDisposable
     {
-        public const byte Computed = 1, Block = 2, Stand = 4, Plat = 8, Liquid = 16, Deadly = 32, Unknown = 64, Diggable = 128;
+        public const ushort Computed = 1, Block = 2, Stand = 4, Plat = 8, Liquid = 16, Deadly = 32, Unknown = 64, Diggable = 128,
+            Door = 256;
         private const int Margin = 128, MaxDim = 1024;
 
         private readonly ITileGrid _g;
         private readonly int _x0, _y0, _w, _h, _pick;
-        private readonly byte[] _f;
+        private readonly ushort[] _f;
 
         /// <summary>OR of the flags of every tile classified so far.</summary>
         public int Seen;
@@ -640,7 +698,7 @@ public static class Pathfinder
             if (_h == MaxDim) cy = start.Y;
             _x0 = cx - _w / 2;
             _y0 = cy - _h / 2;
-            _f = ArrayPool<byte>.Shared.Rent(Size);
+            _f = ArrayPool<ushort>.Shared.Rent(Size);
             Array.Clear(_f, 0, Size);
             _blocks = (_h + 63) / 64;
             _cols = ArrayPool<ColMask>.Shared.Rent(_w * _blocks);
@@ -651,7 +709,7 @@ public static class Pathfinder
 
         public void Dispose()
         {
-            ArrayPool<byte>.Shared.Return(_f);
+            ArrayPool<ushort>.Shared.Return(_f);
             ArrayPool<ColMask>.Shared.Return(_cols);
         }
 
@@ -725,15 +783,15 @@ public static class Pathfinder
             return true;
         }
 
-        public byte F(int x, int y)
+        public ushort F(int x, int y)
         {
             if (!TryIndex(x, y, out int i)) return Classify(_g.Get(x, y));
-            byte b = _f[i];
+            ushort b = _f[i];
             if (b == 0) _f[i] = b = Classify(_g.Get(x, y));
             return b;
         }
 
-        private byte Classify(TileInfo t)
+        private ushort Classify(TileInfo t)
         {
             int b = Computed;
             switch (t.Kind)
@@ -741,6 +799,7 @@ public static class Pathfinder
                 case TileKind.Solid:
                     b |= Block | Stand;
                     if (_pick > 0 && !t.Protected && t.PickPowerRequired <= _pick) b |= Diggable;
+                    if (t.Door) b |= Door;
                     break;
                 case TileKind.Platform: b |= Stand | Plat; break;
                 case TileKind.Water:
@@ -750,7 +809,7 @@ public static class Pathfinder
                 case TileKind.Unknown: b |= Unknown; break;
             }
             Seen |= b;
-            return (byte)b;
+            return (ushort)b;
         }
     }
 }

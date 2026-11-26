@@ -27,6 +27,9 @@ public enum SimTool { None, Pickaxe, Platform }
 /// Pickaxe on a tile with enough power breaks it after <see cref="DigTicks"/> ticks of use; platforms are placed into
 /// an empty tile next to any tile (3x3), every <see cref="PlatformUseTime"/> ticks, inside the hitbox allowed.
 /// Using the wrong tool on a tile (e.g. a platform on a solid block, which vanilla would swap) counts as misuse.</item>
+/// <item>Doors (Interact, within the 5/4 interaction box): a closed door's whole column of door tiles becomes air
+/// (WorldGen.OpenDoor; the swing column isn't modelled: an open door is passable anyway); interacting with an open
+/// one closes it again unless the hitbox overlaps its column (WorldGen.CloseDoor's Collision.EmptyTile check).</item>
 /// </list>
 /// </summary>
 public sealed class MiniPhysics
@@ -55,6 +58,11 @@ public sealed class MiniPhysics
     public int Misuse { get; private set; }
     public string? Hurt { get; private set; }
     public int MaxFallTiles { get; private set; }
+    public int DoorsOpened { get; private set; }
+    public int DoorsClosed { get; private set; }
+    /// <summary>Open doors: any tile of the door → all of its tiles.</summary>
+    private readonly Dictionary<TilePoint, List<TilePoint>> _openDoors = new();
+    public bool AnyDoorOpen => _openDoors.Count > 0;
 
     /// <summary>Place the player standing on `start` (feet-left tile), hitbox centred in the 2-wide body.</summary>
     public MiniPhysics(ArrayTileGrid grid, TilePoint start)
@@ -134,6 +142,7 @@ public sealed class MiniPhysics
         if (Overlaps(X, Y, k => k is TileKind.Lava or TileKind.Hazard)) Hurt ??= $"touched lava/hazard at tick {Ticks}";
         FallDamage(wetNow);
         UseItem(c, tool);
+        Interact(c);
     }
 
     private void Horizontal(ControlIntent c)
@@ -274,6 +283,43 @@ public sealed class MiniPhysics
                 return;
         }
     }
+
+    private void Interact(ControlIntent c)
+    {
+        if (c.Interact is not { } t || !InInteractionRange(t)) return;
+        if (_g.Get(t).IsClosedDoor)
+        {
+            var tiles = new List<TilePoint>();
+            int top = t.Y, bottom = t.Y;
+            while (_g.Get(t.X, top - 1).IsClosedDoor) top--;
+            while (_g.Get(t.X, bottom + 1).IsClosedDoor) bottom++;
+            for (int y = top; y <= bottom; y++) tiles.Add(new TilePoint(t.X, y));
+            foreach (var p in tiles)
+            {
+                _g.Set(p.X, p.Y, new TileInfo(TileKind.Air, Protected: true, Glyph: 'F', Name: "Open Door"));
+                _openDoors[p] = tiles;
+            }
+            DoorsOpened++;
+        }
+        else if (_openDoors.TryGetValue(t, out var door))
+        {
+            int x0 = (int)MathF.Floor((X + Eps) / 16f), x1 = (int)MathF.Floor((X + W - Eps) / 16f);
+            if (t.X >= x0 && t.X <= x1) return; // someone in the doorway
+            foreach (var p in door)
+            {
+                _g.Set(p.X, p.Y, ArrayTileGrid.ClosedDoor);
+                _openDoors.Remove(p);
+            }
+            DoorsClosed++;
+        }
+    }
+
+    /// <summary>Player.IsInTileInteractionRange with TileReachCheckSettings.Simple.</summary>
+    public bool InInteractionRange(TilePoint t) =>
+        X / 16f - TileRangeX <= t.X
+        && (X + W) / 16f + TileRangeX - 1f >= t.X
+        && Y / 16f - TileRangeY <= t.Y
+        && (Y + H) / 16f + TileRangeY - 2f >= t.Y;
 
     /// <summary>Vanilla PlaceThing_Tiles / mining reach box (blockRange 0).</summary>
     public bool InReach(TilePoint t) =>

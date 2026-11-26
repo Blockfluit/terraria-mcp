@@ -12,6 +12,8 @@ namespace LlmPlayer.Observe;
 /// <list type="bullet">
 /// <item>Out of world → <see cref="TileInfo.Unbreakable"/>; not visible (fair vision) → Unknown.</item>
 /// <item>Actuated tiles and non-solid tiles (grass plants, torches, vines…) → Air, unless a platform.</item>
+/// <item>Closed doors 'D': Solid and protected, with <see cref="TileInfo.Door"/> set unless locked, so the pathfinder
+/// can plan to open them (an open door is an 'F' object you can walk through).</item>
 /// <item>Trees 'T', chests/containers 'C', crafting stations 'W', other multi-tile objects 'F' (their Kind is
 /// Platform if you can stand on them (solidTop), else Solid or Air); ores get lowercase letters from
 /// <see cref="OreGlyphs"/> with Name = the localized tile name.</item>
@@ -52,6 +54,9 @@ public sealed class GameTileGrid : ITileGrid
         {
             int type = tile.TileType;
             if (TileClass.IsTree(type)) return new TileInfo(TileKind.Air, 0, prot, 'T', TileClass.Name(type));
+            if (Main.tileSolid[type] && TileLoader.IsClosedDoor(type))
+                return new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot, 'D', TileClass.Name(type),
+                    Door: !WorldGen.IsLockedDoor(x, y));
 
             char glyph = TileClass.IsContainer(type) ? 'C'
                 : TileClass.IsStation(type) ? 'W'

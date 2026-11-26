@@ -66,6 +66,15 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             new GridBuilder(20, 16).Fill(0, 6, 19, 15, '#').Fill(9, 0, 10, 5, '#').Fill(6, 6, 13, 10, '~')
                 .Put(2, 5, 'S').Put(16, 5, 'G'),
             Real(), new(AllowDig: false, AllowBuild: false), 1200),
+        new("door_in_wall",
+            new GridBuilder(30, 10).Fill(0, 8, 29, 9, '#').Fill(14, 0, 14, 4, 'X').Fill(14, 5, 14, 7, '|')
+                .Put(2, 7, 'S').Put(24, 7, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
+        new("out_of_house_through_door",
+            new GridBuilder(34, 12).Fill(0, 9, 33, 11, '#').Fill(5, 0, 20, 3, 'X')
+                .Fill(5, 4, 5, 5, 'X').Fill(5, 6, 5, 8, '|').Fill(20, 4, 20, 5, 'X').Fill(20, 6, 20, 8, '|')
+                .Put(10, 8, 'S').Put(27, 8, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
     }.ToDictionary(s => s.Name);
 
     /// <summary>Rolling terrain: 1-, 2- and 3-tile steps up, then down again.</summary>
@@ -207,9 +216,11 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
 
         var plan = Plan(g, start, goal, sc);
         var plannedDigs = new HashSet<TilePoint>();
+        bool doorsPlanned = false;
         void NotePlan(PathResult p)
         {
             foreach (var s in p.Steps.Where(s => s.Kind == MoveKind.Dig)) plannedDigs.Add(s.WorkTile!.Value);
+            doorsPlanned |= p.Steps.Any(s => s.Kind == MoveKind.OpenDoor);
         }
         NotePlan(plan);
 
@@ -252,6 +263,12 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
         Assert.Equal(0, sim.Misuse);
         Assert.All(sim.Mined, t => Assert.Contains(t, plannedDigs));
         Assert.All(sim.Mined, t => Assert.DoesNotContain(t, protectedTiles));
+        if (doorsPlanned)
+        {
+            output.WriteLine($"doors opened {sim.DoorsOpened}, closed {sim.DoorsClosed}");
+            Assert.True(sim.DoorsOpened > 0);
+            if (sc.Options.CloseDoorsBehind) Assert.False(sim.AnyDoorOpen, "a door the path opened was left open");
+        }
     }
 
     private PathResult Plan(ArrayTileGrid g, TilePoint from, TilePoint goal, Scenario sc)
@@ -274,7 +291,7 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
     {
         var i = o.Intent;
         string keys = (i.Left ? "L" : "") + (i.Right ? "R" : "") + (i.Jump ? "J" : "") + (i.Down ? "D" : "") +
-                      (i.UseItem ? $"U{i.CursorTile}" : "");
+                      (i.UseItem ? $"U{i.CursorTile}" : "") + (i.Interact is { } d ? $"I{d}" : "");
         return $"{o.Status} {o.Current?.Kind}{o.Current?.Pos} [{keys}]";
     }
 
