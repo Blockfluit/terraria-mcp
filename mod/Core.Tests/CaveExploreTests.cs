@@ -85,9 +85,9 @@ public class CaveFrontierTests
     public void RejectedStandsAreSkipped()
     {
         var (g, s) = Parse(TwoWays);
-        var pick = CaveFrontier.Pick(g, s, s, 60, t => t == new TilePoint(1, 3));
+        var pick = CaveFrontier.Pick(g, s, s, 60, t => t.X < 8);
         Assert.Equal(new TilePoint(19, 3), pick!.Stand);
-        Assert.Null(CaveFrontier.Pick(g, s, s, 60, t => t.X is 1 or 19));
+        Assert.Null(CaveFrontier.Pick(g, s, s, 60, _ => true));
     }
 
     [Fact]
@@ -161,6 +161,97 @@ public class CaveFrontierTests
             "################");
         // Lava blocks rows 3 only; rows 1-2 at columns 1..6 are solid, so the only connection is through lava.
         Assert.Null(CaveFrontier.Pick(g, s, s, 60));
+    }
+}
+
+public class CaveFrontierDarkCaveTests
+{
+    private const int Power = 35;
+
+    // Seen in game: the player's cavern (right) is fully known; a big dark cave (left) lies behind a 2-thick wall.
+    // Its floor isn't known (it runs into the unknown on the left), only a staircase wall on its right side is.
+    private static readonly string[] DarkCaveBehindWall =
+    {
+        "########################",
+        "???.......##...........#",
+        "??........##...........#",
+        "?.........##...........#",
+        "?.........##.......S...#",
+        "??........##############",
+        "???......###############",
+        "????....################",
+        "?????..#################",
+        "??????##################",
+    };
+
+    [Fact]
+    public void CrossesAThinWallIntoADarkCaveAndStandsOnItsLedge()
+    {
+        var (g, m) = ArrayTileGrid.Parse(DarkCaveBehindWall);
+        var s = m['S'];
+        var pick = CaveFrontier.Pick(g, s, s, 80, pickPower: Power);
+        Assert.NotNull(pick);
+        Assert.True(pick!.Stand.X <= 9, $"stand {pick.Stand} should be in the left cave");
+        Assert.True(pick.Frontier.X < 10);
+        Assert.True(CaveFrontier.IsStand(g, pick.Stand));
+    }
+
+    [Fact]
+    public void WithoutAPickaxeTheWallSeparatesTheCaves()
+    {
+        var (g, m) = ArrayTileGrid.Parse(DarkCaveBehindWall);
+        var s = m['S'];
+        Assert.Null(CaveFrontier.Pick(g, s, s, 80, pickPower: 0));
+    }
+
+    [Fact]
+    public void ThickRockIsNotDugThrough()
+    {
+        var rows = (string[])DarkCaveBehindWall.Clone();
+        for (int y = 1; y <= 4; y++) rows[y] = rows[y][..10] + "####" + rows[y][14..]; // wall cols 10..13: 4 thick
+        var (g, m) = ArrayTileGrid.Parse(rows);
+        var s = m['S'];
+        Assert.Null(CaveFrontier.Pick(g, s, s, 80, pickPower: Power));
+    }
+
+    [Fact]
+    public void ProtectedWallsAreNotDugThrough()
+    {
+        var rows = (string[])DarkCaveBehindWall.Clone();
+        for (int y = 1; y <= 4; y++) rows[y] = rows[y][..10] + "PP" + rows[y][12..];
+        var (g, m) = ArrayTileGrid.Parse(rows);
+        var s = m['S'];
+        Assert.Null(CaveFrontier.Pick(g, s, s, 80, pickPower: Power));
+    }
+
+    [Fact]
+    public void OpenSpaceDroppingIntoTheUnknownIsExploredFromTheEdge()
+    {
+        // No floor is known beyond the ledge at column 6: the open area falls away into the unknown. The pick is a
+        // known spot at the edge, within view of the frontier, so a torch from there lights the drop.
+        var (g, m) = ArrayTileGrid.Parse(
+            "###############",
+            "#.............#",
+            "#.............#",
+            "#S............#",
+            "#######.......#",
+            "??????#.......#",
+            "??????#.......#",
+            "??????#???????#");
+        var s = m['S'];
+        var pick = CaveFrontier.Pick(g, s, s, 80);
+        Assert.NotNull(pick);
+        Assert.Equal(3, pick!.Stand.Y);
+        Assert.InRange(pick.Stand.X, 5, 6);
+        Assert.Equal(6, pick.Frontier.Y);
+        Assert.NotNull(CaveFrontier.NearestFrontier(g, s, s, 80));
+    }
+
+    [Fact]
+    public void NearestFrontierIsNullWhenEverythingIsKnown()
+    {
+        var (g, m) = ArrayTileGrid.Parse("######", "#....#", "#....#", "#S...#", "######");
+        Assert.Null(CaveFrontier.NearestFrontier(g, m['S'], m['S'], 80));
     }
 }
 

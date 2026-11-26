@@ -56,7 +56,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     private bool _seeded;
 
     private MoveToTask? _leg;
-    private TilePoint _legStand;
+    private TilePoint _legStand, _legFrontier;
     private int _legTicks, _revealedAtLegStart, _legs;
     private PlaceTask? _torch;
     private TilePoint _torchSpot;
@@ -141,12 +141,15 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
 
     private GameTaskStatus Decide(GameCtx ctx, TilePoint here)
     {
-        var pick = CaveFrontier.Pick(ctx.Grid, here, _origin!.Value, _radius, IsRejected);
+        int power = HeldItemLease.PickPower(ctx.Player);
+        var pick = CaveFrontier.Pick(ctx.Grid, here, _origin!.Value, _radius, IsRejected, power);
         if (pick == null)
         {
-            // Nothing known to walk to: light up where we stand once, then look again.
+            // Nothing known to walk to: light up where we stand once (toward the nearest dark opening, if any), then
+            // look again.
+            var focus = _torches && _darkFixAt != here ? CaveFrontier.NearestFrontier(ctx.Grid, here, _origin!.Value, _radius, power) : null;
             if (_torches && _darkFixAt != here && ExploreTask.TorchSlot(ctx.Player) is var slot and >= 0
-                && ExploreTask.NearestTorch(here, 3) == null && TorchSpot(ctx, here, slot) is { } spot)
+                && ExploreTask.NearestTorch(here, 3) == null && TorchSpot(ctx, here, slot, focus) is { } spot)
             {
                 _darkFixAt = here;
                 StartTorch(ctx.Player, slot, spot);
@@ -156,6 +159,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
                 $"nothing left to explore: no reachable unexplored opening within {_radius} tiles of the start");
         }
         _legStand = pick.Stand;
+        _legFrontier = pick.Frontier;
         _legTicks = 0;
         _revealedAtLegStart = _revealed;
         _legs++;
@@ -215,6 +219,15 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         bool revealedSomething = _revealed > _revealedAtLegStart;
         if (st == GameTaskStatus.Succeeded) _visited.Add(_legStand);
         else _rejected.Add(_legStand);
+        // Arrived next to a dark opening (often a cave whose floor isn't known yet): light it from here.
+        if (st == GameTaskStatus.Succeeded && _torches && Lighting.Brightness(_legFrontier.X, _legFrontier.Y) < TorchPlanner.DarkBrightness
+            && ExploreTask.NearestTorch(here, 4) == null && ExploreTask.TorchSlot(ctx.Player) is var tslot and >= 0
+            && TorchSpot(ctx, here, tslot, _legFrontier) is { } tspot)
+        {
+            _stalls = revealedSomething ? 0 : _stalls; // judged after the torch, on the next walk
+            StartTorch(ctx.Player, tslot, tspot);
+            return GameTaskStatus.Running;
+        }
         if (st == GameTaskStatus.Succeeded || revealedSomething) _mode = "looking around";
         _stalls = revealedSomething ? 0 : _stalls + 1;
         if (_stalls >= MaxStalls)
@@ -269,15 +282,15 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         if (!TorchPlanner.ShouldPlace(ExploreTask.BodyBrightness(here), ExploreTask.NearestTorch(here, TorchPlanner.SpacingTiles))) return false;
         slot = ExploreTask.TorchSlot(ctx.Player);
         if (slot < 0) return false;
-        if (TorchSpot(ctx, here, slot) is not { } s) return false;
+        if (TorchSpot(ctx, here, slot, null) is not { } s) return false;
         spot = s;
         return true;
     }
 
-    private TilePoint? TorchSpot(GameCtx ctx, TilePoint here, int slot)
+    private TilePoint? TorchSpot(GameCtx ctx, TilePoint here, int slot, TilePoint? focus)
     {
         var reach = new ReachSpec(Player.tileRangeX, Player.tileRangeY, ctx.Player.inventory[slot].tileBoost);
-        return TorchPlanner.BestSpot(ctx.Grid, TorchCellAt, here, reach);
+        return TorchPlanner.BestSpot(ctx.Grid, TorchCellAt, here, reach, focus);
     }
 
     private TorchCell TorchCellAt(TilePoint t)
