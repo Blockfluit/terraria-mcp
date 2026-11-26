@@ -53,6 +53,7 @@ describe("registerTools", () => {
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
         "build_platforms", "unequip", "buy", "mine_vein",
         "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
+        "get_boss_info",
       ].sort(),
     );
   });
@@ -160,7 +161,7 @@ describe("registerTools", () => {
     const client = await setup(conn);
     expect((await call(client, "attack", { target: 7 })).isError).toBeFalsy();
     expect((await call(client, "attack", { target: "nearest" })).isError).toBeFalsy();
-    expect((await call(client, "attack", { target: "boss" })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "king" })).isError).toBe(true);
     expect((await call(client, "attack", { target: "all", retreat_below: 1 })).isError).toBe(true);
     expect(conn.calls.map((c) => c.params)).toEqual([{ target: 7 }, { target: "nearest" }]);
   });
@@ -172,6 +173,54 @@ describe("registerTools", () => {
     expect(tool.description).toContain("low life");
     expect(tool.description).toContain("damageTaken");
     expect(tool.inputSchema.properties).toHaveProperty("retreat_below");
+  });
+
+  it("attack forwards boss-fight params: target boss, arena, heal_below, kill_minions", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "attack", boss: true }));
+    const client = await setup(conn);
+    const args = { target: "boss", arena: { x1: 100, x2: 180 }, heal_below: 0.5, kill_minions: false, retreat_below: 0 };
+    const res = await call(client, "attack", args);
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([{ method: "attack", params: args }]);
+  });
+
+  it("attack rejects a bad arena or heal_below", async () => {
+    const conn = new FakeConn(() => ({ started: true }));
+    const client = await setup(conn);
+    expect((await call(client, "attack", { target: "boss", arena: { x1: 100 } })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", arena: { x1: 1.5, x2: 9 } })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", heal_below: 1 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", heal_below: -0.1 })).isError).toBe(true);
+    expect(conn.calls).toEqual([]);
+  });
+
+  it("attack description explains boss fights: arena, kiting, heal_below, boss fled", async () => {
+    const client = await setup(new FakeConn());
+    const tool = (await client.listTools()).tools.find((t) => t.name === "attack")!;
+    for (const word of ["BOSS FIGHTS", "build_platforms", "heal_below", "boss fled", "bossLifeLeftPct", "kill_minions", "potionsUsed"])
+      expect(tool.description).toContain(word);
+    for (const prop of ["arena", "heal_below", "kill_minions"]) expect(tool.inputSchema.properties).toHaveProperty(prop);
+  });
+
+  it("get_boss_info is read-only and forwards the boss name", async () => {
+    const info = { bosses: [{ key: "eye_of_cthulhu", name: "Eye of Cthulhu", defeated: false }], isNight: true };
+    const conn = new FakeConn(() => info);
+    const client = await setup(conn);
+    const tool = (await client.listTools()).tools.find((t) => t.name === "get_boss_info")!;
+    expect(tool.annotations?.readOnlyHint).toBe(true);
+    expect(tool.description).toContain("Eye of Cthulhu");
+    const body = JSON.parse((await call(client, "get_boss_info", { boss: "eoc" })).content[0].text);
+    expect(conn.calls).toEqual([{ method: "get_boss_info", params: { boss: "eoc" } }]);
+    expect(body).toEqual(info);
+  });
+
+  it("wait_for_task passes a boss attack's result through", async () => {
+    const result = { killed: 5, kills: ["Servant of Cthulhu"], damageTaken: 180, durationS: 140.2, dodges: 31, retreated: false,
+      potionsUsed: 3, boss: "Eye of Cthulhu", bossKilled: false, bossLifeLeftPct: 34, ammoLeft: 120 };
+    const conn = new FakeConn(() => ({ current: null, lastFinished: { name: "attack", status: 2, reason: "boss fled", result } }));
+    const client = await setup(conn);
+    const body = JSON.parse((await call(client, "wait_for_task", { timeout_s: 1 })).content[0].text);
+    expect(body.report).toMatchObject({ name: "attack", status: "failed", result });
   });
 
   it("wait_for_task passes attack's result through", async () => {
