@@ -37,6 +37,10 @@ mod/LlmPlayer tModLoader mod inside Terraria
   covered, tiles dug, torches placed and why it stopped. `allow_dig` and `torches` turn each part off.
 - **Gather, build, fight.** It can mine, chop trees, pick up items, place, craft (only with real
   ingredients and stations), equip, use items, attack, and talk to NPCs.
+- **Mine what it needs.** `mine_vein` mines one whole ore vein from any of its tiles, or a set number of
+  tiles of any block (`max`, e.g. 20 Stone), without the surrounding rock. `find` locates ore and,
+  with `category: "block"` and a name, blocks like Stone, Sand or Clay. Mining walks to a spot in reach,
+  builds a platform to stand on in a shaft, or digs toward a tile no open spot can reach.
 - **Fight without trading hits.** `attack` predicts when an enemy is about to touch the player (from its hitbox
   and velocity) and backs off or jumps instead, never into a hole or lava, while it keeps swinging or shooting.
   Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
