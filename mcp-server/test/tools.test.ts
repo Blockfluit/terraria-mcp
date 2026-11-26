@@ -53,6 +53,7 @@ describe("registerTools", () => {
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
         "build_platforms", "unequip", "buy", "mine_vein",
         "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
+        "build_house", "check_housing",
       ].sort(),
     );
   });
@@ -320,6 +321,67 @@ describe("registerTools", () => {
       expect(desc("get_map")).toContain("'D' closed door");
       expect(JSON.stringify(tools.find((t) => t.name === "find")?.inputSchema)).toContain("bed");
       expect(desc("open_chest")).toContain("locked");
+    });
+  });
+
+  describe("housing", () => {
+    it("build_house forwards an explicit spot or nothing, and rejects a lone coordinate", async () => {
+      const conn = new FakeConn(() => ({ started: true }));
+      const client = await setup(conn);
+      await call(client, "build_house", {});
+      await call(client, "build_house", { x: 100, y: 250, width: 12, height: 6, door: "right" });
+      const bad = await call(client, "build_house", { x: 100 });
+      expect(bad.isError).toBe(true);
+      expect(bad.content[0].text).toContain("both x and y");
+      expect(conn.calls).toEqual([
+        { method: "build_house", params: {} },
+        { method: "build_house", params: { x: 100, y: 250, width: 12, height: 6, door: "right" } },
+      ]);
+    });
+
+    it("build_house validates size and door side before calling the mod", async () => {
+      const conn = new FakeConn();
+      const client = await setup(conn);
+      expect((await call(client, "build_house", { height: 9 })).isError).toBe(true);
+      expect((await call(client, "build_house", { width: 5 })).isError).toBe(true);
+      expect((await call(client, "build_house", { door: "up" })).isError).toBe(true);
+      expect(conn.calls).toEqual([]);
+    });
+
+    it("build_house passes missing_item through with the counts", async () => {
+      const conn = new FakeConn(() => {
+        throw new ModError("missing_item", "Missing: Wood x12 (chop trees)");
+      });
+      const client = await setup(conn);
+      const res = await call(client, "build_house", {});
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("missing_item: Missing: Wood x12");
+    });
+
+    it("check_housing is read-only, takes x,y or nothing, and returns the verdict unchanged", async () => {
+      const verdict = { housing: { valid: true, message: "This housing is suitable for a new resident." }, homeless: [] };
+      const conn = new FakeConn(() => verdict);
+      const client = await setup(conn);
+      const tool = (await client.listTools()).tools.find((t) => t.name === "check_housing")!;
+      expect(tool.annotations?.readOnlyHint).toBe(true);
+      const res = await call(client, "check_housing", { x: 10, y: 20 });
+      expect(JSON.parse(res.content[0].text)).toEqual(verdict);
+      await call(client, "check_housing", {});
+      expect((await call(client, "check_housing", { y: 3 })).isError).toBe(true);
+      expect(conn.calls).toEqual([
+        { method: "check_housing", params: { x: 10, y: 20 } },
+        { method: "check_housing", params: {} },
+      ]);
+    });
+
+    it("descriptions cover the bill of materials, the door exit, vanilla's verdict and NPC conditions", async () => {
+      const client = await setup(new FakeConn());
+      const tools = (await client.listTools()).tools;
+      const build = tools.find((t) => t.name === "build_house")!.description!;
+      for (const s of ["missing_item", "Work Bench", "door", "valid", "60 tiles"]) expect(build).toContain(s);
+      const check = tools.find((t) => t.name === "check_housing")!.description!;
+      for (const s of ["Merchant", "Nurse", "Life Crystal", "canMoveIn", "homeless"]) expect(check).toContain(s);
+      expect(tools.find((t) => t.name === "get_state")!.description).toContain("housing");
     });
   });
 });

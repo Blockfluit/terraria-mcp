@@ -63,7 +63,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_state",
     description:
-      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x, y, distance, segments?}] (every boss alive in the world, like the vanilla boss health bar; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest). Start every decision here." +
+      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x, y, distance, segments?}] (every boss alive in the world, like the vanilla boss health bar; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest), housing {homeless?: [names], canMoveIn?: [names]} (town NPCs without a house, and NPCs whose move-in conditions are met: they arrive during the day once a free valid house exists; see check_housing / build_house). Start every decision here." +
       COORDS,
     readOnly: true,
   },
@@ -287,6 +287,35 @@ const TOOLS: ToolDef[] = [
       rows: int().min(1).max(20).optional().describe("Number of rows, default 1"),
       spacing: int().min(1).max(50).optional().describe("Tiles between rows (upward), default 8"),
     },
+  },
+
+  {
+    name: "build_house",
+    description:
+      "Build a valid town-NPC house (Merchant, Nurse, Demolitionist, Arms Dealer… need one each) with real placement: frame of blocks (floor, walls, ceiling), a door in one side wall, background walls on every inside tile, then a table (or work bench), a chair and a torch. " +
+      "x,y = the bottom-left tile of the frame (floor row); omit both to use the nearest flat, clear, visible spot within 30 tiles (level ground as the floor, open air above, no trees, room to stand outside the door). Default size 10x6 outer (frame included): vanilla's minimum of 60 tiles; height at most 7 so the ceiling stays in reach. " +
+      "Materials come from your inventory: blocks for the frame (Wood first, then other wood, Stone, bricks, Dirt…; existing blocks in the frame's place are kept), owned doors/tables/chairs/torches/house walls first. What is missing is crafted first when possible (Wood Wall/Dirt Wall/Stone Wall 4 per block, Wooden Door, Chair, Table at a Work Bench in range; Work Bench as the table and Torch from Gel+Wood need no station). " +
+      "If anything is short it fails up front with missing_item listing exact counts and where to get them; a site that isn't clear fails with bad_params naming the tile (tree: chop_tree it or pick another spot). " +
+      "The player stands inside while building and walks out through the door at the end (move_to opens/closes doors). Then vanilla's housing query runs: succeeded = valid house; failed = built but vanilla's reason (e.g. missing walls). report.result: {x, y, width, height, door, valid, reason?, placed {frame block, door, background wall, table, chair, torch}, skipped, skippedReasons, exitedThroughDoor, housing}." +
+      COORDS +
+      STARTS_TASK,
+    shape: {
+      x: tileX().optional().describe("Left column of the house frame; omit x and y to find a spot automatically"),
+      y: tileY().optional().describe("Floor row of the house frame (its bottom row)"),
+      width: int().min(8).max(30).optional().describe("Outer width incl. frame, default 10"),
+      height: int().min(5).max(7).optional().describe("Outer height incl. frame, default 6"),
+      door: z.enum(["left", "right"]).optional().describe("Side wall for the door; default the side facing the player"),
+    },
+    check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
+  },
+  {
+    name: "check_housing",
+    description:
+      "Town NPC housing status. With x,y (any visible open tile inside a room): vanilla's housing query, like the housing icon's '?' — housing {valid, message (vanilla's text, e.g. 'This housing is suitable for a new resident.' or what is missing), missing? [light source, door, table, chair], occupied, occupant?, room {x1,y1,x2,y2,tiles}}. " +
+      "Always: residents [{name, type, homeless, homeX?, homeY?, pet}], homeless [names], notYetHere [{name, canMoveIn, condition, missing?, useful}] for useful NPCs the world lacks (Guide, Merchant: 50 silver in inventory, Nurse: Life Crystal used + Merchant, Arms Dealer: bullets or a gun, Demolitionist: explosive + Merchant, Dryad: a boss defeated, …; checked live with the game's own rules). An NPC that canMoveIn arrives during the day once a free valid house exists.",
+    shape: { x: tileX().optional(), y: tileY().optional() },
+    readOnly: true,
+    check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
   },
 
   // Combat
