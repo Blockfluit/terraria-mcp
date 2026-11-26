@@ -105,6 +105,23 @@ public static class CombatKit
         return WeaponScoring.Best(candidates) is { } best ? new Weapon(best.Slot, p.inventory[best.Slot], best) : null;
     }
 
+    /// <summary>
+    /// How much ammo the weapon has left: every inventory stack (ammo slots and main inventory) of the ammo type it
+    /// uses; null if it uses none. Vanilla picks the next matching stack by itself when one runs out
+    /// (<see cref="Player.ChooseAmmo"/>: ammo slots first, then the inventory), so this is the whole supply.
+    /// </summary>
+    public static int? AmmoCount(Player p, Item weapon)
+    {
+        if (weapon.useAmmo <= 0) return null;
+        int n = 0;
+        for (int i = 0; i < 58; i++)
+        {
+            var it = p.inventory[i];
+            if (!it.IsAir && it.ammo == weapon.useAmmo && it.stack > 0) n += it.stack;
+        }
+        return n;
+    }
+
     /// <summary>Is the chosen weapon still in its slot and usable (ammo / mana)?</summary>
     public static bool StillUsable(Player p, Weapon w) =>
         ReferenceEquals(p.inventory[w.Slot], w.Item) && Candidate(p, w.Slot) is { Usable: true };

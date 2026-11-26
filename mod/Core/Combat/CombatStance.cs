@@ -75,7 +75,9 @@ public static class StepSafety
         return true;
     }
 
-    private static bool ColumnSafe(ITileGrid g, int x, int y)
+    /// <summary>Column <paramref name="x"/> for a body standing at row <paramref name="y"/>: no lava/hazard in body
+    /// height and a standable floor at most <see cref="MaxDrop"/> tiles down (first non-air tile solid or platform).</summary>
+    public static bool ColumnSafe(ITileGrid g, int x, int y)
     {
         for (int by = y - 2; by <= y; by++)
             if (g.Get(x, by).Kind is TileKind.Lava or TileKind.Hazard) return false;

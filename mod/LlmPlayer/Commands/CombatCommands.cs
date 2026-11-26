@@ -5,6 +5,7 @@ using LlmPlayer.Core.Bridge;
 using LlmPlayer.Core.Combat;
 using LlmPlayer.Observe;
 using LlmPlayer.Tasks;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 
@@ -26,10 +27,20 @@ public static class CombatCommands
             float retreat = Params.Float(p, "retreat_below", 0.3f);
             if (!float.IsFinite(retreat) || retreat < 0f || retreat >= 1f)
                 throw new CommandError(ErrorCodes.BadParams, "retreat_below must be >= 0 and < 1 (0 = never retreat)");
+            float? healBelow = null;
+            if (Params.Has(p, "heal_below"))
+            {
+                float hb = Params.Float(p, "heal_below");
+                if (!float.IsFinite(hb) || hb < 0f || hb >= 1f)
+                    throw new CommandError(ErrorCodes.BadParams, "heal_below must be >= 0 and < 1");
+                healBelow = hb;
+            }
+            bool killMinions = Params.Bool(p, "kill_minions", true);
+            ArenaBounds? arena = ParseArena(p);
             var npc = all ? Nearest(player, radius) : ResolveTarget(p, player);
             var weapon = CombatKit.BestWeapon(player)
                 ?? throw new CommandError(ErrorCodes.MissingItem, "no usable weapon (need a damaging item with its ammo/mana)");
-            var task = new AttackTask(npc, all, radius, retreat);
+            var task = new AttackTask(npc, all, radius, retreat, arena, killMinions, healBelow);
             TaskHost.Start(task);
             return new
             {
@@ -38,6 +49,8 @@ public static class CombatCommands
                 Target = new { Id = npc.whoAmI, Name = npc.GivenOrTypeName },
                 All = all,
                 Weapon = weapon.Item.Name,
+                Boss = EntityReader.IsBoss(npc) ? true : (bool?)null,
+                Arena = arena is { } a ? new { a.X1, a.X2 } : null,
             };
         }, isAction: true);
 
@@ -83,6 +96,40 @@ public static class CombatCommands
 
     private const float DefaultAllRadius = 25f;
 
+    /// <summary>Optional <c>arena: {x1, x2}</c> (tile columns, any order, at least <see cref="ArenaBounds.MinWidth"/>
+    /// wide, at most 400).</summary>
+    private static ArenaBounds? ParseArena(JsonElement p)
+    {
+        if (!Params.Has(p, "arena")) return null;
+        var a = p.GetProperty("arena");
+        if (a.ValueKind != JsonValueKind.Object) throw new CommandError(ErrorCodes.BadParams, "arena must be {x1, x2}");
+        int x1 = Params.Int(a, "x1"), x2 = Params.Int(a, "x2");
+        var b = ArenaBounds.Of(x1, x2);
+        if (b.Width < ArenaBounds.MinWidth || b.Width > 400)
+            throw new CommandError(ErrorCodes.BadParams, $"arena must be {ArenaBounds.MinWidth}..400 tiles wide");
+        if (b.X1 < 0 || b.X2 >= Main.maxTilesX) throw new CommandError(ErrorCodes.BadParams, "arena is outside the world");
+        return b;
+    }
+
+    /// <summary>The nearest living boss (not a segment if a real boss exists), visible or not: vanilla shows every
+    /// boss's health bar, and get_state lists them. Null if none.</summary>
+    private static NPC? NearestBoss(Player player)
+    {
+        NPC? best = null;
+        float bestD = float.MaxValue;
+        foreach (var n in Main.npc)
+        {
+            if (!n.active || n.life <= 0 || !EntityReader.IsBoss(n) || !TargetRules.IsAttackable(CombatKit.Traits(n))) continue;
+            float d = Vector2.Distance(n.Center, player.Center) + (n.boss ? 0f : 100000f);
+            if (d < bestD)
+            {
+                best = n;
+                bestD = d;
+            }
+        }
+        return best;
+    }
+
     private static bool IsAll(JsonElement p) =>
         Params.Has(p, "target") && p.GetProperty("target") is { ValueKind: JsonValueKind.String } t
         && string.Equals(t.GetString()?.Trim(), "all", StringComparison.OrdinalIgnoreCase);
@@ -101,12 +148,15 @@ public static class CombatCommands
     /// </summary>
     private static NPC ResolveTarget(JsonElement p, Player player)
     {
-        if (!Params.Has(p, "target")) throw new CommandError(ErrorCodes.BadParams, "missing required param 'target' (entity id, \"nearest\" or \"all\")");
+        if (!Params.Has(p, "target")) throw new CommandError(ErrorCodes.BadParams, "missing required param 'target' (entity id, \"nearest\", \"boss\" or \"all\")");
         var t = p.GetProperty("target");
         if (t.ValueKind == JsonValueKind.String)
         {
-            if (!string.Equals(t.GetString()?.Trim(), "nearest", StringComparison.OrdinalIgnoreCase))
-                throw new CommandError(ErrorCodes.BadParams, "target must be an entity id, \"nearest\" or \"all\"");
+            string? word = t.GetString()?.Trim();
+            if (string.Equals(word, "boss", StringComparison.OrdinalIgnoreCase))
+                return NearestBoss(player) ?? throw new CommandError(ErrorCodes.NotVisible, "no boss is alive");
+            if (!string.Equals(word, "nearest", StringComparison.OrdinalIgnoreCase))
+                throw new CommandError(ErrorCodes.BadParams, "target must be an entity id, \"nearest\", \"boss\" or \"all\"");
             return Nearest(player, EntityReader.DefaultRadius);
         }
 
@@ -122,7 +172,8 @@ public static class CombatCommands
             case TargetVerdict.Friendly: throw new CommandError(ErrorCodes.BadParams, $"{name} is friendly; only hostile enemies can be attacked");
             case TargetVerdict.Invulnerable: throw new CommandError(ErrorCodes.BadParams, $"{name} can't be damaged");
         }
-        if (!Visibility.IsEntityVisible(npc)) throw new CommandError(ErrorCodes.NotVisible, $"entity {id} is not visible");
+        if (!Visibility.IsEntityVisible(npc) && !EntityReader.IsBoss(npc))
+            throw new CommandError(ErrorCodes.NotVisible, $"entity {id} is not visible");
         return npc;
     }
 }
