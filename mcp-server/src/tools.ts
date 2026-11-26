@@ -116,7 +116,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_task",
     description:
-      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress, result?} (result only for tasks that return data, e.g. talk_to_npc). Use wait_for_task to block instead of polling.",
+      "Current task and the last finished one: {current, lastFinished}, each {name, status: running|succeeded|failed|cancelled, reason, progress, result?} (result only for tasks that return data, e.g. talk_to_npc, attack). Use wait_for_task to block instead of polling.",
     readOnly: true,
   },
   {
@@ -239,12 +239,19 @@ const TOOLS: ToolDef[] = [
   {
     name: "attack",
     description:
-      "Fight a hostile enemy until it dies: picks the best weapon, closes in for melee or keeps distance for ranged/magic. Target an entity id from get_entities or \"nearest\". Never targets town NPCs or critters." +
+      'Fight hostile enemies: picks the best weapon, closes in for melee or keeps 8-15 tiles for ranged/magic, and does not trade hits — when an enemy is about to touch you (from its hitbox and velocity) it backs off or jumps, never into a hole or lava, still swinging/shooting (melee becomes hit-and-run). target: an entity id from get_entities, "nearest", or "all" = every visible hostile within radius, nearest first, until none remain (one call clears a group). Below retreat_below of max life with no healing potion available (quick-heal reflex handles the rest) it stops attacking, runs away for up to 3 s and fails with reason "low life". When it finishes, wait_for_task\'s report.result is {killed, kills: [names], damageTaken, durationS, dodges, retreated}. Never targets town NPCs or critters.' +
       STARTS_TASK,
     shape: {
       target: z
-        .union([int(), z.literal("nearest")])
-        .describe('Entity id of a hostile enemy, or "nearest"'),
+        .union([int(), z.literal("nearest"), z.literal("all")])
+        .describe('Entity id of a hostile enemy, "nearest", or "all" (clear every visible hostile within radius)'),
+      radius: z.number().min(1).max(40).optional().describe('For target "all": search radius in tiles, default 25'),
+      retreat_below: z
+        .number()
+        .min(0)
+        .lt(1)
+        .optional()
+        .describe("Retreat (and fail with 'low life') below this life fraction when no healing is available; default 0.3, 0 = never"),
     },
   },
   {
@@ -359,7 +366,7 @@ export function registerTools(server: McpServer, conn: ModClient): void {
     "wait_for_task",
     {
       description:
-        `Block until the current task finishes (succeeded, failed or cancelled) or timeout_s passes (default 30, max ${MAX_WAIT_S}). Returns {timed_out, report: {name, status, reason, progress, result?}}; result carries data from tasks like talk_to_npc. If timed_out, the task is still running: call again, or cancel_task. Call this after every task-starting action.`,
+        `Block until the current task finishes (succeeded, failed or cancelled) or timeout_s passes (default 30, max ${MAX_WAIT_S}). Returns {timed_out, report: {name, status, reason, progress, result?}}; result carries data from tasks like talk_to_npc and attack. If timed_out, the task is still running: call again, or cancel_task. Call this after every task-starting action.`,
       inputSchema: {
         timeout_s: z.number().min(0).max(MAX_WAIT_S).default(30).describe("Seconds to wait, default 30"),
       },
