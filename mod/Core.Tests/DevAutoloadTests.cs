@@ -121,4 +121,16 @@ public class DevAutoloadTests
         Assert.NotNull(DevAutoload.GameModeMismatch(true, false));
         Assert.NotNull(DevAutoload.GameModeMismatch(false, true));
     }
+
+    [Theory]
+    [InlineData("The_Weird_Fjord")]
+    [InlineData("The_Weird_Fjord.wld")]
+    [InlineData("the_weird_fjord")]
+    public void Pick_AcceptsTheFileNameAsName(string given)
+    {
+        // Seen on the first real run: --world The_Weird_Fjord (the file name) didn't match "The Weird Fjord".
+        var saves = new[] { new SaveEntry("The Weird Fjord", "The_Weird_Fjord.wld"), new SaveEntry("Other", "Other.wld") };
+        Assert.Equal(0, DevAutoload.Pick(saves, given, null, "world", out var err));
+        Assert.Equal("", err);
+    }
 }

@@ -103,7 +103,8 @@ public static class DevAutoload
 
     /// <summary>
     /// Pick the save to load. Order: the exact file name when given (case-insensitive: Windows paths), else the
-    /// exact display name, else a case-insensitive display name. Returns the index, or -1 with <paramref name="error"/>
+    /// exact display name, else a case-insensitive display name, else the file name (with or without extension) given
+    /// as the name. Returns the index, or -1 with <paramref name="error"/>
     /// set when nothing matches or the match is ambiguous (two saves with the same name and no file name to tell them apart).
     /// </summary>
     public static int Pick(IReadOnlyList<SaveEntry> saves, string name, string? fileName, string kind, out string error)
@@ -118,6 +119,11 @@ public static class DevAutoload
         var exact = Indexes(saves, s => string.Equals(s.Name, name, StringComparison.Ordinal));
         var matches = exact.Count > 0 ? exact
             : Indexes(saves, s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+        // Last resort: the name given is the save's file name, with or without its extension ("The_Weird_Fjord" for
+        // the world "The Weird Fjord") — what a script sees listing the Players/Worlds folders.
+        if (matches.Count == 0)
+            matches = Indexes(saves, s => string.Equals(s.FileName, name, StringComparison.OrdinalIgnoreCase)
+                                          || string.Equals(Path.GetFileNameWithoutExtension(s.FileName), name, StringComparison.OrdinalIgnoreCase));
         if (matches.Count == 1) return matches[0];
 
         error = matches.Count == 0
