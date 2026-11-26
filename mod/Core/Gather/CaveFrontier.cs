@@ -38,10 +38,11 @@ public static class CaveFrontier
     public static bool IsOpen(TileInfo t) => t.Kind is TileKind.Air or TileKind.Platform or TileKind.Water;
 
     public static FrontierPick? Pick(ITileGrid g, TilePoint here, TilePoint origin, int radius,
-        Func<TilePoint, bool>? rejected = null, int pickPower = 0, int maxNodes = DefaultMaxNodes)
+        Func<TilePoint, bool>? rejected = null, int pickPower = 0, int maxNodes = DefaultMaxNodes,
+        Func<TilePoint, bool>? ignoreFrontier = null)
     {
         var dist = Flood(g, here, origin, radius, pickPower, maxNodes);
-        var frontiers = Frontiers(g, dist);
+        var frontiers = Frontiers(g, dist, ignoreFrontier);
         if (frontiers.Count == 0) return null;
 
         // Nearest frontier cell (Manhattan) and how many are in view, for every cell within ViewRadius of one.
@@ -76,21 +77,23 @@ public static class CaveFrontier
     /// <summary>The reachable frontier cell nearest to the player (by reach cost), or null: where to aim a torch when
     /// there's nowhere to walk.</summary>
     public static TilePoint? NearestFrontier(ITileGrid g, TilePoint here, TilePoint origin, int radius, int pickPower = 0,
-        int maxNodes = DefaultMaxNodes)
+        int maxNodes = DefaultMaxNodes, Func<TilePoint, bool>? ignoreFrontier = null)
     {
         var dist = Flood(g, here, origin, radius, pickPower, maxNodes);
-        var f = Frontiers(g, dist);
+        var f = Frontiers(g, dist, ignoreFrontier);
         return f.Count == 0 ? null : f.MinBy(x => dist[x.Cell]).Cell;
     }
 
     /// <summary>Frontier cells among the reached ones (nearest first, at most <see cref="MaxFrontierCells"/>), each
-    /// with its Unknown count within 2 tiles.</summary>
-    public static List<(TilePoint Cell, int Unknown)> Frontiers(ITileGrid g, Dictionary<TilePoint, int> dist)
+    /// with its Unknown count within 2 tiles. <paramref name="ignore"/>: cells the caller doesn't count (e.g. the
+    /// face of its own tunnel, or the surface layer).</summary>
+    public static List<(TilePoint Cell, int Unknown)> Frontiers(ITileGrid g, Dictionary<TilePoint, int> dist,
+        Func<TilePoint, bool>? ignore = null)
     {
         var list = new List<(TilePoint, int)>();
         foreach (var c in dist.OrderBy(kv => kv.Value).Select(kv => kv.Key))
         {
-            if (!TouchesUnknown(g, c)) continue;
+            if (!TouchesUnknown(g, c) || (ignore != null && ignore(c))) continue;
             int unknown = UnknownAround(g, c);
             if (unknown < MinUnknown || LavaWithin(g, c, LavaMargin)) continue;
             list.Add((c, unknown));
