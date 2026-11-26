@@ -31,7 +31,7 @@ public static class TaskPhases
     private static readonly HashSet<string> Defendable = new(StringComparer.Ordinal)
     {
         "move_to", "explore", "talk_to_npc", "chop_tree", "mine", "mine_area", "pick_up_items", "place", "use_item",
-        "open_chest", "use_bed", "mine_vein", "build_platforms", "buy",
+        "open_chest", "use_bed", "mine_vein", "build_platforms", "buy", "build_house",
     };
 
     public static TaskPhase Of(string? taskName) => taskName switch

@@ -206,6 +206,7 @@ public class TaskPhasesTests
     [InlineData("use_bed", TaskPhase.Defendable)]
     [InlineData("mine_vein", TaskPhase.Defendable)]
     [InlineData("build_platforms", TaskPhase.Defendable)]
+    [InlineData("build_house", TaskPhase.Defendable)]
     [InlineData("buy", TaskPhase.Defendable)]
     [InlineData("chop_tree", TaskPhase.Defendable)]
     [InlineData("mine", TaskPhase.Defendable)]
