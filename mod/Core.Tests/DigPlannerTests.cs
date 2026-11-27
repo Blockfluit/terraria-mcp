@@ -220,14 +220,82 @@ public class DigPlannerTunnelTests
     }
 
     [Fact]
-    public void MissingFloor_Stops()
+    public void TwoWideHoleInTheFloor_Stops()
     {
         var g = Pocket();
         g.Set(4, 4, TileInfo.Air);
+        g.Set(5, 4, TileInfo.Air);
         var plan = DigPlanner.Tunnel(g, Stand, +1, 4, 8, Power);
         Assert.Equal(DigStopKind.NoFloor, plan.Stop!.Kind);
-        Assert.Equal(new TilePoint(4, 4), plan.Stop.At);
-        Assert.Equal(3, plan.Tiles.Count);
+        Assert.Equal(new TilePoint(5, 4), plan.Stop.At);
+        Assert.Equal(6, plan.Tiles.Count); // columns 3 and 4: the body over 3..4 still stands on column 3
+    }
+
+    /// <summary>Seen in game: explore left stopped 12 times with "no floor to walk on at (2913,501)", a single missing
+    /// floor tile right in front of the body (2914..2915, feet row 500). The 2-wide body walks over a 1-wide hole.</summary>
+    [Theory]
+    [InlineData(+1, 3)] // right in front
+    [InlineData(+1, 5)]
+    [InlineData(-1, 0)] // left, mirrored pocket: right in front
+    [InlineData(-1, -2)]
+    public void OneWideHoleInTheFloor_IsWalkedOver(int sign, int holeOffset)
+    {
+        ArrayTileGrid g;
+        TilePoint stand;
+        if (sign > 0)
+        {
+            g = Pocket();
+            stand = Stand;
+        }
+        else
+        {
+            g = ArrayTileGrid.Parse(
+                "############",
+                "#########..#",
+                "#########..#",
+                "#########..#",
+                "############",
+                "############").Grid;
+            stand = new TilePoint(9, 3);
+        }
+        int hx = sign > 0 ? stand.X + holeOffset : stand.X - 1 + holeOffset;
+        g.Set(hx, 4, TileInfo.Air);
+        var plan = DigPlanner.Tunnel(g, stand, sign, 4, 8, Power);
+        Assert.Null(plan.Stop);
+        Assert.Equal(12, plan.Tiles.Count);
+    }
+
+    [Fact]
+    public void OneWideHole_UnderAnOpenTunnel_LeavesNothingToDigAndNoStop()
+    {
+        // The surface case: flat open ground, one tile missing in front, nothing to dig: walking has to do it.
+        var (g, _) = ArrayTileGrid.Parse(
+            "............",
+            "............",
+            "............",
+            "............",
+            "######.#####",
+            "############");
+        var plan = DigPlanner.Tunnel(g, new TilePoint(7, 3), -1, 4, 6, Power);
+        Assert.Null(plan.Stop);
+        Assert.False(plan.HasWork);
+    }
+
+    [Fact]
+    public void HoleUnderTheFarBodyColumn_NeedsTheNextFloor()
+    {
+        // The body stands only on its right column (left one over a hole): walking left, the next column needs a floor.
+        var g = ArrayTileGrid.Parse(
+            "############",
+            "#########..#",
+            "#########..#",
+            "#########..#",
+            "#########.##",
+            "############").Grid;
+        g.Set(8, 4, TileInfo.Air);
+        var plan = DigPlanner.Tunnel(g, new TilePoint(9, 3), -1, 4, 8, Power);
+        Assert.Equal(DigStopKind.NoFloor, plan.Stop!.Kind);
+        Assert.Equal(new TilePoint(8, 4), plan.Stop.At);
     }
 
     [Fact]

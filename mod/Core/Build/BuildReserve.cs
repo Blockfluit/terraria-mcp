@@ -23,6 +23,11 @@ public static class BuildReserve
     public static int Budget(int platforms, int blocks, int reserve, bool released) =>
         Math.Max(0, blocks) + (released ? Math.Max(0, platforms) : Math.Max(0, platforms - Math.Max(0, reserve)));
 
+    /// <summary>Platforms within <see cref="Budget"/> that bridges and climbs place before any block (what
+    /// <see cref="Pick"/> takes first): the planner's MovementProfile.BuildPlatformCount.</summary>
+    public static int PlatformBudget(int platforms, int reserve, bool released) =>
+        released ? Math.Max(0, platforms) : Math.Max(0, platforms - Math.Max(0, reserve));
+
     public static BuildPick Pick(bool buildDown, int platforms, int blocks, int reserve)
     {
         if (buildDown) return platforms > 0 ? BuildPick.Platform : blocks > 0 ? BuildPick.Block : BuildPick.None;

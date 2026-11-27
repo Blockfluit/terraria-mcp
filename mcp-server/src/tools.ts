@@ -193,6 +193,7 @@ const TOOLS: ToolDef[] = [
       "It only digs tiles it can see and stops with a reason before lava/water next to the hole, protected tiles, tiles too hard for the pickaxe (\"needs pick power N at (x,y)\") or an unsafe drop. " +
       "Dark tiles: it places a torch from your inventory and looks again (\"too dark: no torches\" without any); with torches on it also lights dark spots underground about every 10 tiles. " +
       "With Water Walking (potion via use_item first, or Water Walking Boots) a lake ahead counts as floor and is walked over (with the potion only when the far shore is in view and the buff lasts the crossing). " +
+      "surface (left/right): follow the ground's surface over hills and valleys instead of keeping the current height: each leg walks to the farthest visible surface point, then looks again; it never tunnels (stops with \"no visible surface\" when nothing ahead is known). " +
       "Progress shows walking/digging; result: {covered, dug, torchesPlaced, stoppedBecause?}." +
       STARTS_TASK,
     shape: {
@@ -200,6 +201,7 @@ const TOOLS: ToolDef[] = [
       distance: int().min(1).optional().describe("Tiles to cover, default 50"),
       allow_dig: z.boolean().optional().describe("Dig when there is no visible ground to walk to, default true"),
       torches: z.boolean().optional().describe("Place torches from the inventory in the dark, default true"),
+      surface: z.boolean().optional().describe("left/right only: follow the visible ground surface up and down hills, never tunnel; default false"),
     },
   },
 

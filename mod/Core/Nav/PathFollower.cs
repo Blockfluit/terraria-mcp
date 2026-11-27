@@ -32,7 +32,7 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 /// anywhere else reports NeedsReplan.</item>
 /// <item>Dig: hold the centred stance (so a dug-out floor drops the whole hitbox) and mine WorkTile.</item>
 /// <item>BuildPlatform bridging: stop at the source, place, walk on. Climbing: stand centred, jump, place WorkTile
-/// once the feet are above it, land on it.</item>
+/// once the feet are fully above it (a block can't overlap the hitbox), land on it.</item>
 /// <item>BuildDown: stand still at the source and place WorkTile (below the feet), then drop through the platform
 /// underfoot (centred, Down for a tick) or walk off the edge, and land on it.</item>
 /// <item>DropThrough / straight-down Fall: centre first, then hold Down for a tick (or wait for the dig).</item>
@@ -410,8 +410,9 @@ public sealed class PathFollower
             _ceiling ??= Pathfinder.JumpPlatformCeiling(grid, s, step.Pos, 30);
             intent.Jump = _jumpHeld && k.VelY < 0 && !ApexAbove(k, s, _ceiling.Value);
             Steer(txs, k, ref intent);
-            // Place it once the feet are above the work tile, then land on it.
-            if (!done && k.Y <= w.Y - 1 + 0.05f)
+            // Place it once the feet are above the work tile, then land on it. Clear of its top even after this tick's
+            // move: a block (dirt, stone; unlike a platform) isn't placed where it would overlap the hitbox.
+            if (!done && k.Y + Math.Max(0f, k.VelY) <= w.Y - 1 - 0.01f)
             {
                 intent.UseItem = true;
                 intent.CursorTile = w;

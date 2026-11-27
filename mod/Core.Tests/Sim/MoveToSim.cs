@@ -181,7 +181,8 @@ public sealed class MoveToSim
         var tool = o.Current?.Kind switch
         {
             MoveKind.Dig => SimTool.Pickaxe,
-            MoveKind.BuildPlatform or MoveKind.BuildDown => SimTool.Platform,
+            // Like BuildReserve.Pick (no reserve here): platforms first, then blocks.
+            MoveKind.BuildPlatform or MoveKind.BuildDown => _sim.Platforms > 0 || _sim.Blocks <= 0 ? SimTool.Platform : SimTool.Block,
             _ => SimTool.None,
         };
         Step(o.Intent, tool);
@@ -195,7 +196,8 @@ public sealed class MoveToSim
         // Water walking as the sim has it now (the buff counts down like ProfileBuilder's buff time).
         var profile = _profile with
         {
-            BuildItemCount = Math.Min(_profile.BuildItemCount, _sim.Platforms),
+            BuildItemCount = Math.Min(_profile.BuildItemCount, _sim.Platforms + _sim.Blocks),
+            BuildPlatformCount = Math.Min(_profile.BuildPlatformCount, _sim.Platforms),
             WaterWalk = _profile.WaterWalk && _sim.WaterWalk,
             LavaWalk = _profile.LavaWalk && _sim.LavaWalk,
             WaterWalkTicks = Math.Min(_profile.WaterWalkTicks, _sim.WaterWalkTicks),

@@ -71,6 +71,9 @@ public static class ProfileBuilder
             BuildItemCount = allowBuild
                 ? Core.Build.BuildReserve.Budget(HeldItemLease.PlatformCount(p), HeldItemLease.BlockCount(p), platformReserve, released: platformReserve <= 0)
                 : 0,
+            BuildPlatformCount = allowBuild
+                ? Core.Build.BuildReserve.PlatformBudget(HeldItemLease.PlatformCount(p), platformReserve, released: platformReserve <= 0)
+                : 0,
             MaxSubmergedSteps = BreathMath.MaxSubmergedSteps(p.breathMax, p.breathCDMax),
             WaterBreathing = Tasks.Reflexes.CanBreatheInLiquid(p),
             CanSwim = CanSwim(p),

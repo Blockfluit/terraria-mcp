@@ -127,7 +127,17 @@ describe("registerTools", () => {
     for (const word of ["shaft", "tunnel", "torch", "lava", "pick power", "too dark: no torches", "torchesPlaced", "stoppedBecause"])
       expect(tool?.description).toContain(word);
     const props = (tool?.inputSchema as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(props).sort()).toEqual(["allow_dig", "direction", "distance", "torches"]);
+    expect(Object.keys(props).sort()).toEqual(["allow_dig", "direction", "distance", "surface", "torches"]);
+  });
+
+  it("explore forwards surface and explains following the terrain", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "explore" }));
+    const client = await setup(conn);
+    const res = await call(client, "explore", { direction: "left", distance: 100, surface: true });
+    expect(res.isError).toBeFalsy();
+    expect(conn.calls).toEqual([{ method: "explore", params: { direction: "left", distance: 100, surface: true } }]);
+    const tool = (await client.listTools()).tools.find((t) => t.name === "explore");
+    for (const word of ["surface", "hills", "never tunnels", "no visible surface"]) expect(tool?.description).toContain(word);
   });
 
   it("user_has_control becomes isError with toggle-key hint text", async () => {

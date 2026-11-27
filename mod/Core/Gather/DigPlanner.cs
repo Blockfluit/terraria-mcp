@@ -124,12 +124,18 @@ public static class DigPlanner
     /// A 3-tall tunnel (body rows stand.Y-2..stand.Y) through the columns ahead in direction <paramref name="sign"/>
     /// (+1 right, -1 left), column by column, top-down. Scans up to <paramref name="scanColumns"/> columns and stops
     /// after <paramref name="maxColumns"/> columns that need digging (already open columns are walked through). Each
-    /// column needs a known floor, a known ceiling with no liquid above, and a known column ahead with no liquid.
+    /// column needs a known floor (a 1-wide hole is fine: the body spans two columns), a known ceiling with no liquid
+    /// above, and a known column ahead with no liquid.
     /// </summary>
     public static DigPlan Tunnel(ITileGrid g, TilePoint stand, int sign, int maxColumns, int scanColumns, int pickPower)
     {
         var tiles = new List<TilePoint>();
         int dugColumns = 0;
+        // Floor under the column behind the next one (at first the body's column on that side): the 2-wide body over
+        // columns c and c - sign is held by either, so a 1-wide hole in the floor is walked over (vanilla: the 20 px
+        // hitbox is supported by either column). Seen in game: explore stopped 12 times with "no floor to walk on" in
+        // front of a single missing tile.
+        bool prevFloor = g.Get(sign > 0 ? stand.X + 1 : stand.X, stand.Y + 1).IsStandable;
         for (int i = 0; i < scanColumns && dugColumns < maxColumns; i++)
         {
             int c = sign > 0 ? stand.X + 2 + i : stand.X - 1 - i;
@@ -142,7 +148,8 @@ public static class DigPlanner
             if (f.Kind == TileKind.Unknown) return new DigPlan(stand, tiles, new DigStop(DigStopKind.Dark, floor));
             if (LiquidStop(f.Kind, floor, "below") is { } ls) return new DigPlan(stand, tiles, ls);
             if (f.Kind == TileKind.Hazard) return new DigPlan(stand, tiles, new DigStop(DigStopKind.Hazard, floor));
-            if (!f.IsStandable) return new DigPlan(stand, tiles, new DigStop(DigStopKind.NoFloor, floor));
+            if (!f.IsStandable && !prevFloor) return new DigPlan(stand, tiles, new DigStop(DigStopKind.NoFloor, floor));
+            prevFloor = f.IsStandable;
 
             if (CheckNeighbour(g, new TilePoint(c, stand.Y - 3), "above the tunnel") is { } up) return new DigPlan(stand, tiles, up);
             for (int r = stand.Y - 2; r <= stand.Y; r++)

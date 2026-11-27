@@ -53,7 +53,8 @@ public static class TaskCommands
             };
             int distance = Params.Int(p, "distance", 50);
             if (distance < 1 || distance > 500) throw new CommandError(ErrorCodes.BadParams, "distance must be 1..500");
-            var task = new ExploreTask(dir, distance, Params.Bool(p, "allow_dig", true), Params.Bool(p, "torches", true));
+            var task = new ExploreTask(dir, distance, Params.Bool(p, "allow_dig", true), Params.Bool(p, "torches", true),
+                Params.Bool(p, "surface", false));
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name };
         }, isAction: true);

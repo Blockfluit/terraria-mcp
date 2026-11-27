@@ -26,6 +26,10 @@ namespace LlmPlayer.Core.Nav;
 /// int.MaxValue = from gear, unlimited). The planner never stands the player on a liquid surface later than the
 /// estimated arrival time allows (<see cref="LiquidWalk.UsableTicks"/>, at <paramref name="MaxRunSpeed"/>).</param>
 /// <param name="MaxRunSpeed">Running speed in px/tick (vanilla 3), for the travel-time estimate.</param>
+/// <param name="BuildPlatformCount">How many of the <paramref name="BuildItemCount"/> build items are platforms; the
+/// rest are blocks (dirt, stone …). Walks place platforms first (BuildReserve.Pick), so build number k along a path is
+/// a platform when k ≤ this. A block is solid: it can't be dropped through, and vanilla won't place it where it would
+/// overlap the player's hitbox. Default: every build item is a platform.</param>
 public sealed record MovementProfile(
     int MaxJumpUp = 5,
     int MaxJumpGap = 6,
@@ -41,8 +45,12 @@ public sealed record MovementProfile(
     bool WaterWalk = false,
     bool LavaWalk = false,
     int WaterWalkTicks = int.MaxValue,
-    float MaxRunSpeed = 3f)
+    float MaxRunSpeed = 3f,
+    int BuildPlatformCount = int.MaxValue)
 {
+    /// <summary>Build number <paramref name="k"/> (1-based along a path) places a platform, not a block.</summary>
+    public bool BuildIsPlatform(int k) => k <= Math.Min(BuildPlatformCount, BuildItemCount);
+
     /// <summary>Largest |dx| for a jump landing dy rows lower (negative dy = higher), with the body able to rise at
     /// most <paramref name="ceiling"/> tiles and sideways motion blocked until the feet are <paramref name="launch"/>
     /// tiles up.</summary>
