@@ -405,6 +405,18 @@ public static class Pathfinder
             {
                 Swim(ni, x, y, builds);
                 Jumps(ni, x, y, builds);
+                // Standing on the bottom of shallow liquid (e.g. one body column in a pool's edge): the feet have real
+                // ground, so every land move works as well. Without this a wet start whose only way on is walking off
+                // an edge, stepping up, digging or building had no moves at all ("unreachable: searched 2 nodes").
+                // (Wet positions are never Built: platforms only go under dry bodies.)
+                if (!HasSupport(x, y)) return;
+                Horizontal(ni, x, y, builds, -1);
+                Horizontal(ni, x, y, builds, +1);
+                StepUp(ni, x, y, builds, -1);
+                StepUp(ni, x, y, builds, +1);
+                DropThrough(ni, x, y, builds);
+                DigDown(ni, x, y, builds);
+                BuildUp(ni, x, y, builds);
                 return;
             }
 
