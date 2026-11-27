@@ -12,14 +12,19 @@ namespace LlmPlayer.Core.Nav;
 /// <see cref="MaxWidth"/> x <see cref="MaxHeight"/> around the start. When the goal lies outside it (or too
 /// close to its edge), the job plans to the known standable cell nearest the goal instead and reports
 /// <see cref="IsPartial"/>; the caller replans from there.
+///
+/// A <see cref="RouteHint"/> (the previous partial plan's target, from <see cref="RouteCommitment"/>) gives replans
+/// hysteresis: the window grows (up to <see cref="MaxHintExtra"/> tiles past the caps) to keep that target in view, and
+/// a partial plan heads for it first unless a new candidate is more than the hint's margin closer to the goal.
 /// </summary>
 public sealed class PlanJob
 {
-    public const int Margin = 32, MaxWidth = 200, MaxHeight = 160, TilesPerTick = 6000;
+    public const int Margin = 32, MaxWidth = 200, MaxHeight = 160, TilesPerTick = 6000, MaxHintExtra = 48;
     private const int EdgeKeepOut = 4;
 
     private readonly MovementProfile _profile;
     private readonly PathOptions _options;
+    private RouteHint? _hint;
     private int _x0, _y0, _w, _h;
     private TileInfo[,] _tiles;
     private bool _widened;
@@ -35,16 +40,37 @@ public sealed class PlanJob
     public bool IsPartial { get; private set; }
     public PathResult? Result { get; private set; }
 
-    public PlanJob(TilePoint start, TilePoint goal, MovementProfile profile, PathOptions options)
+    public PlanJob(TilePoint start, TilePoint goal, MovementProfile profile, PathOptions options, RouteHint? hint = null)
     {
         Start = start;
         RequestedGoal = goal;
         PlannedGoal = goal;
         _profile = profile;
         _options = options;
+        _hint = hint;
         (_x0, _w) = Span(start.X, goal.X, MaxWidth);
         (_y0, _h) = Span(start.Y, goal.Y, MaxHeight);
+        IncludeHint();
         _tiles = new TileInfo[_w, _h];
+    }
+
+    /// <summary>The partial target this job was asked to keep (null: none, or dropped as too far away).</summary>
+    public RouteHint? Hint => _hint;
+
+    /// <summary>Grow the window so the hinted target sits inside it with the usual keep-out, or drop the hint when that
+    /// would grow the window more than <see cref="MaxHintExtra"/> past the caps (a target that far is stale anyway).</summary>
+    private void IncludeHint()
+    {
+        if (_hint is not { } h) return;
+        var t = h.Target;
+        int xa = Math.Min(_x0, t.X - 2 - EdgeKeepOut), xb = Math.Max(_x0 + _w - 1, t.X + 3 + EdgeKeepOut);
+        int ya = Math.Min(_y0, t.Y - 4 - EdgeKeepOut), yb = Math.Max(_y0 + _h - 1, t.Y + 2 + EdgeKeepOut);
+        if (xb - xa + 1 > MaxWidth + MaxHintExtra || yb - ya + 1 > MaxHeight + MaxHintExtra)
+        {
+            _hint = null;
+            return;
+        }
+        (_x0, _w, _y0, _h) = (xa, xb - xa + 1, ya, yb - ya + 1);
     }
 
     /// <summary>[origin, size] covering a..b plus margin, capped at `max` and always keeping `a` well inside.</summary>
@@ -85,6 +111,7 @@ public sealed class PlanJob
         if (w == _w && h == _h) return false;
         _widened = true;
         (_x0, _w, _y0, _h) = (x0, w, y0, h);
+        IncludeHint();
         _tiles = new TileInfo[_w, _h];
         _copied = 0;
         _search = null;
@@ -183,10 +210,11 @@ public sealed class PlanJob
             // beyond the window. Seen in the real-terrain fuzz: 60-150 tile trips through caves failed outright
             // ("unreachable: searched 20000 nodes") although each half of them planned fine.
             if (direct.Success || direct.NodesExpanded < _options.MaxNodes) return (direct, goal, false);
-            return Closest(g) ?? (direct, goal, false);
+            return Hinted(g, double.MaxValue) ?? Closest(g) ?? (direct, goal, false);
         }
 
         var candidates = KnownStandableTowardGoal(g, goal, MaxPartialCandidates);
+        if (Hinted(g, candidates.Count > 0 ? Distance(candidates[0], goal) : double.MaxValue) is { } kept) return kept;
         if (candidates.Count == 0)
             return (new PathResult(false, Array.Empty<PathStep>(),
                 $"unreachable: no known standable ground toward {RequestedGoal} within the planning window", 0), RequestedGoal, false);
@@ -202,6 +230,21 @@ public sealed class PlanJob
         // reachable spot closest to the goal and replan from there.
         return Closest(g) ?? (last!, candidates[0], true);
     }
+
+    /// <summary>A partial plan to the hinted target (the previous plan's), or null: no hint, the target can't be stood on
+    /// any more, a candidate <paramref name="bestDistance"/> from the goal beats it by more than the hint's margin, or
+    /// no path leads there now.</summary>
+    private (PathResult, TilePoint, bool)? Hinted(ArrayTileGrid g, double bestDistance)
+    {
+        if (_hint is not { } h || _cancelled) return null;
+        var t = h.Target;
+        if (!Inside(t, EdgeKeepOut) || !Pathfinder.CanStand(g, t)) return null;
+        if (bestDistance < Distance(t, RequestedGoal) - h.SwitchMargin) return null;
+        var r = Pathfinder.FindPath(g, Start, t, _profile, _options);
+        return r.Success ? (r, t, true) : null;
+    }
+
+    private static double Distance(TilePoint a, TilePoint b) => Math.Sqrt((double)(a.X - b.X) * (a.X - b.X) + (double)(a.Y - b.Y) * (a.Y - b.Y));
 
     /// <summary>A partial plan to the reachable spot closest to the goal, or null. Known routes first (no digging):
     /// digging made "straight down toward the goal" look cheapest and the player dug a new shaft into unlit rock instead

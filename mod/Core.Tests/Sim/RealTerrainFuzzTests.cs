@@ -215,8 +215,11 @@ public class RealTerrainFuzzTests(ITestOutputHelper output)
     {
         var g = Grid(c.Fixture);
         var sim = new MiniPhysics(g, c.Start) { PickPower = 35, Platforms = Platforms };
-        var move = new MoveToSim(g, sim, c.Goal, Profile(), new PathOptions(), log: log)
-            { LogTicks = log != null && Environment.GetEnvironmentVariable("FUZZ_TICKS") == "1" };
+        var move = new MoveToSim(g, sim, c.Goal, Profile(), new PathOptions(), log: log, fog: Fog(g, c.Start, c.Goal))
+        {
+            LogTicks = log != null && Environment.GetEnvironmentVariable("FUZZ_TICKS") == "1",
+            Commit = Environment.GetEnvironmentVariable("FUZZ_NOCOMMIT") != "1",
+        };
         int dist = Math.Abs(c.Start.X - c.Goal.X) + Math.Abs(c.Start.Y - c.Goal.Y);
         var outcome = move.Run(4000 + 100 * dist);
         if (trace != null) foreach (var l in move.Trace) trace.Enqueue(l);
@@ -231,6 +234,20 @@ public class RealTerrainFuzzTests(ITestOutputHelper output)
         };
         return new Result(c, v, outcome == MoveOutcome.Arrived ? null : move.Reason, sim.Ticks, move.Plans, move.Replans,
             move.FailedPlans, move.Events);
+    }
+
+    /// <summary>FUZZ_FOG=r (diagnostic, not asserted): plan and follow with only the tiles within r of the start and of
+    /// the goal revealed at first (move_to targets something the player has seen), the rest coming into view within
+    /// <see cref="FogGrid.Radius"/> as the player moves, like in game. FUZZ_NOCOMMIT=1 turns the route commitment off.</summary>
+    private static FogGrid? Fog(ArrayTileGrid g, TilePoint start, TilePoint goal)
+    {
+        if (!int.TryParse(Environment.GetEnvironmentVariable("FUZZ_FOG"), out int r)) return null;
+        var known = new bool[g.Width, g.Height];
+        for (int y = 0; y < g.Height; y++)
+            for (int x = 0; x < g.Width; x++)
+                known[x, y] = Math.Max(Math.Abs(x - start.X), Math.Abs(y - start.Y)) <= r
+                              || Math.Max(Math.Abs(x - goal.X), Math.Abs(y - goal.Y)) <= r;
+        return new FogGrid(g, known);
     }
 
     [Fact]
