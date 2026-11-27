@@ -38,6 +38,46 @@ public static class DevCommands
             Autoload = DevAutoloadSystem.Status,
         }, isAction: false, requiresWorld: false);
 
+        // Dev fixture capture (DevCommands only, not an MCP tool, never used by the playing AI): the real tiles of a
+        // rectangle as ArrayTileGrid.Parse glyphs, so navigation can be fuzz-tested offline on real terrain.
+        CommandRouter.Register("dev_dump", p =>
+        {
+            if (!LlmConfig.Current.DevCommands) throw new CommandError("dev_commands_disabled", "dev commands are off");
+            int x1 = Params.Int(p, "x1"), y1 = Params.Int(p, "y1"), x2 = Params.Int(p, "x2"), y2 = Params.Int(p, "y2");
+            if (x2 < x1 || y2 < y1 || (long)(x2 - x1 + 1) * (y2 - y1 + 1) > 200_000)
+                throw new CommandError(ErrorCodes.BadParams, "rectangle too big (max 200k tiles) or inverted");
+            var grid = new LlmPlayer.Observe.GameTileGrid(Main.LocalPlayer, fairVision: false);
+            var rows = new List<string>();
+            var sb = new System.Text.StringBuilder();
+            for (int y = y1; y <= y2; y++)
+            {
+                sb.Clear();
+                for (int x = x1; x <= x2; x++)
+                {
+                    var t = grid.Get(x, y);
+                    sb.Append(t.Kind switch
+                    {
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.IsClosedDoor => '|',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.HalfBlock => '_',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.DownRight => '/',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.DownLeft => '\\',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.UpLeft => 'r',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.UpRight => 'q',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.PickPowerRequired > 35 => 'X',
+                        LlmPlayer.Core.Grid.TileKind.Solid when t.Protected => 'P',
+                        LlmPlayer.Core.Grid.TileKind.Solid => '#',
+                        LlmPlayer.Core.Grid.TileKind.Platform => '=',
+                        LlmPlayer.Core.Grid.TileKind.Water or LlmPlayer.Core.Grid.TileKind.Honey => '~',
+                        LlmPlayer.Core.Grid.TileKind.Lava => 'L',
+                        LlmPlayer.Core.Grid.TileKind.Hazard => '^',
+                        _ => '.',
+                    });
+                }
+                rows.Add(sb.ToString());
+            }
+            return new { X1 = x1, Y1 = y1, Rows = rows };
+        }, isAction: false);
+
         // Dev diagnostics (DevCommands only, not an MCP tool): the path move_to would plan from here, and whether a
         // follower would call it invalidated right away. For debugging navigation bugs seen in game.
         CommandRouter.Register("dev_plan", p =>
