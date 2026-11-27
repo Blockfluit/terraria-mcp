@@ -44,7 +44,9 @@ public sealed class CollectTask : IGameTask<GameCtx>
     {
         _t = target;
         Name = name;
-        _worker = new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease);
+        _worker = _t.Kind == ValuableKind.Orb
+            ? new TileWorker(name, BestHammer, "hammer", _lease) // vanilla: orbs break only to hammers
+            : new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease);
         Progress = $"breaking {_t.Name} at {_t.At}";
     }
 
@@ -70,7 +72,7 @@ public sealed class CollectTask : IGameTask<GameCtx>
         }
 
         bool gone = !Present(_t);
-        if (!gone && Protection.IsProtected(_t.At.X, _t.At.Y))
+        if (!gone && (_t.Kind == ValuableKind.Orb ? Protection.IsProtectedArea(_t.At.X, _t.At.Y) : Protection.IsProtected(_t.At.X, _t.At.Y)))
             return Finish(ctx, GameTaskStatus.Failed, $"{_t.Name} at {_t.At} became protected; stopped");
 
         var s = _worker.Tick(ctx, gone);
@@ -125,7 +127,18 @@ public sealed class CollectTask : IGameTask<GameCtx>
     /// nothing there, not loot: orbs/altars/chests/blocks get a hint), not_visible, protected_tile (NPC house or near
     /// spawn), missing_item (no pickaxe).
     /// </summary>
-    public static CollectTarget Resolve(Player p, int x, int y)
+    /// <summary>Inventory slot of the item with the most hammer power, or -1.</summary>
+    public static int BestHammer(Player p)
+    {
+        int best = -1, power = 0;
+        for (int i = 0; i < 58; i++)
+            if (!p.inventory[i].IsAir && p.inventory[i].hammer > power) { best = i; power = p.inventory[i].hammer; }
+        return best;
+    }
+
+    /// <param name="allowOrb">Break a Shadow Orb / Crimson Heart (normal progression: the first drops a Musket; the
+    /// third summons the Eater of Worlds / Brain of Cthulhu, refused unless <paramref name="allowBossSummon"/>).</param>
+    public static CollectTarget Resolve(Player p, int x, int y, bool allowOrb = false, bool allowBossSummon = false)
     {
         if (!WorldGen.InWorld(x, y, 10)) throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
         if (!Visibility.IsTileVisible(x, y)) throw new CommandError(ErrorCodes.NotVisible, $"({x},{y}) is not visible (unexplored or dark)");
@@ -133,24 +146,30 @@ public sealed class CollectTask : IGameTask<GameCtx>
         if (!tile.HasTile) throw new CommandError(ErrorCodes.BadParams, $"nothing at ({x},{y}) (find category=valuable)");
         var kind = TileClass.Valuable(tile);
         string tileName = TileClass.Name(tile.TileType);
-        if (kind is not { } k || !Valuables.IsCollectible(k))
+        bool orb = kind == ValuableKind.Orb && allowOrb;
+        if (orb && WorldGen.shadowOrbCount >= 2 && !allowBossSummon)
+            throw new CommandError(ErrorCodes.BadParams,
+                $"{WorldGen.shadowOrbCount} orbs were already broken: the next one summons the Eater of Worlds / Brain of Cthulhu (pass allow_boss_summon to do it on purpose)");
+        if (!orb && (kind is not { } k0 || !Valuables.IsCollectible(k0)))
         {
             string hint = kind switch
             {
                 ValuableKind.Chest => ": it's a chest; use loot_chest",
-                ValuableKind.Orb => ": breaking a Shadow Orb / Crimson Heart has world effects (the third one summons a boss); the AI never breaks it",
+                ValuableKind.Orb => ": breaking a Shadow Orb / Crimson Heart has world effects (the first drops a Musket, the third summons a boss); pass allow_orb to break it",
                 ValuableKind.Altar => ": altars can't be broken before Hardmode (they're a crafting station for boss summons)",
                 _ => "; collect takes pots, life crystals, life fruit and the sword in stone (use mine for blocks)",
             };
             throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) ({tileName}) isn't loot to collect{hint}");
         }
+        var k = kind!.Value;
         var (ox, oy) = TileClass.ObjectOrigin(x, y, tile);
         var origin = Main.tile[ox, oy];
         if (!origin.HasTile || origin.TileType != tile.TileType) (ox, oy) = (x, y);
         string name = Valuables.Name(k, Main.tile[ox, oy].TileFrameX);
-        if (Protection.IsProtected(ox, oy) || Protection.IsProtected(x, y))
-            throw new CommandError(ErrorCodes.ProtectedTile, $"{name} at ({ox},{oy}) is protected (NPC house or near spawn)");
-        if (HeldItemLease.BestPickaxe(p) < 0) throw new CommandError(ErrorCodes.MissingItem, "no pickaxe in inventory (collect breaks things with a pickaxe)");
+        bool prot = orb ? Protection.IsProtectedArea(ox, oy) : Protection.IsProtected(ox, oy) || Protection.IsProtected(x, y);
+        if (prot) throw new CommandError(ErrorCodes.ProtectedTile, $"{name} at ({ox},{oy}) is protected (NPC house or near spawn)");
+        if (orb && BestHammer(p) < 0) throw new CommandError(ErrorCodes.MissingItem, "no hammer in inventory (orbs break only to hammers: craft a Wooden Hammer, 8 Wood at a Work Bench)");
+        if (!orb && HeldItemLease.BestPickaxe(p) < 0) throw new CommandError(ErrorCodes.MissingItem, "no pickaxe in inventory (collect breaks things with a pickaxe)");
         return new CollectTarget(new TilePoint(ox, oy), tile.TileType, k, name);
     }
 }

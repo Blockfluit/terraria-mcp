@@ -288,10 +288,10 @@ public class ValuablesTests
     }
 
     [Fact]
-    public void NamesTellCorruptionFromCrimsonAndWarnAboutOrbs()
+    public void NamesTellCorruptionFromCrimson()
     {
-        Assert.Equal("Shadow Orb (don't break)", Valuables.Name(ValuableKind.Orb, 0));
-        Assert.Equal("Crimson Heart (don't break)", Valuables.Name(ValuableKind.Orb, 36));
+        Assert.Equal("Shadow Orb", Valuables.Name(ValuableKind.Orb, 0));
+        Assert.Equal("Crimson Heart", Valuables.Name(ValuableKind.Orb, 36));
         Assert.Equal("Demon Altar", Valuables.Name(ValuableKind.Altar, 18));
         Assert.Equal("Crimson Altar", Valuables.Name(ValuableKind.Altar, 54));
         Assert.Equal("Enchanted Sword (in stone)", Valuables.Name(ValuableKind.EnchantedSword, 17 * 54 + 18));

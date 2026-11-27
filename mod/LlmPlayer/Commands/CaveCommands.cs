@@ -20,7 +20,9 @@ public static class CaveCommands
     {
         CommandRouter.Register("collect", p =>
         {
-            var target = CollectTask.Resolve(Main.LocalPlayer, Params.Int(p, "x"), Params.Int(p, "y"));
+            var target = CollectTask.Resolve(Main.LocalPlayer, Params.Int(p, "x"), Params.Int(p, "y"),
+                allowOrb: Params.Has(p, "allow_orb") && Params.Bool(p, "allow_orb"),
+                allowBossSummon: Params.Has(p, "allow_boss_summon") && Params.Bool(p, "allow_boss_summon"));
             var task = new CollectTask(target);
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name, Target = new { target.At.X, target.At.Y, target.Name } };

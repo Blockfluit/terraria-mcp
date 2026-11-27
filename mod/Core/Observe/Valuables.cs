@@ -68,7 +68,7 @@ public static class Valuables
         ValuableKind.LifeCrystal => "Life Crystal",
         ValuableKind.LifeFruit => "Life Fruit",
         ValuableKind.Pot => "Pot",
-        ValuableKind.Orb => frameX >= 36 ? "Crimson Heart (don't break)" : "Shadow Orb (don't break)",
+        ValuableKind.Orb => frameX >= 36 ? "Crimson Heart" : "Shadow Orb",
         ValuableKind.Altar => frameX >= 54 ? "Crimson Altar" : "Demon Altar",
         ValuableKind.EnchantedSword => frameX / LargePileFrameWidth == SwordStyle
             ? "Enchanted Sword (in stone)"

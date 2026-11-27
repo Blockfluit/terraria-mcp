@@ -484,7 +484,12 @@ const TOOLS: ToolDef[] = [
       "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}]}." +
       COORDS +
       STARTS_TASK,
-    shape: { x: tileX(), y: tileY() },
+    shape: {
+      x: tileX(),
+      y: tileY(),
+      allow_orb: z.boolean().optional().describe("Break a Shadow Orb / Crimson Heart with your best hammer (first one drops a Musket + 100 Musket Balls; meteorite/goblin effects follow)"),
+      allow_boss_summon: z.boolean().optional().describe("Also allow breaking the 3rd orb, which summons the Eater of Worlds / Brain of Cthulhu"),
+    },
   },
   {
     name: "loot_chest",
