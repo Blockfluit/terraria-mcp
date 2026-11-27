@@ -25,6 +25,30 @@ public class TaskRunnerTests
     }
 
     [Fact]
+    public void FinishNote_IsAppendedToTheReason()
+    {
+        var r = new TaskRunner<int>();
+        var reports = new List<TaskReport>();
+        r.Finished += reports.Add;
+        string? note = "inventory full: Life Crystal not picked up";
+        r.FinishNote = () => note;
+        r.Start(new FakeTask { Reason = "broke Life Crystal", Next = GameTaskStatus.Succeeded }, 0);
+        r.Tick(0);
+        r.Start(new FakeTask { Next = GameTaskStatus.Succeeded }, 0);
+        r.Tick(0);
+        note = null;
+        r.Start(new FakeTask { Reason = "plain", Next = GameTaskStatus.Succeeded }, 0);
+        r.Tick(0);
+        r.FinishNote = () => throw new InvalidOperationException();
+        r.Start(new FakeTask { Reason = "safe", Next = GameTaskStatus.Succeeded }, 0);
+        r.Tick(0);
+        Assert.Equal("broke Life Crystal; inventory full: Life Crystal not picked up", reports[0].Reason);
+        Assert.Equal("inventory full: Life Crystal not picked up", reports[1].Reason);
+        Assert.Equal("plain", reports[2].Reason);
+        Assert.Equal("safe", reports[3].Reason);
+    }
+
+    [Fact]
     public void Start_ThenSucceeds_RaisesFinishedOnce()
     {
         var r = new TaskRunner<int>();

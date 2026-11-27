@@ -25,4 +25,5 @@ public static class EventNames
     public const string TookDamage = "took_damage";
     public const string Reflex = "reflex";
     public const string WeaponSwitch = "weapon_switch";
+    public const string InventoryFull = "inventory_full";
 }

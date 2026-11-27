@@ -25,7 +25,7 @@ public sealed record CoinInfo(int Copper, int Silver, int Gold, int Platinum);
 
 public sealed record InventoryInfo(
     List<SlotInfo> Hotbar, List<SlotInfo> Inventory, List<SlotInfo> Armor, List<SlotInfo> Accessories,
-    List<SlotInfo> Ammo, CoinInfo Coins, int SelectedSlot);
+    List<SlotInfo> Ammo, CoinInfo Coins, int SelectedSlot, int FreeSlots);
 
 /// <summary>
 /// get_inventory. Slot numbers: hotbar/inventory/ammo use the <c>p.inventory</c> index (hotbar 0-9, main 10-49,
@@ -33,7 +33,8 @@ public sealed record InventoryInfo(
 /// inventory slots, and coin items are left out of the slot lists. Empty slots are omitted. Hotbar, inventory and
 /// ammo slots carry item tags (weapon+damage, heal, ammo, consumable, placeable, pick/axe/hammer power). For choosing
 /// attack's weapon/ammo: weapons add useTime (ticks per use, 60 = 1 s), ammoType (the ammo class they fire, e.g.
-/// "arrow") and mana (cost per use); ammo stacks add damage (added to the weapon's) and ammoType.
+/// "arrow") and mana (cost per use); ammo stacks add damage (added to the weapon's) and ammoType. FreeSlots: empty slots
+/// of the 50 main ones (hotbar + inventory); at 0 dropped items that don't stack onto something are left lying.
 /// </summary>
 public static class InventoryReader
 {
@@ -44,7 +45,8 @@ public static class InventoryReader
         Slots(p.armor, 3, 10),
         Slots(p.inventory, 54, 58, p),
         Coins(p),
-        p.selectedItem);
+        p.selectedItem,
+        LlmPlayer.Inventory.InventorySpace.FreeSlots(p));
 
     /// <param name="tagsFor">Player to compute item tags for (weapon damage includes their bonuses); null = no tags.</param>
     private static List<SlotInfo> Slots(Item[] items, int from, int to, Player? tagsFor = null)

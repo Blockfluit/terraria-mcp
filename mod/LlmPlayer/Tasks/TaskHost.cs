@@ -42,7 +42,8 @@ public sealed class TaskHost : ModSystem
     public static void Start(IGameTask<GameCtx> task)
     {
         if (task is not OpenChestTask && Main.LocalPlayer is { } p) Interact.ChestAccess.Close(p);
-        Runner.Start(task, GameCtx.ForLocalPlayer());
+        Runner.Start(task, GameCtx.ForLocalPlayer()); // finishes the old task first (its full-inventory note included)
+        LlmPlayer.Inventory.InventorySpace.BeginTask();
     }
 
     /// <summary>Cancel the running task (no-op when idle). Returns the cancelled task's name, or null.</summary>
@@ -58,6 +59,7 @@ public sealed class TaskHost : ModSystem
     {
         Runner = new TaskRunner<GameCtx>();
         Runner.Finished += OnFinished;
+        Runner.FinishNote = LlmPlayer.Inventory.InventorySpace.FinishNote; // "inventory full: … not picked up" 
         ControlState.Changed += OnDriverChanged;
         ControlState.TaskLabel = Label;
         BridgeSystem.Tick += OnTick;
@@ -87,6 +89,7 @@ public sealed class TaskHost : ModSystem
         if (ControlState.Driver != Driver.Ai) return;
         bool reflexOwnsControls = Reflexes.Tick(p, Runner.CurrentTask);
         if (!reflexOwnsControls && !Runner.IsIdle) Runner.Tick(GameCtx.ForLocalPlayer());
+        if (!Runner.IsIdle) LlmPlayer.Inventory.InventorySpace.Tick(p);
         CheckStalled(p, reflexOwnsControls);
         if (Runner.IsIdle && !reflexOwnsControls)
         {

@@ -3,6 +3,8 @@ using LlmPlayer.Bridge;
 using LlmPlayer.Config;
 using LlmPlayer.Core.Bridge;
 using LlmPlayer.Core.Combat;
+using LlmPlayer.Core.Inventory;
+using LlmPlayer.Inventory;
 using LlmPlayer.Observe;
 using LlmPlayer.Tasks;
 using Microsoft.Xna.Framework;
@@ -99,6 +101,23 @@ public static class CombatCommands
             bool? pause = Params.Has(p, "pause_when_idle") ? Params.Bool(p, "pause_when_idle") : null;
             int? reserve = Params.Has(p, "platform_reserve") ? Params.Int(p, "platform_reserve") : null;
             if (reserve is < 0 or > 9999) throw new CommandError(ErrorCodes.BadParams, "platform_reserve must be 0..9999");
+            List<string>? trash = null;
+            if (Params.Has(p, "trash_when_full"))
+            {
+                var v = p.GetProperty("trash_when_full");
+                if (v.ValueKind != JsonValueKind.Array)
+                    throw new CommandError(ErrorCodes.BadParams, "trash_when_full must be an array of item names ([] = never trash)");
+                trash = new List<string>();
+                foreach (var e in v.EnumerateArray())
+                {
+                    if (e.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(e.GetString()))
+                        throw new CommandError(ErrorCodes.BadParams, $"trash_when_full: {e} is not an item name");
+                    var name = e.GetString()!.Trim();
+                    if (FullInventory.IsValuable(new ItemWorth(name)))
+                        throw new CommandError(ErrorCodes.BadParams, $"trash_when_full: {name} counts as valuable (ores, bars, potions, gems, crystals…); list junk only");
+                    if (!trash.Contains(name, StringComparer.OrdinalIgnoreCase)) trash.Add(name);
+                }
+            }
             float? threshold = null;
             if (Params.Has(p, "quick_heal_threshold"))
             {
@@ -114,6 +133,7 @@ public static class CombatCommands
             if (threshold is { } th) cfg.QuickHealThreshold = th;
             if (pause is { } pw) cfg.PauseWhenIdle = pw;
             if (reserve is { } pr) MoveToTask.DefaultPlatformReserve = pr;
+            if (trash != null) InventorySpace.TrashWhenFull = trash;
             if (hasWeapon || hasAmmo) Reflexes.SetDefendLoadout(pl, defWeapon, defAmmo);
             bool sp = Main.netMode == NetmodeID.SinglePlayer;
             return new
@@ -124,6 +144,7 @@ public static class CombatCommands
                 QuickHealThreshold = cfg.QuickHealThreshold,
                 PauseWhenIdle = cfg.PauseWhenIdle,
                 PlatformReserve = MoveToTask.DefaultPlatformReserve,
+                TrashWhenFull = InventorySpace.TrashWhenFull,
                 Note = cfg.PauseWhenIdle && !sp ? "pause_when_idle only works in singleplayer" : null,
             };
         }, isAction: true);
