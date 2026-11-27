@@ -65,6 +65,10 @@ public sealed class PathFollower
     private readonly int _stuckTicks;
     private readonly float _brake, _gravityPx;
     private int? _ceiling;
+    /// <summary>Jump out of a shaft: feet level the body must reach before moving sideways (0 = none), see
+    /// <see cref="ShaftLaunch"/>.</summary>
+    private int? _shaft;
+    private bool _shaftCleared;
     private TilePoint? _prev;
     private int _index;
     private FollowerStatus _terminal = FollowerStatus.Running;
@@ -150,6 +154,8 @@ public sealed class PathFollower
         _walkRest = false;
         _attempts = 0;
         _ceiling = null;
+        _shaft = null;
+        _shaftCleared = false;
         _closeTicks = 0;
     }
 
@@ -312,9 +318,15 @@ public sealed class PathFollower
             // that the descent would then land on.
             _ceiling ??= Pathfinder.JumpPlatformCeiling(grid, s, t, 30);
             intent.Jump = _jumpHeld && k.VelY < 0 && !ApexAbove(k, s, _ceiling.Value);
+            _shaft ??= ShaftLaunch(grid, s, t, dir);
+            // Out of a shaft: stay inside the source columns (pressed toward the exit side) until the feet clear the
+            // shaft's lip, or the head bonks on the overhang beside it.
+            // (Only on the way up to that level: afterwards the hitbox is over the target, maybe settling on a slope.)
+            if (_shaft > 0 && k.Y <= s.Y - _shaft.Value + 0.05f) _shaftCleared = true;
+            if (_shaft > 0 && !_shaftCleared && k.VelY < 0) Steer(EdgeX(s, dir), k, ref intent);
             // Aim for this jump's own landing spot: carrying speed past it lands wherever the arc ends
             // (e.g. on a platform above the planned row). The approach used the run's full speed.
-            SteerInto(t, k, ref intent);
+            else SteerInto(t, k, ref intent);
             return null;
         }
 
@@ -337,6 +349,16 @@ public sealed class PathFollower
 
         float txs = Tx(s);
         bool ready;
+        _shaft ??= ShaftLaunch(grid, s, t, dir);
+        if (_shaft > 0)
+        {
+            // A run-up would carry the hitbox under the overhang / into the hazard: take off standing at the edge.
+            _shaftCleared = false; // (a retry after landing back on the source starts over)
+            float edge = EdgeX(s, dir);
+            if (Aligned(edge, k) && !_jumpHeld) intent.Jump = true;
+            Steer(edge, k, ref intent);
+            return null;
+        }
         if (Math.Abs(dx) <= 1)
             ready = dx == 0 ? Aligned(txs, k) : Math.Abs(k.X - txs) <= 0.6f;
         else
@@ -424,6 +446,55 @@ public sealed class PathFollower
             else Steer(Tx(s), k, ref intent);
         }
         else Steer(Tx(step.Pos), k, ref intent); // walk off the edge (slowly: the landing is right below)
+    }
+
+    /// <summary>Hitbox left edge pressed toward the dir side of the body at s, without entering the next column.</summary>
+    private static float EdgeX(TilePoint s, int dir) => dir > 0 ? s.X + 2f - PlayerPhysics.HitboxWidth - 0.15f : s.X + 0.15f;
+
+    /// <summary>
+    /// A jump from s to t whose arc must not drift sideways before the feet reach the launch level (the lowest level from
+    /// which the body crosses the whole span; below it something is in the way). Usually that something is a wall that
+    /// simply stops the hitbox, but two cases hurt (both seen in the real-terrain fuzz):
+    /// <list type="bullet">
+    /// <item>A shaft: the column beside the source on t's side is open at the source body's height but blocked higher,
+    /// below the launch level. A hitbox that drifts into it while rising bonks on that overhang, and the jump fails
+    /// (running to the edge of a 2-wide shaft, jumping, head into the rock beside it, into the pit below).</item>
+    /// <item>Cactus / lava / spikes below the launch level between source and target: the run-up carried the hitbox
+    /// into them before the feet had risen above them.</item>
+    /// </list>
+    /// Returns that launch level (feet tiles above s.Y) for such a jump, else 0. The follower then takes off standing and
+    /// keeps the hitbox inside the source columns until the feet are up there.
+    /// </summary>
+    internal static int ShaftLaunch(ITileGrid grid, TilePoint s, TilePoint t, int dir)
+    {
+        if (dir == 0) return 0;
+        static bool Deadly(TileInfo i) => i.Kind is TileKind.Lava or TileKind.Hazard;
+        int x0 = Math.Min(s.X, t.X), x1 = Math.Max(s.X, t.X) + 1;
+        // As the planner (Pathfinder.Jumps): the crossing level, then down while every lower level is clear across.
+        bool ClearAt(int a)
+        {
+            for (int x = x0; x <= x1; x++)
+                for (int r = s.Y - a - 2; r <= s.Y - a; r++)
+                {
+                    var i = grid.Get(x, r);
+                    if (i.BlocksBody || Deadly(i)) return false;
+                }
+            return true;
+        }
+        int launch = s.Y - Math.Min(s.Y, t.Y) + 1;
+        while (launch > 0 && ClearAt(launch - 1)) launch--;
+        if (launch <= 0) return 0;
+        int c = dir > 0 ? s.X + 2 : s.X - 1;
+        // Hazards anywhere the hitbox could drift through below the launch level.
+        int cx0 = dir > 0 ? s.X + 2 : x0, cx1 = dir > 0 ? x1 : s.X - 1;
+        for (int x = cx0; x <= cx1; x++)
+            for (int r = s.Y - launch - 2; r <= s.Y; r++)
+                if (Deadly(grid.Get(x, r))) return launch;
+        for (int r = s.Y - 2; r <= s.Y; r++)
+            if (grid.Get(c, r).BlocksBody) return 0; // a wall right beside: the hitbox can't drift into it
+        for (int r = s.Y - launch - 2; r <= s.Y - 3; r++)
+            if (grid.Get(c, r).BlocksBody) return launch;
+        return 0;
     }
 
     /// <summary>Would releasing jump now still carry the feet above `levels` tiles over the source feet row?</summary>

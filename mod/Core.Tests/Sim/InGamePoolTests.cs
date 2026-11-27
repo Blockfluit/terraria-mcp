@@ -103,7 +103,12 @@ public class InGamePoolTests(ITestOutputHelper output)
         {
             o = f.Tick(sim.Kinematics, g);
             if (o.Status != FollowerStatus.Running) break;
-            sim.Step(o.Intent, o.Current?.Kind == MoveKind.Dig ? SimTool.Pickaxe : SimTool.None);
+            sim.Step(o.Intent, o.Current?.Kind switch
+            {
+                MoveKind.Dig => SimTool.Pickaxe,
+                MoveKind.BuildPlatform or MoveKind.BuildDown => SimTool.Platform,
+                _ => SimTool.None,
+            });
         }
         Assert.Equal(FollowerStatus.Arrived, o.Status);
         Assert.Null(sim.Hurt);

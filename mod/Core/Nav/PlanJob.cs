@@ -20,8 +20,9 @@ public sealed class PlanJob
 
     private readonly MovementProfile _profile;
     private readonly PathOptions _options;
-    private readonly int _x0, _y0, _w, _h;
-    private readonly TileInfo[,] _tiles;
+    private int _x0, _y0, _w, _h;
+    private TileInfo[,] _tiles;
+    private bool _widened;
     private int _copied;
     private Task<(PathResult Result, TilePoint Goal, bool Partial)>? _search;
     private volatile bool _cancelled;
@@ -56,6 +57,43 @@ public sealed class PlanJob
         return (origin, max);
     }
 
+    /// <summary>The widest window (MaxWidth x MaxHeight, or the normal span where that is already capped) centred on
+    /// start and goal, for the retry after a failed search.</summary>
+    private static (int Origin, int Size) WideSpan(int a, int b, int max)
+    {
+        var normal = Span(a, b, max);
+        if (normal.Size >= max) return normal;
+        return ((a + b) / 2 - max / 2, max);
+    }
+
+    /// <summary>The widest snapshot a job for this trip can use (x0, y0, width, height).</summary>
+    public static (int X0, int Y0, int W, int H) WidestWindow(TilePoint start, TilePoint goal)
+    {
+        var (x0, w) = WideSpan(start.X, goal.X, MaxWidth);
+        var (y0, h) = WideSpan(start.Y, goal.Y, MaxHeight);
+        return (x0, y0, w, h);
+    }
+
+    /// <summary>The search found no way inside the bounding box + <see cref="Margin"/> window: retry once in the widest
+    /// window. Seen in the real-terrain fuzz: pockets walled by rock the pickaxe can't break, whose way out loops
+    /// further around than the margin, failed "unreachable" though a route existed in plain sight of the player.</summary>
+    private bool Widen()
+    {
+        if (_widened || _cancelled) return false;
+        var (x0, w) = WideSpan(Start.X, RequestedGoal.X, MaxWidth);
+        var (y0, h) = WideSpan(Start.Y, RequestedGoal.Y, MaxHeight);
+        if (w == _w && h == _h) return false;
+        _widened = true;
+        (_x0, _w, _y0, _h) = (x0, w, y0, h);
+        _tiles = new TileInfo[_w, _h];
+        _copied = 0;
+        _search = null;
+        return true;
+    }
+
+    /// <summary>How many <see cref="Step"/> calls (game ticks) copying the window(s) took so far.</summary>
+    public int CopyTicks { get; private set; }
+
     public void Cancel() => _cancelled = true;
 
     /// <summary>Advance the job; true once <see cref="Result"/> is set. Call on the thread that owns `source`.</summary>
@@ -71,6 +109,7 @@ public sealed class PlanJob
         int total = _w * _h;
         if (_copied < total)
         {
+            CopyTicks++;
             int end = Math.Min(total, _copied + TilesPerTick);
             for (int i = _copied; i < end; i++)
             {
@@ -83,6 +122,7 @@ public sealed class PlanJob
 
         if (_search == null)
         {
+            SealEdges();
             var snapshot = new ArrayTileGrid(_x0, _y0, _tiles);
             _search = Task.Run(() => Search(snapshot));
             return false;
@@ -95,11 +135,35 @@ public sealed class PlanJob
         else
         {
             var (result, goal, partial) = _search.Result;
+            if (!result.Success && result.FailureReason?.StartsWith("unreachable") == true && Widen()) return false;
             Result = result;
             PlannedGoal = goal;
             IsPartial = partial;
         }
         return true;
+    }
+
+    /// <summary>What the snapshot's outermost ring becomes: impassable and nothing to stand on.</summary>
+    public static readonly TileInfo WindowEdge = new(TileKind.Hazard, Name: "planning window edge");
+
+    /// <summary>
+    /// Beyond the snapshot the grid reads as unbreakable solid, i.e. as ground: the search planned falls and walks onto
+    /// "floor" just outside the window, which the follower then found unsupported (seen in the real-terrain fuzz: a
+    /// fall onto the window's bottom edge, "path changed at Jump" five times without moving). The outermost ring is
+    /// overwritten with an impassable, non-standable tile instead (it lies inside the margin, never at a goal).
+    /// </summary>
+    private void SealEdges()
+    {
+        for (int x = 0; x < _w; x++)
+        {
+            _tiles[x, 0] = WindowEdge;
+            _tiles[x, _h - 1] = WindowEdge;
+        }
+        for (int y = 0; y < _h; y++)
+        {
+            _tiles[0, y] = WindowEdge;
+            _tiles[_w - 1, y] = WindowEdge;
+        }
     }
 
     /// <summary>Partial plans try this many intermediate targets (nearest the goal first, spread apart) before giving
@@ -112,7 +176,15 @@ public sealed class PlanJob
     {
         var goal = RequestedGoal;
         if (Inside(goal, EdgeKeepOut))
-            return (Pathfinder.FindPath(g, Start, goal, _profile, _options), goal, false);
+        {
+            var direct = Pathfinder.FindPath(g, Start, goal, _profile, _options);
+            // Out of search budget on a long trip (not a dead end: the search simply ran out of nodes, typical where
+            // digging makes every tile an option): get as close as the search got and replan from there, like a goal
+            // beyond the window. Seen in the real-terrain fuzz: 60-150 tile trips through caves failed outright
+            // ("unreachable: searched 20000 nodes") although each half of them planned fine.
+            if (direct.Success || direct.NodesExpanded < _options.MaxNodes) return (direct, goal, false);
+            return Closest(g) ?? (direct, goal, false);
+        }
 
         var candidates = KnownStandableTowardGoal(g, goal, MaxPartialCandidates);
         if (candidates.Count == 0)
@@ -128,8 +200,14 @@ public sealed class PlanJob
         }
         // Every candidate sits somewhere unreachable (seen in game: all five in one sealed pocket): head for the
         // reachable spot closest to the goal and replan from there.
-        // Known routes first (no digging): digging made "straight down toward the goal" look cheapest and the player
-        // dug a new shaft into unlit rock instead of taking the known shaft and tunnels (seen in game).
+        return Closest(g) ?? (last!, candidates[0], true);
+    }
+
+    /// <summary>A partial plan to the reachable spot closest to the goal, or null. Known routes first (no digging):
+    /// digging made "straight down toward the goal" look cheapest and the player dug a new shaft into unlit rock instead
+    /// of taking the known shaft and tunnels (seen in game).</summary>
+    private (PathResult, TilePoint, bool)? Closest(ArrayTileGrid g)
+    {
         if (!_cancelled && _options.AllowDig)
         {
             var walk = Pathfinder.FindPath(g, Start, RequestedGoal, _profile, _options with { BestEffort = true, AllowDig = false });
@@ -140,7 +218,7 @@ public sealed class PlanJob
             var best = Pathfinder.FindPath(g, Start, RequestedGoal, _profile, _options with { BestEffort = true });
             if (best.Success && best.Steps.Count > 0 && best.ResolvedGoal is { } end) return (best, end, true);
         }
-        return (last!, candidates[0], true);
+        return null;
     }
 
     /// <summary>Known standable cells inside the window nearest the goal, at least <see cref="CandidateSpacing"/>

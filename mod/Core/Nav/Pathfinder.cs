@@ -143,6 +143,9 @@ public static class Pathfinder
     private struct Node
     {
         public int X, Y, Parent, Builds, DigStart, DigCount, WX, WY;
+        /// <summary>Steps from the start, and the nearest earlier node on the chain to here whose step dug
+        /// tiles (0 = none: the start never digs), for <c>CollectRecentDigs</c>.</summary>
+        public int Depth, DigAnc;
         /// <summary>Consecutive steps up to here that ended with the head in liquid (0 = head dry).</summary>
         public int Sub;
         /// <summary>Non-swimmers in liquid with nothing under the feet: tiles risen in the current water jump
@@ -206,6 +209,7 @@ public static class Pathfinder
         {
             ArrayPool<int>.Shared.Return(_flatIndex);
             ArrayPool<int>.Shared.Return(_fallMemo);
+            if (_dugStamp != null) ArrayPool<int>.Shared.Return(_dugStamp);
             _t.Dispose();
         }
 
@@ -417,8 +421,11 @@ public static class Pathfinder
                 digCount = _digs.Count;
                 _digPool.AddRange(_digs);
             }
+            ref var par = ref _nodes[parent];
+            int depth = par.Depth + 1, digAnc = par.DigCount > 0 ? parent : par.DigAnc;
             _nodes[idx] = new Node
             {
+                Depth = depth, DigAnc = digAnc,
                 X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub, Rise = rise,
                 DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy, Door = door,
             };
@@ -436,7 +443,12 @@ public static class Pathfinder
         /// <summary>The head (top body row, either column) is in water/honey: the player can't breathe.</summary>
         private bool HeadWet(int x, int y) => ((_t.F(x, y - 2) | _t.F(x + 1, y - 2)) & TileCache.Liquid) != 0;
 
-        private bool HasSupport(int x, int y) => ((_t.F(x, y + 1) | _t.F(x + 1, y + 1)) & TileCache.Stand) != 0;
+        /// <summary>Ground under the body at (x, y). The cells of the body being expanded are clear (it stands there; this
+        /// path may have dug them out), so they hold nothing.</summary>
+        private bool HasSupport(int x, int y) => Holds(x, y + 1) || Holds(x + 1, y + 1);
+
+        /// <summary>Standable, not in the body being expanded and not mined by this path (<see cref="_recentDigs"/>).</summary>
+        private bool Holds(int x, int y) => (Held(x, y) & TileCache.Stand) != 0 && !RecentlyDug(x, y);
 
         /// <summary>Every body cell is open or a block the current pickaxe can dig (not deadly, not protected).</summary>
         private bool BodyDiggable(int x, int y)
@@ -475,6 +487,7 @@ public static class Pathfinder
             ushort f = _t.F(x, y);
             if ((f & TileCache.Deadly) != 0) return -1;
             if ((f & TileCache.Block) == 0) return 0;
+            if (_recentDigs.Count > 0 && RecentlyDug(x, y)) return 0; // mined earlier on this path
             if (!_canDig || (f & TileCache.Diggable) == 0) return -1;
             var p = new TilePoint(x, y);
             if (!_digs.Contains(p)) _digs.Add(p);
@@ -490,6 +503,7 @@ public static class Pathfinder
             bool built = n.Built;
             _sx = x;
             _sy = y;
+            CollectRecentDigs(ni);
 
             if (BodyHas(x, y, TileCache.Liquid))
             {
@@ -612,7 +626,27 @@ public static class Pathfinder
                 Add(ni, tx, ty, builds, false, WalkCost, MoveKind.Walk);
                 return;
             }
+            // Feet sunk into a half block / a slope falling toward the step: the step is up to 1.5 tiles high, more
+            // than vanilla's auto step-up lifts (16 px); a jump covers it (seen on the fuzz's desert fixture: the
+            // player stood still against the step until Stuck, five times over).
+            if (SunkBelowStep(x, y, dx)) return;
             Add(ni, tx, ty, builds, false, StepUpCost + DigPerTile * _digs.Count, MoveKind.StepUp, withDigs: true);
+        }
+
+        /// <summary>The body at (x, y) rests only on half blocks / floor slopes that keep its feet below the row top on
+        /// the side facing direction dx (a slope climbing toward dx lifts the feet to the top at its high side).</summary>
+        private bool SunkBelowStep(int x, int y, int dx)
+        {
+            bool low = false;
+            for (int c = x; c <= x + 1; c++)
+            {
+                ushort f = _t.F(c, y + 1);
+                if ((f & TileCache.Stand) == 0) continue;
+                if ((f & TileCache.LowTop) == 0) return false;
+                if ((f & (dx > 0 ? TileCache.RisesRight : TileCache.RisesLeft)) != 0) return false;
+                low = true;
+            }
+            return low;
         }
 
         /// <summary>
@@ -628,6 +662,13 @@ public static class Pathfinder
 
             // Cheap early out (the common case underground): no head room at all.
             if (!Passable(x, y - 3) || !Passable(x + 1, y - 3)) return;
+            // Taking off from a puddle (liquid in the feet row only): the hitbox leaves the water at once, which cuts
+            // the stronger water jump short (vanilla: jump = jumpHeight / 5), after moving at half speed while wet: the
+            // dry reach table overestimates it. Seen in the fuzz: a jump out of a 1-deep puddle fell short back into
+            // it, sliding on into the cactus beside it. (From deeper water the long water jump carries the body out.)
+            bool puddle = ((_t.F(x, y) | _t.F(x + 1, y)) & TileCache.Liquid) != 0
+                          && ((_t.F(x, y - 1) | _t.F(x + 1, y - 1)) & TileCache.Liquid) == 0;
+            int wetPenalty = puddle ? WetJumpPenalty : 0;
 
             // Column bitmasks over rows top..top+63 (bit i = row top+i), for every column a jump
             // from here can touch. Rows needed: y-maxUp-3 (apex head) .. y+maxUp+1 (lowest support).
@@ -642,8 +683,21 @@ public static class Pathfinder
                 plat[i] = stand[i] & pass[i]; // standable but passable = platform
             }
             ulong src = Bits(y - 2, y, top); // the source body is clear (this path may have dug it)
-            pass[x - c0] |= src;
-            pass[x + 1 - c0] |= src;
+            for (int i = x - c0; i <= x + 1 - c0; i++)
+            {
+                pass[i] |= src;
+                desc[i] |= src;
+                stand[i] &= ~src; // dug out: nothing to land on (seen in the fuzz: a jump planned onto the tile just dug)
+                plat[i] &= ~src;
+            }
+            foreach (var d in _recentDigs)
+            {
+                int i = d.X - c0, bit = d.Y - top;
+                if (i < 0 || i >= nCols || bit < 0 || bit >= 64) continue;
+                pass[i] |= 1UL << bit;
+                desc[i] |= 1UL << bit;
+                stand[i] &= ~(1UL << bit);
+            }
 
             // rise = how many tiles the body can move straight up.
             int rise = 0;
@@ -710,11 +764,13 @@ public static class Pathfinder
                         }
                         if (_p.JumpReach != null)
                         {
-                            // Launch level: the lowest level the body can cross the whole distance at. Anything
-                            // lower blocks sideways motion until the feet clear it (worst case: right in front).
-                            int launch = 0;
-                            while (launch < a && across[launch] < k) launch++;
-                            if (k > _p.JumpReachAt(ty - y, ceiling, launch)) continue;
+                            // Launch level: the lowest level from which the body can cross the whole distance at
+                            // every level up to the crossing level a. Anything lower blocks sideways motion until the
+                            // feet clear it (worst case: right in front). Contiguous: an overhang beside the source
+                            // (a shaft's lip) blocks the arc above an open bottom row too (seen on real terrain).
+                            int launch = a;
+                            while (launch > 0 && across[launch - 1] >= k) launch--;
+                            if (k > _p.JumpReachAt(ty - y, ceiling, launch) - wetPenalty) continue;
                         }
                         if (ty >= y)
                         {
@@ -733,6 +789,9 @@ public static class Pathfinder
                 }
             }
         }
+
+        /// <summary>Tiles less horizontal reach for a jump that starts in a puddle (see Jumps).</summary>
+        private const int WetJumpPenalty = 2;
 
         /// <summary>Mask of rows lo..hi (inclusive) relative to `top`.</summary>
         private static ulong Bits(int lo, int hi, int top) => ((1UL << (hi - lo + 1)) - 1) << (lo - top);
@@ -776,7 +835,14 @@ public static class Pathfinder
             for (int k = 1; k <= maxK; k++)
             {
                 int r = y - 2 - k; // new head row
-                if (!Passable(x, r) || !Passable(x + 1, r)) return;
+                if (!Passable(x, r) || !Passable(x + 1, r))
+                {
+                    // Rock overhead: dig the two tiles above the head first, then climb one row (a platform pillar
+                    // through rock). Without it a cave with a flat ceiling and no step to stair-dig from was a dead
+                    // end ("unreachable" with a pocket a few tiles overhead, seen in the real-terrain fuzz).
+                    if (k == 1 && _canDig) ClimbDigging(ni, x, y, builds, r);
+                    return;
+                }
                 int ty = y - k, wy = ty + 1;
                 if (!PlainAir(x, wy)) continue; // must place into plain air
                 // Vanilla places a platform only next to a tile on one of its 4 sides or in front of a background wall.
@@ -784,6 +850,21 @@ public static class Pathfinder
                 if (HasSupport(x, ty) || BodyHas(x, ty, TileCache.Liquid)) continue;
                 Add(ni, x, ty, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: x, wy: wy, hasWork: true);
             }
+        }
+
+        /// <summary>BuildUp by one row after digging the head-room row <paramref name="r"/> (see BuildUp).</summary>
+        private void ClimbDigging(int ni, int x, int y, int builds, int r)
+        {
+            _digs.Clear();
+            if (Classify(x, r) < 0 || Classify(x + 1, r) < 0 || _digs.Count == 0) return;
+            int ty = y - 1, wy = y;
+            // The feet-row cell is clear: plain air, or rock this path dug out (the body stands in it).
+            bool clear = PlainAir(x, wy) || (InSource(x, wy) && (_t.F(x, wy) & (TileCache.Liquid | TileCache.Plat)) == 0);
+            bool anchored = AnchoredFrom(ni, x, wy);
+            if (!clear || !anchored) return;
+            if (HasSupport(x, ty) || BodyHas(x, ty, TileCache.Liquid)) return;
+            Add(ni, x, ty, builds + 1, true, BuildCost + DigPerTile * _digs.Count, MoveKind.BuildPlatform,
+                withDigs: true, wx: x, wy: wy, hasWork: true);
         }
 
         /// <summary>
@@ -872,6 +953,7 @@ public static class Pathfinder
 
         private bool StepSupport(int x, int y)
         {
+            if (RecentlyDug(x, y)) return false;
             ushort f = _t.F(x, y);
             if ((f & TileCache.Block) != 0) return true;
             return (f & TileCache.Plat) != 0 && (_t.F(x, y - 1) & TileCache.Plat) == 0;
@@ -882,17 +964,83 @@ public static class Pathfinder
         /// never got placed and the player jumped and fell back forever.</summary>
         private bool Anchored(int x, int y) =>
             (_t.F(x, y) & TileCache.Wall) != 0
-            || ((_t.F(x - 1, y) | _t.F(x + 1, y) | _t.F(x, y - 1) | _t.F(x, y + 1)) & TileCache.Stand) != 0;
+            || ((Held(x - 1, y) | Held(x + 1, y) | Held(x, y - 1) | Held(x, y + 1)) & TileCache.Stand) != 0;
+
+        /// <summary>Tile flags, except that the cells of the body being expanded are clear (it stands there; this path may
+        /// have dug them out: seen in the fuzz, a climb platform "anchored" to the rock just mined and never placed).</summary>
+        private int Held(int x, int y) => InSource(x, y) ? 0 : _t.F(x, y);
 
         /// <summary><see cref="Anchored"/>, or orthogonally next to the platform this path placed in the step that
         /// reached node <paramref name="ni"/> (the search doesn't write its own platforms into the grid; chained
         /// bridge/climb platforms hang off the previous one).</summary>
         private bool AnchoredFrom(int ni, int x, int y)
         {
-            if (Anchored(x, y)) return true;
+            if ((_t.F(x, y) & TileCache.Wall) != 0) return true;
             ref var n = ref _nodes[ni];
-            return n.Kind is (MoveKind.BuildPlatform or MoveKind.BuildDown) && n.HasWork && Math.Abs(n.WX - x) + Math.Abs(n.WY - y) == 1;
+            if (n.Kind is (MoveKind.BuildPlatform or MoveKind.BuildDown) && n.HasWork && Math.Abs(n.WX - x) + Math.Abs(n.WY - y) == 1)
+                return true;
+            return HeldBy(ni, x - 1, y) || HeldBy(ni, x + 1, y) || HeldBy(ni, x, y - 1) || HeldBy(ni, x, y + 1);
         }
+
+        /// <summary>A standable tile at (x, y) that this path hasn't mined (nor stands in).</summary>
+        private bool HeldBy(int ni, int x, int y) => Holds(x, y);
+
+        /// <summary>
+        /// Tiles mined by the last <see cref="DugLookback"/> steps up to the node being expanded. The search doesn't write
+        /// its digs into the grid, so a tile mined a few steps back still looks solid: a climb platform was planned against
+        /// it (never placeable: the player jumped at the rock it had just mined until Stuck) and a staircase turning back
+        /// stepped onto it ("path changed at Dig" over and over; both seen in the real-terrain fuzz).
+        /// </summary>
+        private readonly List<TilePoint> _recentDigs = new();
+
+        private int _rdX0, _rdY0, _rdX1 = -1, _rdY1 = -1; // bounding box of _recentDigs (empty: x1 < x0)
+        private int _digStamp;          // per expansion; _dugStamp[i] == _digStamp marks a recent dig (window cells)
+        private int[]? _dugStamp;
+
+        private void CollectRecentDigs(int ni)
+        {
+            _recentDigs.Clear();
+            _digStamp++;
+            _rdX0 = _rdY0 = int.MaxValue;
+            _rdX1 = _rdY1 = int.MinValue;
+            int depth = _nodes[ni].Depth;
+            for (int i = _nodes[ni].DigCount > 0 ? ni : _nodes[ni].DigAnc; i > 0 && depth - _nodes[i].Depth < DugLookback; i = _nodes[i].DigAnc)
+            {
+                ref var n = ref _nodes[i];
+                for (int j = 0; j < n.DigCount; j++)
+                {
+                    var t = _digPool[n.DigStart + j];
+                    _recentDigs.Add(t);
+                    if (_t.TryIndex(t.X, t.Y, out int wi))
+                    {
+                        _dugStamp ??= NewStamps();
+                        _dugStamp[wi] = _digStamp;
+                    }
+                    _rdX0 = Math.Min(_rdX0, t.X);
+                    _rdX1 = Math.Max(_rdX1, t.X);
+                    _rdY0 = Math.Min(_rdY0, t.Y);
+                    _rdY1 = Math.Max(_rdY1, t.Y);
+                }
+            }
+        }
+
+        private int[] NewStamps()
+        {
+            var a = ArrayPool<int>.Shared.Rent(_t.Size);
+            Array.Clear(a, 0, _t.Size);
+            return a;
+        }
+
+        private bool RecentlyDug(int x, int y)
+        {
+            if (x < _rdX0 || x > _rdX1 || y < _rdY0 || y > _rdY1) return false;
+            if (_t.TryIndex(x, y, out int wi)) return _dugStamp != null && _dugStamp[wi] == _digStamp;
+            foreach (var t in _recentDigs)
+                if (t.X == x && t.Y == y) return true;
+            return false;
+        }
+
+        private const int DugLookback = 8;
 
         /// <summary>Known empty air (a background wall behind it is fine).</summary>
         private bool PlainAir(int x, int y) => (_t.F(x, y) & ~TileCache.Wall) == TileCache.Computed;
@@ -939,6 +1087,10 @@ public static class Pathfinder
                     int tx = x + dx, ty = y + dy;
                     if (!BodyClear(tx, ty)) continue;
                     if (dx != 0 && dy != 0 && !BodyClear(tx, y) && !BodyClear(x, ty)) continue;
+                    // Rising diagonally in a water jump: the hitbox rises much faster than it drifts sideways (half speed
+                    // in water), so the column straight above must be clear too. Cutting the corner, the head bonked on
+                    // it and the bonk ended the jump (seen in the fuzz: a pool exit one tile beside an overhang, stuck).
+                    if (dx != 0 && dy < 0 && !BodyClear(x, ty)) continue;
                     bool supported = HasSupport(tx, ty);
                     if (!BodyHas(tx, ty, TileCache.Liquid) && !supported) continue;
                     if (dy == 0 && rise < 0 && !supported) continue; // no drifting sideways while sinking
