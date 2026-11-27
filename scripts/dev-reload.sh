@@ -120,12 +120,19 @@ else
   log "game not running"
 fi
 
+# The last character/world loaded, kept so a reload from the title screen (no world open, so the game wrote no
+# autoload file) still comes back to the same world.
+LAST="$(dirname "$AUTOLOAD")/LlmPlayerLastWorld.json"
 if [[ -n "$PLAYER" ]]; then
   write_autoload "$PLAYER" "$WORLD"
   log "wrote $AUTOLOAD (player \"$PLAYER\", world \"$WORLD\")"
 elif [[ -f "$AUTOLOAD" ]]; then
   refresh_autoload || die "could not update $AUTOLOAD"
+elif [[ -f "$LAST" ]]; then
+  cp "$LAST" "$AUTOLOAD" && refresh_autoload || die "could not restore $AUTOLOAD from $LAST"
+  log "no world was open: reloading the last one ($LAST)"
 fi
+[[ -f "$AUTOLOAD" ]] && cp "$AUTOLOAD" "$LAST"
 
 # --- (b) build ------------------------------------------------------------------------------------
 if (( BUILD )); then
