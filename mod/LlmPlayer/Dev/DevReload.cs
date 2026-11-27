@@ -37,6 +37,32 @@ public static class DevCommands
             InWorld = InWorld,
             Autoload = DevAutoloadSystem.Status,
         }, isAction: false, requiresWorld: false);
+
+        // Dev diagnostics (DevCommands only, not an MCP tool): the path move_to would plan from here, and whether a
+        // follower would call it invalidated right away. For debugging navigation bugs seen in game.
+        CommandRouter.Register("dev_plan", p =>
+        {
+            if (!LlmConfig.Current.DevCommands) throw new CommandError("dev_commands_disabled", "dev commands are off");
+            var pl = Main.LocalPlayer;
+            var goal = new LlmPlayer.Core.Grid.TilePoint(Params.Int(p, "x"), Params.Int(p, "y"));
+            int tol = Params.Has(p, "tolerance") ? Params.Int(p, "tolerance") : 1;
+            var grid = new LlmPlayer.Observe.GameTileGrid(pl);
+            var k = LlmPlayer.Core.Nav.NavMath.FromPixels(pl.position.X, pl.position.Y, pl.velocity.X, pl.velocity.Y, pl.height);
+            var here = LlmPlayer.Core.Nav.NavMath.StandingTile(k);
+            var r = LlmPlayer.Core.Nav.Pathfinder.FindPath(grid, here, goal, LlmPlayer.Nav.ProfileBuilder.From(pl),
+                new LlmPlayer.Core.Nav.PathOptions(GoalTolerance: tol));
+            string? firstTick = null;
+            if (r.Success && r.Steps.Count > 0)
+            {
+                var f = new LlmPlayer.Core.Nav.PathFollower(r.Steps, start: here, physics: LlmPlayer.Nav.ProfileBuilder.Physics(pl));
+                firstTick = f.Tick(k, grid).Status.ToString();
+            }
+            return new
+            {
+                From = here, Goal = goal, r.Success, r.FailureReason, r.ResolvedGoal, r.NodesExpanded, FirstTick = firstTick,
+                Steps = r.Steps.Take(40).Select(st => new { st.Kind, st.Pos, st.WorkTile }).ToList(),
+            };
+        }, isAction: false);
     }
 
     private static bool InWorld => !Main.gameMenu && Main.LocalPlayer is { active: true };
