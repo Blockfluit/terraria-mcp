@@ -103,6 +103,16 @@ const TOOLS: ToolDef[] = [
     shape: { x: tileX(), y: tileY(), action: z.enum(["open", "close"]).optional() },
   },
   {
+    name: "drop_item",
+    description:
+      "Throw items out of the inventory onto the ground at your feet, like the vanilla throw key: {item (name or inventory slot), count? (default the whole stack)}. Use it to free slots when the inventory is full (crafted items otherwise drop at your feet). Favorited items are refused." +
+      INSTANT_ACTION,
+    shape: {
+      item: z.string().min(1).describe("Item name (case-insensitive) or inventory slot number"),
+      count: int().min(1).optional().describe("How many, default the whole stack"),
+    },
+  },
+  {
     name: "inspect",
     description:
       "What exactly is on one visible tile: {tile (name or null), solid, cuttable (grass/plants placing replaces), wall, liquid, protected, pickPower}. get_map draws small objects (saplings, rocks, herbs) as '.'; use this when a build or placement says a spot isn't empty." +

@@ -36,6 +36,31 @@ public static class InventoryCommands
             ? EquipToSlot(Main.LocalPlayer, Params.String(p, "item"), Params.Int(p, "slot"))
             : Equip(Main.LocalPlayer, Params.String(p, "item")), isAction: true);
 
+        // Throw items out of the inventory, like the vanilla "throw" key (the stack lands at the player's feet as a
+        // normal dropped item). Frees slots when the inventory is full (seen in game: a crafted bow fell on the floor).
+        CommandRouter.Register("drop_item", p =>
+        {
+            var pl = Main.LocalPlayer;
+            int slot = ItemLookup.FindSlot(pl, Params.String(p, "item"));
+            var it = pl.inventory[slot];
+            if (it.favorited) throw new CommandError(ErrorCodes.BadParams, $"{it.Name} is favorited; refusing to drop it");
+            if (pl.itemAnimation > 0 && slot == pl.selectedItem)
+                throw new CommandError(ErrorCodes.BadParams, $"{it.Name} is being used right now");
+            int count = Params.Has(p, "count") ? Math.Clamp(Params.Int(p, "count"), 1, it.stack) : it.stack;
+            string name = it.Name;
+            var dropped = it.Clone();
+            dropped.stack = count;
+            int idx = Item.NewItem(pl.GetSource_DropAsItem(), pl.getRect(), dropped);
+            if (idx >= 0 && idx < Main.maxItems)
+            {
+                Main.item[idx].noGrabDelay = 100; // like a thrown item: not picked straight back up
+                Main.item[idx].velocity.X = pl.direction * 3f;
+            }
+            it.stack -= count;
+            if (it.stack <= 0) it.TurnToAir();
+            return new { Dropped = name, Count = count, Slot = slot };
+        }, isAction: true);
+
         CommandRouter.Register("unequip", p =>
         {
             bool hasItem = Params.Has(p, "item"), hasSlot = Params.Has(p, "slot");
