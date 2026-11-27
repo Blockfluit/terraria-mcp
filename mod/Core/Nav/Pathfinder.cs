@@ -463,6 +463,15 @@ public static class Pathfinder
             return true;
         }
 
+        /// <summary><see cref="BodyClear"/>, counting the blocks this move mines first (<see cref="_digs"/>) as clear.</summary>
+        private bool BodyClearOrDug(int x, int y)
+        {
+            for (int r = y - 2; r <= y; r++)
+                for (int c = x; c <= x + 1; c++)
+                    if (!Passable(c, r) && !_digs.Contains(new TilePoint(c, r))) return false;
+            return true;
+        }
+
         private bool BodyClear(int x, int y)
         {
             for (int r = y - 2; r <= y; r++)
@@ -882,16 +891,22 @@ public static class Pathfinder
             // Straight down: through a platform underfoot (one from the grid, or the one this path placed: built).
             ushort a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
             bool platformOnly = built || (((a | b) & TileCache.Block) == 0 && ((a | b) & TileCache.Plat) != 0);
+            _digs.Clear();
             if (platformOnly && Passable(x, y + 1) && Passable(x + 1, y + 1) && !SafeFall(x, y + 1, y))
                 Descend(ni, y, x, builds);
             if (built) return; // stepping off a platform this path placed: the grid doesn't know where it ends
             for (int dx = -1; dx <= 1; dx += 2)
             {
                 int tx = x + dx, col = dx > 0 ? x + 2 : x - 1;
-                if (!Passable(col, y) || !Passable(col, y - 1) || !Passable(col, y - 2)) continue;
-                if (HasSupport(tx, y) || BodyHas(tx, y, TileCache.Liquid) || SafeFall(tx, y, y)) continue;
+                // Blocks in the way are mined first (seen in game, corruption chasm: a dirt block at head height on the
+                // rim's only open side left the planner no way down: "unreachable: searched 20000 nodes").
+                _digs.Clear();
+                if (Classify(col, y) < 0 || Classify(col, y - 1) < 0 || Classify(col, y - 2) < 0) continue;
+                if (HasSupport(tx, y) || BodyHas(tx, y, TileCache.Liquid)) continue;
+                if (_digs.Count == 0 && SafeFall(tx, y, y)) continue; // the plain fall covers it
                 Descend(ni, y, tx, builds);
             }
+            _digs.Clear();
         }
 
         /// <summary>Land 1..<see cref="MaxBuildDown"/> rows below source row <paramref name="y"/> in column tx on a
@@ -901,14 +916,15 @@ public static class Pathfinder
             for (int k = 1; k <= MaxBuildDown; k++)
             {
                 int ty = y + k;
-                if (!BodyClear(tx, ty) || BodyHas(tx, ty, TileCache.Liquid)) return;
+                if (!BodyClearOrDug(tx, ty) || BodyHas(tx, ty, TileCache.Liquid)) return;
                 if (k > 1 && HasSupport(tx, ty - 1)) return; // something would catch the feet a row early
                 if (HasSupport(tx, ty)) continue;            // the plain fall/drop covers it
                 for (int wx = tx; wx <= tx + 1; wx++)
                 {
                     int wy = ty + 1;
                     if (!PlainAir(wx, wy) || !AnchoredFrom(ni, wx, wy)) continue;
-                    Add(ni, tx, ty, builds + 1, true, BuildCost + FallCost(k), MoveKind.BuildDown, wx: wx, wy: wy, hasWork: true);
+                    Add(ni, tx, ty, builds + 1, true, BuildCost + FallCost(k) + DigPerTile * _digs.Count, MoveKind.BuildDown,
+                        withDigs: true, wx: wx, wy: wy, hasWork: true);
                     break;
                 }
             }

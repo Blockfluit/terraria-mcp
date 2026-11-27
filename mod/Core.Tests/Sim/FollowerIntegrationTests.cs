@@ -353,7 +353,7 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             var tool = o.Current?.Kind switch
             {
                 MoveKind.Dig => SimTool.Pickaxe,
-                MoveKind.BuildPlatform => SimTool.Platform,
+                MoveKind.BuildPlatform or MoveKind.BuildDown => SimTool.Platform,
                 _ => SimTool.None,
             };
             sim.Step(o.Intent, tool);
