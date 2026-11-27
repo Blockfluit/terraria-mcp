@@ -77,6 +77,50 @@ public class RealTerrainRegressionTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>Seen in game (west caves, 3952,947): a non-swimmer on the bottom at the edge of a pool, the exit a
+    /// half block and a ledge up to the right: stalled 20 s. Origin of the crop: world (3935,930).</summary>
+    [Fact]
+    public void PoolEdgeExitUpRight()
+    {
+        string[] rows =
+        {
+            "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "................##._####r................",
+            "................#.####r..................",
+            ".............................#...........",
+            ".............................#.......##..",
+            ".............................#......####.",
+            "_##_.........................#...../#####",
+            "####.........................#..../######",
+            "####################.........#....#######",
+            "#####........................#._#########",
+            "####.........................############",
+            "#####....................../#############",
+            "####..................../################",
+            "####~~~~~~~~~~~~~~~~~~~~#################",
+            "####~~~~~~~~~~~~~~~~~~~~#################",
+            "####\\~~~~~~~~~~~~~~~~.._#################",
+            "######~~~~~~~~~~~~~~~..P#################",
+            "#####~~~~~~~~~~~~~~_#PP###########.......",
+            "######~~~~~~~~~~~~################.......",
+            "####r~~~~~~~~~~~~################........",
+            "###~~/##~~~~~~~####.#############....##..",
+            "##~_#############.#.#############...####\\",
+            "################......############.######",
+            "##############r........##########...#####",
+            "##############.........###########...q###",
+            "#############..........############_...##",
+            "#############.............###########_..#",
+            "############..............############\\.#",
+            "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+        };
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var move = Walk(g, new(17, 17), new(26, 11), 3000, out var outcome, out var sim);
+        Assert.Equal(MoveOutcome.Arrived, outcome);
+        Assert.Null(sim.Hurt);
+    }
+
     /// <summary>Feet on a half block, a full block one row up beside it: 1.5 tiles, more than vanilla's auto step-up.
     /// The planner used a StepUp and the player stood against the step until Stuck, five times over; now it jumps.</summary>
     [Fact]
