@@ -103,6 +103,24 @@ public sealed class MoveToTask : IGameTask<GameCtx>
 
     public TilePoint Goal => _goal;
 
+    private IReadOnlySet<TilePoint>? _goalSet;
+    private bool _retarget;
+
+    /// <summary>Standing positions that count as arrived as well as the goal (<see cref="PathOptions.GoalSet"/>): the
+    /// plan heads for the cheapest one to reach, the goal only steers it. E.g. every stand within talk range of an NPC.</summary>
+    public IReadOnlySet<TilePoint>? GoalSet { get => _goalSet; init => _goalSet = value is { Count: > 0 } ? value : null; }
+
+    /// <summary>Move the goal (and goal set) of a tile walk, e.g. after the NPC it is about moved: replans at once while
+    /// the current path is followed in the meantime.</summary>
+    public void Retarget(TilePoint goal, IReadOnlySet<TilePoint>? goalSet)
+    {
+        _goal = goal;
+        _goalSet = goalSet is { Count: > 0 } ? goalSet : null;
+        _retarget = true;
+    }
+
+    private bool InGoalSet(TilePoint t) => _goalSet != null && _goalSet.Contains(t);
+
     public GameTaskStatus Tick(GameCtx ctx)
     {
         var p = ctx.Player;
@@ -113,11 +131,16 @@ public sealed class MoveToTask : IGameTask<GameCtx>
 
         int dist = Chebyshev(here, _goal);
         Progress = $"{dist} tiles remaining";
-        if (dist <= _tolerance && k.OnGround) return Finish(ctx, GameTaskStatus.Succeeded, null);
+        if ((dist <= _tolerance || InGoalSet(here)) && k.OnGround) return Finish(ctx, GameTaskStatus.Succeeded, null);
 
         if (_torch != null) return TickTorch(ctx, here);
         if (Torches && _follower != null && TryStartTorch(ctx, k, here)) return GameTaskStatus.Running;
 
+        if (_retarget)
+        {
+            _retarget = false;
+            if (_follower != null || _job != null) StartPlan(p, here); // (re)plan to the new goal; keep following meanwhile
+        }
         if (_job != null) return PollPlan(ctx, k, here);
         if (_follower == null)
         {
@@ -148,7 +171,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                 // A complete plan whose goal was snapped (the requested tile wasn't standable) ends within tolerance
                 // of the snapped goal, maybe 2-4 tiles from _goal: that's as close as the body can get, so done.
                 // Without this the task replanned the same path forever ("2 tiles remaining").
-                if (!_partial && _resolvedGoal is { } rg && Chebyshev(here, rg) <= _tolerance && k.OnGround)
+                if (!_partial && _resolvedGoal is { } rg && (Chebyshev(here, rg) <= _tolerance || InGoalSet(here)) && k.OnGround)
                     return Finish(ctx, GameTaskStatus.Succeeded, null);
                 // Any plan (partial or not) that keeps ending no closer to the goal: give up instead of looping.
                 if (_progress.RecordArrival(Chebyshev(here, _goal)))
@@ -310,7 +333,8 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         var profile = ProfileBuilder.From(p, _allowDig, _allowBuild);
         // Replans stick to the current partial target unless a clearly better one appears (no ping-pong between two).
         var hint = _route.BeforePlan(here, _goal);
-        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig), hint);
+        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig,
+            GoalSet: _goalSet), hint);
     }
 
     private void DropFollower()

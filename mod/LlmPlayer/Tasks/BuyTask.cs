@@ -16,7 +16,7 @@ public sealed record BuyResult(string Npc, string Item, int Bought, int Requeste
 
 /// <summary>
 /// Buy items from a town NPC's shop with the player's own money, the way a player does: walk within talk range
-/// (<see cref="MoveToTask"/> following the NPC), open its chat (as a right-click, <see cref="TalkToNpcTask.OpenChat"/>),
+/// (<see cref="NpcApproach"/>: the nearest reachable stand in range, through walls), open its chat (as a right-click, <see cref="TalkToNpcTask.OpenChat"/>),
 /// open the shop (as the chat's "Shop" button, vanilla <c>Main.OpenShop</c>: inventory open, <c>npcShop = 1</c>,
 /// <c>Chest.SetupShop(shopName, npc)</c>), buy, then close the shop and chat again (as closing the inventory).
 /// <para/>Each unit bought mirrors vanilla's shop-slot click, <c>ItemSlot.HandleShopSlot</c> (tModLoader 1.4.4), step by
@@ -34,12 +34,11 @@ public sealed record BuyResult(string Npc, string Item, int Bought, int Requeste
 /// </summary>
 public sealed class BuyTask : IGameTask<GameCtx>
 {
-    public const int MaxWalks = 6, MaxCount = 999;
+    public const int MaxWalks = NpcApproach.MaxWalks, MaxCount = 999;
 
     private readonly int _npc, _type, _count;
     private readonly string _npcName, _query;
-    private MoveToTask? _move;
-    private int _walks;
+    private readonly NpcApproach _approach;
 
     public string Name => "buy";
     public string? Reason { get; private set; }
@@ -52,6 +51,7 @@ public sealed class BuyTask : IGameTask<GameCtx>
         _type = npc.type;
         _npcName = npc.GivenOrTypeName;
         _query = query;
+        _approach = new NpcApproach(npc, Name);
         _count = count;
     }
 
@@ -61,29 +61,17 @@ public sealed class BuyTask : IGameTask<GameCtx>
         var npc = Main.npc[_npc];
         if (!npc.active || npc.type != _type) return Finish(ctx, GameTaskStatus.Failed, $"{_npcName} is gone");
 
-        if (NpcMath.InTalkRange(p.position.X, p.position.Y, p.width, p.height, Player.tileRangeX, Player.tileRangeY,
-                (int)npc.position.X, (int)npc.position.Y, npc.width, npc.height))
+        if (NpcApproach.InRange(p, npc))
         {
             StopMove(ctx);
             ControlState.Pending = default;
             return Shop(ctx, p, npc);
         }
 
-        if (_move == null)
-        {
-            if (_walks >= MaxWalks)
-                return Finish(ctx, GameTaskStatus.Failed, $"could not get within talk range of {_npcName} (it keeps moving)");
-            _walks++;
-            _move = new MoveToTask(_npc, tolerance: 2, name: Name);
-        }
-        var s = _move.Tick(ctx);
-        Progress = $"walking to {_npcName}" + (_move.Progress is { } mp ? $": {mp}" : "");
-        if (s == GameTaskStatus.Running) return GameTaskStatus.Running;
-        var why = _move.Reason;
-        _move = null;
-        ControlState.Pending = default;
-        if (s != GameTaskStatus.Succeeded) return Finish(ctx, GameTaskStatus.Failed, why ?? $"could not reach {_npcName}");
-        return GameTaskStatus.Running; // arrived: the range check runs next tick
+        var s = _approach.Tick(ctx, out var why);
+        Progress = _approach.Progress;
+        if (s == GameTaskStatus.Failed) return Finish(ctx, GameTaskStatus.Failed, why ?? $"could not reach {_npcName}");
+        return GameTaskStatus.Running; // a walk ended at a stand: the range check runs next tick (walks again if it wandered off)
     }
 
     public void OnCancel(GameCtx ctx)
@@ -206,11 +194,7 @@ public sealed class BuyTask : IGameTask<GameCtx>
         p.SetTalkNPC(-1);
     }
 
-    private void StopMove(GameCtx ctx)
-    {
-        _move?.OnCancel(ctx);
-        _move = null;
-    }
+    private void StopMove(GameCtx ctx) => _approach.Cancel(ctx);
 
     private GameTaskStatus Finish(GameCtx ctx, GameTaskStatus status, string reason)
     {

@@ -28,6 +28,9 @@ const TOGGLE_HINT =
   "The user is driving. Call request_control to take control; if it is refused (the user took control back with Insert), stop and ask the user to press Insert when they want you to continue. Observation tools still work meanwhile.";
 
 const int = () => z.number().int();
+/** talk_to_npc / buy: the NPC by entity_id or by name, exactly one. */
+const oneNpc = (a: Record<string, unknown>) =>
+  (a.entity_id === undefined) === (a.name === undefined) ? "give exactly one of entity_id or name" : undefined;
 const tileX = () => int().describe("Absolute tile x");
 const tileY = () => int().describe("Absolute tile y (grows downward)");
 
@@ -78,7 +81,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_entities",
     description:
-      "Visible NPCs, enemies, critters, dropped items and hostile projectiles near the player (max 30): {id, name, kind: hostile|town|critter|item|projectile, x, y, life, lifeMax, distance}, plus when relevant boss: true, vx/vy (velocity in tiles/second, omitted when still; +y = falling/downward), damage (contact or projectile damage) and defense (hostiles). Ordered bosses first (nearest 10 segments), then threats (hostile NPCs and up to 10 projectiles), then everything else, nearest first within each group. Use id with move_to/attack/talk_to_npc (projectile ids are informational only).",
+      "Visible NPCs, enemies, critters, dropped items and hostile projectiles near the player (max 30): {id, name, kind: hostile|town|critter|item|projectile, x, y, life, lifeMax, distance}, plus when relevant profession (town NPCs with a personal name: e.g. name 'Demetrius', profession 'Arms Dealer'), boss: true, vx/vy (velocity in tiles/second, omitted when still; +y = falling/downward), damage (contact or projectile damage) and defense (hostiles). Ordered bosses first (nearest 10 segments), then threats (hostile NPCs and up to 10 projectiles), then everything else, nearest first within each group. Use id with move_to/attack/talk_to_npc/buy (projectile ids are informational only; talk_to_npc and buy also take the name or profession).",
     shape: { radius: int().min(1).optional().describe("Search radius in tiles, default 40") },
     readOnly: true,
   },
@@ -335,7 +338,7 @@ const TOOLS: ToolDef[] = [
     name: "build_house",
     description:
       "Build a valid town-NPC house (Merchant, Nurse, Demolitionist, Arms Dealer… need one each) with real placement: frame of blocks (floor, walls, ceiling), a door in one side wall, background walls on every inside tile, then a table (or work bench), a chair and a torch. " +
-      "x,y = the bottom-left tile of the frame (floor row); omit both to pick the best visible spot within 30 tiles on ordinary uneven ground, scored by distance and work: ground under at least a third of the floor, floor gaps up to 4 deep get blocks placed over them, natural bumps (dirt/grass/stone, outside protected areas) up to 2 tiles above the floor inside the house or in the door spot are mined first, open air above that, no trees or natural background walls, room to stand outside the door. With x,y the same bump mining applies and dips are built over. Half blocks and slopes in the frame are hammered flat with your hammer (furniture and doors can't stand on them). Default size 10x6 outer (frame included): vanilla's minimum of 60 tiles; height at most 7 so the ceiling stays in reach. The reply lists frameBlocks, floorGapsToFill, mineFirst and flatten. " +
+      "x,y = the bottom-left tile of the frame (floor row); omit both to pick the best visible spot within 30 tiles on ordinary uneven ground, scored by distance and work: ground under at least a third of the floor, floor gaps up to 4 deep get blocks placed over them, natural bumps (dirt/grass/stone, outside protected areas) up to 2 tiles above the floor inside the house or in the door spot are mined first, open air above that, no trees or natural background walls, room to stand outside the door (2 wide, 3 high, on ground). With x,y the same bump mining applies and dips are built over; without door, the door goes on a side with room to stand outside, the side facing you first. Never builds in front of an existing door: a house must leave at least 2 free columns before a neighbouring door (two houses with 1 tile between them make one unreachable). Half blocks and slopes in the frame are hammered flat with your hammer (furniture and doors can't stand on them). Default size 10x6 outer (frame included): vanilla's minimum of 60 tiles; height at most 7 so the ceiling stays in reach. The reply lists frameBlocks, floorGapsToFill, mineFirst and flatten. " +
       "Materials come from your inventory: blocks for the frame (Wood first, then other wood, Stone, bricks, Dirt…; existing blocks in the frame's place are kept), owned doors/tables/chairs/torches/house walls first. What is missing is crafted first when possible (Wood Wall/Dirt Wall/Stone Wall 4 per block, Wooden Door, Chair, Table at a Work Bench in range; Work Bench as the table and Torch from Gel+Wood need no station). " +
       "If anything is short it fails up front with missing_item listing exact counts and where to get them; a site that isn't clear fails with bad_params naming the tile (tree: chop_tree it or pick another spot). " +
       "The player stands inside while building and walks out through the door at the end (move_to opens/closes doors). Then vanilla's housing query runs: succeeded = valid house; failed = built but vanilla's reason (e.g. missing walls). report.result: {x, y, width, height, door, valid, reason?, placed {frame block, flattened block, door, background wall, table, chair, torch}, skipped, skippedReasons, exitedThroughDoor, housing}." +
@@ -346,7 +349,7 @@ const TOOLS: ToolDef[] = [
       y: tileY().optional().describe("Floor row of the house frame (its bottom row)"),
       width: int().min(8).max(30).optional().describe("Outer width incl. frame, default 10"),
       height: int().min(5).max(7).optional().describe("Outer height incl. frame, default 6"),
-      door: z.enum(["left", "right"]).optional().describe("Side wall for the door; default the side facing the player"),
+      door: z.enum(["left", "right"]).optional().describe("Side wall for the door; default a side with room to stand outside (2 wide, 3 high), the one facing the player first"),
     },
     check: (a) => ((a.x === undefined) === (a.y === undefined) ? undefined : "give both x and y, or neither"),
   },
@@ -436,20 +439,26 @@ const TOOLS: ToolDef[] = [
   {
     name: "talk_to_npc",
     description:
-      "Walk within talk range of a visible town NPC and open its chat. When the task succeeds, wait_for_task's report.result is {name, chat, shop?: [{name, price}]} (shop only if the NPC sells things; price after happiness discounts, e.g. '1 gold 50 silver'). Use buy to purchase." +
+      "Walk within talk range of a visible town NPC and open its chat. Pick the NPC by entity_id or by name (personal name like 'Demetrius' or profession like 'Arms Dealer', case-insensitive; the nearest visible match). Talk range is vanilla's (about 5 tiles across and 4 up/down from your centre) and works through walls: the walk goes to the nearest reachable spot within range, e.g. outside the NPC's house when its door is shut off. Fails with a hint if no such spot is reachable (wait for the NPC to come outside, or build a way/platform). When the task succeeds, wait_for_task's report.result is {name, chat, shop?: [{name, price}]} (shop only if the NPC sells things; price after happiness discounts, e.g. '1 gold 50 silver'). Use buy to purchase." +
       STARTS_TASK,
-    shape: { entity_id: int().describe("Town NPC id from get_entities") },
+    shape: {
+      entity_id: int().optional().describe("Town NPC id from get_entities"),
+      name: z.string().min(1).optional().describe("Instead of entity_id: the NPC's name or profession, e.g. 'Demetrius' or 'Arms Dealer'"),
+    },
+    check: oneNpc,
   },
   {
     name: "buy",
     description:
-      "Buy `count` of an item from a visible town NPC's shop with your own coins: walks to the NPC, opens its shop, buys through the game's normal shop purchase (price includes happiness and discounts), then closes the shop. All of the NPC's shops are searched. Stops early if money or inventory space runs out (still succeeds if at least one was bought). report.result: {npc, item, bought, requested, spent, stopped}. Use talk_to_npc first to see the shop and prices. Selling is not supported." +
+      "Buy `count` of an item from a visible town NPC's shop with your own coins: walks within talk range of the NPC (as talk_to_npc: through walls, from the nearest reachable spot), opens its shop, buys through the game's normal shop purchase (price includes happiness and discounts), then closes the shop. All of the NPC's shops are searched. Stops early if money or inventory space runs out (still succeeds if at least one was bought). report.result: {npc, item, bought, requested, spent, stopped}. Use talk_to_npc first to see the shop and prices. Selling is not supported." +
       STARTS_TASK,
     shape: {
-      entity_id: int().describe("Town NPC id from get_entities"),
+      entity_id: int().optional().describe("Town NPC id from get_entities"),
+      name: z.string().min(1).optional().describe("Instead of entity_id: the NPC's name or profession, e.g. 'Merchant'"),
       item: z.string().min(1).describe("Item name as the shop lists it (case-insensitive)"),
       count: int().min(1).max(999).optional().describe("How many, default 1"),
     },
+    check: oneNpc,
   },
 
   // Chests, beds
