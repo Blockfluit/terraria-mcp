@@ -385,8 +385,12 @@ public static class BlastPlanner
     /// <summary>A real floor (block or platform) under the body: standing "on" liquid sinks the player to the bottom
     /// (seen in game: the planned stand was on a flooded crater's surface, the player sank a row, and the re-aim from
     /// there found no throw, three replans in a row).</summary>
-    private static bool FloorUnder(ITileGrid g, TilePoint s) =>
-        g.Get(s.X, s.Y + 1).Kind is TileKind.Solid or TileKind.Platform || g.Get(s.X + 1, s.Y + 1).Kind is TileKind.Solid or TileKind.Platform;
+    /// Half blocks and slopes don't count either: resting only on one, the body sits up to half a tile lower than the
+    /// throw model assumes (seen in game next to the same crater: a half block beside water, the same failure).
+    private static bool FloorUnder(ITileGrid g, TilePoint s) => FullFloor(g.Get(s.X, s.Y + 1)) || FullFloor(g.Get(s.X + 1, s.Y + 1));
+
+    private static bool FullFloor(TileInfo t) =>
+        t.Kind == TileKind.Platform || (t.Kind == TileKind.Solid && !t.HalfBlock && t.Slope == TileSlope.None);
 
     private static bool BodyKnownAndDry(ITileGrid g, TilePoint s)
     {

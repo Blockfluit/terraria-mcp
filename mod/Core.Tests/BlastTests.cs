@@ -462,12 +462,15 @@ public class BlastStandTests
     {
         var rows = new string[24];
         for (int y = 0; y < 24; y++)
-            rows[y] = y < 16 ? new string('.', 40) : y == 16 ? new string('~', 14) + new string('#', 26) : new string('#', 40);
+            rows[y] = y < 16 ? new string('.', 40) : y == 16 ? new string('~', 14) + "____" + new string('#', 22) : new string('#', 40);
         var g = ArrayTileGrid.Parse(rows).Grid;
         var plan = BlastPlanner.Plan(g, new TilePoint(20, 15), new TilePoint(26, 16), Explosives.Spec(ExplosiveKind.StickyBomb), out var why);
         Assert.True(plan != null, why);
         var k = g.Get(plan!.Stand.X, plan.Stand.Y + 1).Kind;
         var k2 = g.Get(plan.Stand.X + 1, plan.Stand.Y + 1).Kind;
-        Assert.True(k == TileKind.Solid || k2 == TileKind.Solid, $"stand {plan.Stand} has no floor");
+        var a = g.Get(plan.Stand.X, plan.Stand.Y + 1);
+        var b = g.Get(plan.Stand.X + 1, plan.Stand.Y + 1);
+        Assert.True((a.Kind == TileKind.Solid && !a.HalfBlock) || (b.Kind == TileKind.Solid && !b.HalfBlock),
+            $"stand {plan.Stand} has no full floor ({k}/{k2})");
     }
 }
