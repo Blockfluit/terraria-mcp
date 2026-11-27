@@ -22,23 +22,26 @@ public interface IUninterruptibleTask
 /// <c>use_item</c>, <c>open_chest</c> and <c>use_bed</c> (walking there; the right-click is instant). A paused task is simply not ticked; all their timers count their own ticks, so a defence doesn't
 /// use up a swing timeout, pickup deadline or stuck counter. A swing in progress finishes before the defender
 /// switches to its weapon (HeldItemLease waits for the use to end).</item>
-/// <item>Busy: <c>attack</c> (it fights already), any task reporting <see cref="IUninterruptibleTask.Uninterruptible"/>
-/// (use_item once it pressed "use"), and any unknown task (safe default).</item>
+/// <item>Busy: <c>attack</c> (it fights already) and any task reporting <see cref="IUninterruptibleTask.Uninterruptible"/>
+/// (use_item once it pressed "use"). Everything else, including unknown/new tasks (explore_caves, collect,
+/// loot_chest, …), is Defendable.</item>
 /// </list>
 /// </summary>
 public static class TaskPhases
 {
-    private static readonly HashSet<string> Defendable = new(StringComparer.Ordinal)
-    {
-        "move_to", "explore", "talk_to_npc", "chop_tree", "mine", "mine_area", "pick_up_items", "place", "use_item",
-        "open_chest", "use_bed", "mine_vein", "build_platforms", "buy", "build_house",
-    };
+    /// <summary>Tasks that fight by themselves: auto-defend never takes over from them.</summary>
+    private static readonly HashSet<string> Fighting = new(StringComparer.Ordinal) { "attack" };
 
+    /// <summary>
+    /// Every other task is Defendable by default: a new task that was never added to an allow-list used to count as
+    /// Busy, so nobody fought back (seen in game: slimes killed the player during explore_caves). Tasks that truly
+    /// must not be interrupted mid-action say so with <see cref="IUninterruptibleTask"/>.
+    /// </summary>
     public static TaskPhase Of(string? taskName) => taskName switch
     {
         null or "wait" => TaskPhase.Idle,
-        _ when Defendable.Contains(taskName) => TaskPhase.Defendable,
-        _ => TaskPhase.Busy,
+        _ when Fighting.Contains(taskName) => TaskPhase.Busy,
+        _ => TaskPhase.Defendable,
     };
 
     public static TaskPhase Of<TCtx>(IGameTask<TCtx>? task) =>

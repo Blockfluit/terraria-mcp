@@ -280,8 +280,11 @@ public class TaskPhasesTests
     [InlineData("place", TaskPhase.Defendable)]
     [InlineData("use_item", TaskPhase.Defendable)]
     [InlineData("attack", TaskPhase.Busy)]
-    [InlineData("some_future_task", TaskPhase.Busy)]
-    [InlineData("Chop_Tree", TaskPhase.Busy)]
+    [InlineData("some_future_task", TaskPhase.Defendable)]
+    [InlineData("explore_caves", TaskPhase.Defendable)]
+    [InlineData("collect", TaskPhase.Defendable)]
+    [InlineData("loot_chest", TaskPhase.Defendable)]
+    [InlineData("Chop_Tree", TaskPhase.Defendable)]
     public void ByName(string? name, TaskPhase expected) => Assert.Equal(expected, TaskPhases.Of(name));
 
     private sealed class FakeTask(string name) : IGameTask<object>
