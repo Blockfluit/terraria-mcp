@@ -23,9 +23,9 @@ public enum SimTool { None, Pickaxe, Platform }
 /// <item>Water: gravity 0.2, max fall 5, jump 6.01 x30, displacement halved. No swimming without Flippers: a jump
 /// still needs velocity.Y == 0 (the bottom). Leaving water cuts the remaining jump to 30/5 ticks.</item>
 /// <item>Fall damage as vanilla: fallStart resets while jumping/wet/on ground; landing more than 25 tiles below it hurts.</item>
-/// <item>Tools: reach is vanilla's tileRangeX/Y = 5/4 box with the pickaxe's tileBoost (-1 here, like early picks).
+/// <item>Tools: reach is vanilla's tileRangeX/Y = 5/4 box with the item's tileBoost (pickaxe -1 here, like early picks; platforms 0).
 /// Pickaxe on a tile with enough power breaks it after <see cref="DigTicks"/> ticks of use; platforms are placed into
-/// an empty tile next to any tile (3x3), every <see cref="PlatformUseTime"/> ticks, inside the hitbox allowed.
+/// an empty tile orthogonally next to a tile (or with a background wall), every <see cref="PlatformUseTime"/> ticks, inside the hitbox allowed.
 /// Using the wrong tool on a tile (e.g. a platform on a solid block, which vanilla would swap) counts as misuse.</item>
 /// <item>Doors (Interact, within the 5/4 interaction box): a closed door's whole column of door tiles becomes air
 /// (WorldGen.OpenDoor; the swing column isn't modelled: an open door is passable anyway); interacting with an open
@@ -53,6 +53,8 @@ public sealed class MiniPhysics
     /// <summary>Hitbox top-left (px) and velocity (px/tick).</summary>
     public float X, Y, VX, VY;
     public int PickPower = 35, DigTicks = 30, Platforms = 100, PlatformUseTime = 10, TileBoost = -1;
+    /// <summary>Wood Platforms have no tileBoost (reach 3 rows below the feet); <see cref="TileBoost"/> is the pickaxe's.</summary>
+    public int PlatformTileBoost = 0;
     public int Ticks { get; private set; }
     public readonly List<TilePoint> Mined = new(), Placed = new();
     public int Misuse { get; private set; }
@@ -252,7 +254,7 @@ public sealed class MiniPhysics
     private void UseItem(ControlIntent c, SimTool tool)
     {
         if (_itemTime > 0) _itemTime--;
-        if (!c.UseItem || c.CursorTile is not { } t || !InReach(t)) return;
+        if (!c.UseItem || c.CursorTile is not { } t || !InReach(t, tool == SimTool.Platform ? PlatformTileBoost : TileBoost)) return;
         var info = _g.Get(t);
         switch (tool)
         {
@@ -322,19 +324,19 @@ public sealed class MiniPhysics
         && (Y + H) / 16f + TileRangeY - 2f >= t.Y;
 
     /// <summary>Vanilla PlaceThing_Tiles / mining reach box (blockRange 0).</summary>
-    public bool InReach(TilePoint t) =>
-        X / 16f - TileRangeX - TileBoost <= t.X
-        && (X + W) / 16f + TileRangeX + TileBoost - 1f >= t.X
-        && Y / 16f - TileRangeY - TileBoost <= t.Y
-        && (Y + H) / 16f + TileRangeY + TileBoost - 2f >= t.Y;
+    public bool InReach(TilePoint t) => InReach(t, TileBoost);
 
-    private bool HasAnchor(TilePoint t)
-    {
-        for (int dy = -1; dy <= 1; dy++)
-            for (int dx = -1; dx <= 1; dx++)
-                if ((dx != 0 || dy != 0) && _g.Get(t.X + dx, t.Y + dy).IsStandable) return true;
-        return false;
-    }
+    public bool InReach(TilePoint t, int boost) =>
+        X / 16f - TileRangeX - boost <= t.X
+        && (X + W) / 16f + TileRangeX + boost - 1f >= t.X
+        && Y / 16f - TileRangeY - boost <= t.Y
+        && (Y + H) / 16f + TileRangeY + boost - 2f >= t.Y;
+
+    /// <summary>Vanilla: a tile on one of the 4 sides, or a background wall behind it (diagonals don't count).</summary>
+    private bool HasAnchor(TilePoint t) =>
+        _g.Get(t).Wall
+        || _g.Get(t.X - 1, t.Y).IsStandable || _g.Get(t.X + 1, t.Y).IsStandable
+        || _g.Get(t.X, t.Y - 1).IsStandable || _g.Get(t.X, t.Y + 1).IsStandable;
 
     private bool Solid(int x, int y) => _g.Get(x, y).Kind == TileKind.Solid;
     private TileKind Kind(int x, int y) => _g.Get(x, y).Kind;

@@ -2,10 +2,10 @@ using LlmPlayer.Core.Grid;
 
 namespace LlmPlayer.Core.Nav;
 
-public enum MoveKind { Walk, StepUp, Jump, Fall, DropThrough, Swim, Dig, BuildPlatform, OpenDoor, CloseDoor }
+public enum MoveKind { Walk, StepUp, Jump, Fall, DropThrough, Swim, Dig, BuildPlatform, OpenDoor, CloseDoor, BuildDown }
 
 /// <summary>One step of a path. Pos is the standing position (feet-left tile) after the step.
-/// WorkTile is the tile to dig (Dig), place a platform on (BuildPlatform) or the door tile to open/close
+/// WorkTile is the tile to dig (Dig), place a platform on (BuildPlatform, BuildDown) or the door tile to open/close
 /// (OpenDoor/CloseDoor: Pos = the previous position, the player stands still and interacts).</summary>
 public readonly record struct PathStep(TilePoint Pos, MoveKind Kind, TilePoint? WorkTile = null);
 

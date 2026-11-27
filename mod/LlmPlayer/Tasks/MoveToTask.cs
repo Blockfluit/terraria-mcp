@@ -243,7 +243,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         int slot = step?.Kind switch
         {
             MoveKind.Dig => HeldItemLease.BestPickaxe(p),
-            MoveKind.BuildPlatform => HeldItemLease.BuildItem(p),
+            MoveKind.BuildPlatform or MoveKind.BuildDown => HeldItemLease.BuildItem(p),
             _ => -2,
         };
         if (slot == -2) return true;
