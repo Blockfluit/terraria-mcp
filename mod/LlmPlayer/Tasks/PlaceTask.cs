@@ -87,7 +87,7 @@ public sealed class PlaceTask : IGameTask<GameCtx>
             _moves++;
             _attemptTick = 0;
             var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-            var here = NavMath.StandingTile(k);
+            var here = NavMath.StandingTile(k, ctx.Grid);
             _move = overlaps
                 ? new MoveToTask(ReachMath.StepAsideGoal(here, _target), tolerance: 1, name: Name)
                 : new MoveToTask(_target, tolerance: 3, name: Name);

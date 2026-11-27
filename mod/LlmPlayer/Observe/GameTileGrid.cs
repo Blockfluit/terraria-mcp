@@ -17,6 +17,7 @@ namespace LlmPlayer.Observe;
 /// <item>Trees 'T', chests/containers 'C', crafting stations 'W', other multi-tile objects 'F' (their Kind is
 /// Platform if you can stand on them (solidTop), else Solid or Air); ores get lowercase letters from
 /// <see cref="OreGlyphs"/> with Name = the localized tile name.</item>
+/// <item>Solid blocks carry their shape (<see cref="TileInfo.Slope"/>, <see cref="TileInfo.HalfBlock"/>).</item>
 /// <item>Hazard: tiles that hurt on touch (<c>TileID.Sets.TouchDamageImmediate</c> &gt; 0: spikes, wooden spikes,
 /// thorns, cactus…). Hot tiles (hellstone, meteorite) aren't hazards; they only hurt without fire immunity.</item>
 /// <item>Liquid at least half full in a non-solid cell → Water / Lava / Honey. Shimmer → Hazard (it drops you
@@ -116,9 +117,13 @@ public sealed class GameTileGrid : ITileGrid
 
             if (Main.tileSolid[type] && !Main.tileSolidTop[type])
             {
+                // Shape (vanilla Tile.Slope / IsHalfBlock): world gen slopes most hill and cave edges.
+                var slope = (TileSlope)(byte)tile.Slope;
+                bool half = tile.IsHalfBlock;
                 return TileClass.IsOre(type)
-                    ? new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot, OreGlyphs.For(type), TileClass.Name(type))
-                    : new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot);
+                    ? new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot, OreGlyphs.For(type), TileClass.Name(type),
+                        Slope: slope, HalfBlock: half)
+                    : new TileInfo(TileKind.Solid, PickPower(type, x, y, tile), prot, Slope: slope, HalfBlock: half);
             }
             // Non-solid decoration (plants, torches, vines): passable; falls through to the liquid check.
         }

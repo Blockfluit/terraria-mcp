@@ -488,7 +488,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     private static TilePoint Here(GameCtx ctx)
     {
         var p = ctx.Player;
-        return NavMath.StandingTile(NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height));
+        return NavMath.StandingTile(NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height), ctx.Grid);
     }
 
     private int Along(TilePoint d) => _dir switch

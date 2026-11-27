@@ -119,7 +119,7 @@ internal sealed class TileWorker
         {
             if (++_approaches > MaxApproaches) return Fail(ctx, $"couldn't get within reach of {_target}");
             var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-            var here = NavMath.StandingTile(k);
+            var here = NavMath.StandingTile(k, ctx.Grid);
             // Prefer a spot with reach to spare; fall back to the exact edge of reach before giving up on stands.
             var stand = StandFinder.Best(ctx.Grid, here, _target, reach, _pending, _approachMargin)
                         ?? (_approachMargin > 1f ? StandFinder.Best(ctx.Grid, here, _target, reach, _pending) : null)

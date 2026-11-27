@@ -123,7 +123,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "inspect",
     description:
-      "What exactly is on one visible tile: {tile (name or null), solid, cuttable (grass/plants placing replaces), wall, liquid, protected, pickPower}. get_map draws small objects (saplings, rocks, herbs) as '.'; use this when a build or placement says a spot isn't empty." +
+      "What exactly is on one visible tile: {tile (name or null), solid, cuttable (grass/plants placing replaces), wall, liquid, protected, pickPower, shape (sloped or half block; null for a full block)}. get_map draws small objects (saplings, rocks, herbs) as '.'; use this when a build or placement says a spot isn't empty." +
       COORDS,
     shape: { x: tileX(), y: tileY() },
     readOnly: true,

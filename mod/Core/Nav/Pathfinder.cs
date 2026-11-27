@@ -10,7 +10,9 @@ namespace LlmPlayer.Core.Nav;
 ///
 /// Step semantics (what a follower should do to execute each step):
 /// <list type="bullet">
-/// <item>Walk: move horizontally one tile onto supported ground.</item>
+/// <item>Walk: move horizontally one tile onto supported ground; also one tile up a floor slope climbing that way or
+/// onto a half block, or one tile down where a slope / half block keeps the feet on the surface (vanilla's slope
+/// collision and StepDown: no jump, no fall).</item>
 /// <item>StepUp: move one tile sideways and one up (Terraria auto-steps 1-tile ledges; onto a platform only while
 /// holding Up, and not onto a platform with another one right above it).</item>
 /// <item>Jump: from the previous position jump and steer to Pos. Clearance was checked for a
@@ -89,25 +91,42 @@ public static class Pathfinder
     /// <summary>
     /// The 2-tile-wide body model can put a start cell inside a block the real 1.25-tile hitbox doesn't touch (seen in
     /// game: standing left of a 1-tile sand step, the feet-left tile's body covered the sand; the search treats start
-    /// cells as clear and planned to walk through it). If the start body overlaps a blocking tile, use the neighbouring
-    /// column (left, then right) where the body fits.
+    /// cells as clear and planned to walk through it). If the start body overlaps a blocking tile, use a neighbouring
+    /// cell where the body fits: one row up when only floor slopes / half blocks in the feet row are in the way (the
+    /// feet ride on them, sunk into their row), else the column to the left, then the right, then those one row up
+    /// (again only past floor slopes / half blocks).
     /// </summary>
     public static TilePoint NormalizeStart(ITileGrid grid, TilePoint start)
     {
         if (BodyFits(grid, start)) return start;
+        bool lowFeet = OnlyLowTopsInFeetRow(grid, start);
+        var up = new TilePoint(start.X, start.Y - 1);
+        if (lowFeet && BodyFits(grid, up)) return up;
         foreach (int dx in new[] { -1, 1 })
         {
             var c = new TilePoint(start.X + dx, start.Y);
             if (BodyFits(grid, c)) return c;
         }
+        if (lowFeet)
+            foreach (int dx in new[] { -1, 1 })
+            {
+                var c = new TilePoint(start.X + dx, start.Y - 1);
+                if (BodyFits(grid, c)) return c;
+            }
         return start;
     }
 
-    private static bool BodyFits(ITileGrid grid, TilePoint p)
+    private static bool BodyFits(ITileGrid grid, TilePoint p) => NavMath.BodyClear(grid, p);
+
+    /// <summary>Every blocking tile of the body at p is a floor slope or half block in its feet row.</summary>
+    private static bool OnlyLowTopsInFeetRow(ITileGrid grid, TilePoint p)
     {
         for (int dy = 0; dy < 3; dy++)
             for (int dx = 0; dx < 2; dx++)
-                if (grid.Get(p.X + dx, p.Y - dy).BlocksBody) return false;
+            {
+                var t = grid.Get(p.X + dx, p.Y - dy);
+                if (t.BlocksBody && !(dy == 0 && t.IsLowTop)) return false;
+            }
         return true;
     }
 
@@ -557,13 +576,19 @@ public static class Pathfinder
 
             // A platform this path just placed under the target body holds it: that is no fall (bridging still works).
             if (!PlannedUnder(ni, tx, y) && FallScan(tx, y, out int ly, out bool lq) && (lq || FallOk(ly - y)))
-                Add(ni, tx, ly, builds, false, FallCost(ly - y), MoveKind.Fall);
+            {
+                // One row down along a slope or off / onto a half block: vanilla keeps the feet on the surface
+                // (Collision.StepDown), so it's a walk the follower can flow through at full speed.
+                if (!lq && ly == y + 1 && (LowTopUnder(x, y) || LowTopUnder(tx, ly)))
+                    Add(ni, tx, ly, builds, false, WalkCost, MoveKind.Walk);
+                else Add(ni, tx, ly, builds, false, FallCost(ly - y), MoveKind.Fall);
+            }
 
             // Bridge: place a platform under the target's inner column, next to our support.
             if (_canBuild && builds < _buildCap)
             {
                 int wx = dx > 0 ? x + 1 : x, wy = y + 1;
-                if (PlainAirOrLiquid(wx, wy) && AnchoredFrom(ni, wx, wy))
+                if (PlainAirOrLiquid(wx, wy) && AnchoredFrom(ni, wx, wy) && !SunkBelowBridge(dx > 0 ? x : x + 1, wy, dx))
                     Add(ni, tx, y, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: wx, wy: wy, hasWork: true);
             }
         }
@@ -580,6 +605,13 @@ public static class Pathfinder
             // Vanilla auto-steps onto solid blocks; onto a platform only while Up is held (the follower does) and
             // never when another platform sits right above it.
             if (!StepSupport(tx, y) && !StepSupport(tx + 1, y)) return;
+            // A rise made of a floor slope climbing our way or a half block is a plain walk in vanilla (the slope
+            // lifts the hitbox as it moves; a half block is a half-tile step).
+            if (_digs.Count == 0 && SmoothRise(tx, y, dx))
+            {
+                Add(ni, tx, ty, builds, false, WalkCost, MoveKind.Walk);
+                return;
+            }
             Add(ni, tx, ty, builds, false, StepUpCost + DigPerTile * _digs.Count, MoveKind.StepUp, withDigs: true);
         }
 
@@ -807,6 +839,37 @@ public static class Pathfinder
             return n.Built && n.HasWork && n.WY == y + 1 && (n.WX == tx || n.WX == tx + 1);
         }
 
+        /// <summary>Every block in row y under the body at column tx (stepping in direction dx) is a half block or a floor
+        /// slope climbing in direction dx, and there is at least one.</summary>
+        private bool SmoothRise(int tx, int y, int dx)
+        {
+            bool any = false;
+            for (int c = tx; c <= tx + 1; c++)
+            {
+                ushort f = _t.F(c, y);
+                if ((f & TileCache.Block) == 0) continue;
+                if ((f & TileCache.LowTop) == 0) return false;
+                bool slope = (f & (TileCache.RisesRight | TileCache.RisesLeft)) != 0;
+                if (slope && (f & (dx > 0 ? TileCache.RisesRight : TileCache.RisesLeft)) == 0) return false;
+                any = true;
+            }
+            return any;
+        }
+
+        /// <summary>The feet standing on block (x, y) sit below a platform placed next to it in direction dx: a half block,
+        /// or a slope falling toward the gap. The platform's top is then above the feet and walking on doesn't climb
+        /// it (seen in the sim: the player slid down the slope under the new platform and into the pit).</summary>
+        private bool SunkBelowBridge(int x, int y, int dx)
+        {
+            ushort f = _t.F(x, y);
+            if ((f & TileCache.LowTop) == 0) return false;
+            if ((f & (TileCache.RisesRight | TileCache.RisesLeft)) == 0) return true; // half block
+            return (f & (dx > 0 ? TileCache.RisesLeft : TileCache.RisesRight)) != 0;
+        }
+
+        /// <summary>A half block or floor slope in the support row of the body at (x, y).</summary>
+        private bool LowTopUnder(int x, int y) => ((_t.F(x, y + 1) | _t.F(x + 1, y + 1)) & TileCache.LowTop) != 0;
+
         private bool StepSupport(int x, int y)
         {
             ushort f = _t.F(x, y);
@@ -932,7 +995,10 @@ public static class Pathfinder
     private sealed class TileCache : IDisposable
     {
         public const ushort Computed = 1, Block = 2, Stand = 4, Plat = 8, Liquid = 16, Deadly = 32, Unknown = 64, Diggable = 128,
-            Door = 256, Wall = 512, Occupied = 1024;
+            Door = 256, Wall = 512, Occupied = 1024,
+            // Shaped solid blocks (still Block|Stand): LowTop = half block or floor slope; RisesRight / RisesLeft = a
+            // floor slope whose surface climbs toward the right (vanilla SlopeDownRight) / the left (SlopeDownLeft).
+            LowTop = 2048, RisesRight = 4096, RisesLeft = 8192;
         private const int Margin = 128, MaxDim = 1024;
 
         private readonly ITileGrid _g;
@@ -1055,6 +1121,9 @@ public static class Pathfinder
                     b |= Block | Stand;
                     if (_pick > 0 && !t.Protected && t.PickPowerRequired <= _pick) b |= Diggable;
                     if (t.Door) b |= Door;
+                    if (t.IsLowTop) b |= LowTop;
+                    if (t.Slope == TileSlope.DownRight) b |= RisesRight;
+                    else if (t.Slope == TileSlope.DownLeft) b |= RisesLeft;
                     break;
                 case TileKind.Platform: b |= Stand | Plat; break;
                 case TileKind.Water:

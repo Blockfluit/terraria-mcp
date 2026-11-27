@@ -141,4 +141,69 @@ public class MiniPhysicsTests
         }
         Assert.True(best > 5 * 16 + 20 * 16, $"rose to y={best / 16f}"); // never got near the surface
     }
+
+    [Fact]
+    public void SlopeHill_WalkedUpAndDownOnTheGround()
+    {
+        var (g, m) = FollowerIntegrationTests.SlopeHill().Parse();
+        var sim = new MiniPhysics(g, m['S']);
+        int airborne = 0;
+        float minBottom = float.MaxValue;
+        for (int i = 0; i < 400 && sim.X < 32 * 16; i++)
+        {
+            sim.Step(new ControlIntent { Right = true });
+            if (!sim.Kinematics.OnGround) airborne++;
+            minBottom = Math.Min(minBottom, sim.Y + MiniPhysics.H);
+        }
+        Assert.Equal(10 * 16, minBottom);           // up on the 4-wide top (row 10)
+        Assert.Equal(0, airborne);                  // the slopes carry the hitbox up and down: never in the air
+        Assert.True(sim.VX > 2.5f, $"slowed down: {sim}");
+        for (int i = 0; i < 40; i++) sim.Step(default);
+        Assert.Equal(15, sim.StandingTile.Y);       // back on the flat ground
+    }
+
+    [Fact]
+    public void SlopeHill_StandingStillOnSlope_DoesNotSlide()
+    {
+        var (g, m) = FollowerIntegrationTests.SlopeHill().Parse();
+        var sim = new MiniPhysics(g, m['S']);
+        while (sim.X < 12.3f * 16) sim.Step(new ControlIntent { Right = true });
+        for (int i = 0; i < 60; i++) sim.Step(default);
+        float x = sim.X, y = sim.Y;
+        for (int i = 0; i < 60; i++) sim.Step(default);
+        Assert.Equal(x, sim.X);
+        Assert.Equal(y, sim.Y);
+        Assert.True(sim.Kinematics.OnGround);
+        // The feet are inside a slope's row; the standing tile is the body on top of it.
+        Assert.True(Pathfinder.CanStand(g, sim.StandingTile), $"{sim}");
+    }
+
+    [Fact]
+    public void HalfBlock_IsAHalfTileStep()
+    {
+        var (g, m) = new GridBuilder(40, 10).Fill(0, 8, 39, 9, '#').Fill(10, 7, 20, 7, '_').Put(2, 7, 'S').Parse();
+        var sim = new MiniPhysics(g, m['S']);
+        int airborne = 0;
+        for (int i = 0; i < 90; i++)
+        {
+            sim.Step(new ControlIntent { Right = true });
+            if (!sim.Kinematics.OnGround) airborne++;
+        }
+        Assert.True(sim.X > 12 * 16 && sim.X < 18 * 16, $"{sim}");
+        Assert.Equal(7 * 16 + 8, sim.Y + MiniPhysics.H); // on the half block's top
+        Assert.Equal(0, airborne);
+        Assert.Equal(new TilePoint(sim.StandingTile.X, 6), sim.StandingTile);
+    }
+
+    [Fact]
+    public void SlopeWallSide_StepsUpLikeABlock()
+    {
+        // Walking right into a slope high on the left: its full-height left side is a 1-tile step.
+        var (g, m) = new GridBuilder(30, 10).Fill(0, 8, 29, 9, '#').Put(10, 7, '\\').Fill(11, 7, 29, 7, '#')
+            .Put(2, 7, 'S').Parse();
+        var sim = new MiniPhysics(g, m['S']);
+        for (int i = 0; i < 90; i++) sim.Step(new ControlIntent { Right = true });
+        Assert.Equal(6, sim.StandingTile.Y);
+        Assert.True(sim.X > 12 * 16);
+    }
 }

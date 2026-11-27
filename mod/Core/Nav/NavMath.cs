@@ -12,6 +12,45 @@ public static class NavMath
     public static TilePoint StandingTile(PlayerKinematics k) =>
         new((int)MathF.Round(k.X - PlayerPhysics.CenterOffset), (int)MathF.Floor(k.Y + 1f - 1f / 16f));
 
+    /// <summary>
+    /// <see cref="StandingTile(PlayerKinematics)"/> that knows about floor slopes and half blocks: a hitbox riding one
+    /// has its feet up to (almost) a tile below the block's top, inside the block's own row, so the plain feet row is
+    /// that row and the 2x3 body would overlap the block. Then the body really stands on it, one row up (a clear,
+    /// supported body there; the neighbouring column on the hitbox's side if the rounded one has no support). Seen in game: on a sloped hillside the plain tile overlapped the slope, the planner exempted
+    /// the start cells and planned a Walk the follower rejected at once ("path changed at Walk"), over and over.
+    /// </summary>
+    public static TilePoint StandingTile(PlayerKinematics k, ITileGrid grid)
+    {
+        var t = StandingTile(k);
+        float bottom = k.Y + 1f;
+        if (bottom >= t.Y + 1f - 1f / 32f) return t; // resting on top of the row below: nothing sunk in
+        int c0 = (int)MathF.Floor(k.X + 0.01f), c1 = (int)MathF.Floor(k.X + PlayerPhysics.HitboxWidth - 0.01f);
+        bool sunk = false;
+        for (int c = c0; c <= c1 && !sunk; c++) sunk = grid.Get(c, t.Y).IsLowTop;
+        if (!sunk) return t;
+        // One row up; the hitbox may rest on a slope in a column the rounded body doesn't cover (it spans 3 columns
+        // part of the time), so also try the neighbouring column on the hitbox's side.
+        int side = k.X >= t.X + PlayerPhysics.CenterOffset ? 1 : -1;
+        TilePoint? clear = null;
+        foreach (int dx in new[] { 0, side, -side })
+        {
+            var c = new TilePoint(t.X + dx, t.Y - 1);
+            if (!BodyClear(grid, c)) continue;
+            if (grid.Get(c.X, c.Y + 1).IsStandable || grid.Get(c.X + 1, c.Y + 1).IsStandable) return c;
+            clear ??= c;
+        }
+        return clear ?? t;
+    }
+
+    /// <summary>No tile of the 2x3 body at p blocks it.</summary>
+    public static bool BodyClear(ITileGrid grid, TilePoint p)
+    {
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 2; dx++)
+                if (grid.Get(p.X + dx, p.Y - dy).BlocksBody) return false;
+        return true;
+    }
+
     /// <summary>Kinematics from the game's hitbox: top-left position and velocity in pixels.</summary>
     public static PlayerKinematics FromPixels(float left, float top, float velX, float velY, int heightPx = PlayerPhysics.HitboxHeightPx) =>
         new(left / 16f, (top + heightPx) / 16f - 1f, velX / 16f, velY / 16f, velY == 0f);

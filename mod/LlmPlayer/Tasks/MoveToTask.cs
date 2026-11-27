@@ -80,7 +80,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     {
         var p = ctx.Player;
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-        var here = NavMath.StandingTile(k);
+        var here = NavMath.StandingTile(k, ctx.Grid);
 
         if (_entityId is { } id && !UpdateEntityGoal(id, here, out var why)) return Finish(ctx, GameTaskStatus.Failed, why);
 
@@ -186,7 +186,8 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         }
         _partial = job.IsPartial;
         _resolvedGoal = r.ResolvedGoal;
-        _follower = new PathFollower(r.Steps, start: job.Start, physics: ProfileBuilder.Physics(ctx.Player),
+        // The search started from the normalized start (FindPath): the follower's first "previous position" must match.
+        _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(ctx.Grid, job.Start), physics: ProfileBuilder.Physics(ctx.Player),
             canSwim: ProfileBuilder.CanSwim(ctx.Player));
         _stepsAtPlan = _follower.RemainingSteps;
         _pathCrossesUnknown = CrossesUnknown(ctx.Grid, r.Steps);

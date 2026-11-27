@@ -104,7 +104,42 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
                 .Fill(5, 4, 5, 5, 'X').Fill(5, 6, 5, 8, '|').Fill(20, 4, 20, 5, 'X').Fill(20, 6, 20, 8, '|')
                 .Put(10, 8, 'S').Put(27, 8, 'G'),
             Real(), new(AllowDig: false, AllowBuild: false), 600),
+        // World gen smooths hills into 45° slopes: walk up one (no jumps, the slopes lift the hitbox), across the
+        // top and down the other side.
+        new("slope_hill",
+            SlopeHill(), Real(), new(AllowDig: false, AllowBuild: false), 600),
+        // Half blocks: a half-tile step up, a full block on top of one (another half tile), and down again.
+        new("half_block_steps",
+            new GridBuilder(40, 10).Fill(0, 8, 39, 9, '#').Fill(10, 7, 12, 7, '_').Fill(13, 7, 15, 7, '#').Fill(13, 6, 14, 6, '_')
+                .Put(2, 7, 'S').Put(30, 7, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
+        // The in-game hillside: a 6-row stone diagonal (rows 772-777 there) with slopes on every step, walked up.
+        new("in_game_diagonal_up",
+            InGameDiagonal().Put(2, 13, 'S').Put(30, 7, 'G'), Real(), new(AllowDig: false, AllowBuild: false), 600),
+        new("in_game_diagonal_down",
+            InGameDiagonal().Put(30, 7, 'S').Put(2, 13, 'G'), Real(), new(AllowDig: false, AllowBuild: false), 600),
     }.ToDictionary(s => s.Name);
+
+    /// <summary>A 45° hill of slopes on flat ground: up 6 rows ('/' high at the right), a 4-wide top, down 6 rows.</summary>
+    internal static GridBuilder SlopeHill()
+    {
+        var b = new GridBuilder(50, 20).Fill(0, 16, 49, 19, '#');
+        for (int i = 0; i < 6; i++)
+        {
+            b.Put(10 + i, 15 - i, '/').Fill(10 + i, 16 - i, 10 + i, 15, '#');
+            b.Put(25 - i, 15 - i, '\\').Fill(25 - i, 16 - i, 25 - i, 15, '#');
+        }
+        b.Fill(16, 10, 19, 15, '#');
+        return b.Put(3, 15, 'S').Put(35, 15, 'G');
+    }
+
+    /// <summary>Flat stone at row 14, a 6-row diagonal of sloped stone (columns 8-13) up to a flat top at row 8.</summary>
+    internal static GridBuilder InGameDiagonal()
+    {
+        var b = new GridBuilder(40, 18).Fill(0, 14, 39, 17, '#').Fill(14, 8, 39, 13, '#');
+        for (int i = 0; i < 6; i++) b.Put(8 + i, 13 - i, '/').Fill(8 + i, 14 - i, 8 + i, 13, '#');
+        return b;
+    }
 
     /// <summary>Rolling terrain: 1-, 2- and 3-tile steps up, then down again.</summary>
     private static GridBuilder Stairs()
@@ -221,6 +256,48 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
         Run(sc, true, maxReplans: 3);
     }
 
+    /// <summary>World-gen-like smoothing: a block with air above, air on one side and a block on the other (and a block
+    /// below) becomes a floor slope high toward the block; the same upside down makes ceiling slopes.</summary>
+    internal static GridBuilder Smooth(GridBuilder b)
+    {
+        var rows = b.Rows;
+        int h = rows.Length, w = rows[0].Length;
+        char At(int x, int y) => x < 0 || y < 0 || x >= w || y >= h ? '#' : rows[y][x];
+        bool Air(int x, int y) => At(x, y) is '.' or 'S' or 'G';
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                if (rows[y][x] != '#') continue;
+                bool l = Air(x - 1, y), r = Air(x + 1, y);
+                if (l == r) continue;
+                if (Air(x, y - 1) && At(x, y + 1) == '#') b.Put(x, y, l ? '/' : '\\');
+                else if (Air(x, y + 1) && At(x, y - 1) == '#') b.Put(x, y, l ? 'q' : 'r');
+            }
+        return b;
+    }
+
+    [Theory]
+    [MemberData(nameof(Seeds))]
+    public void RandomSlopedTerrain_Arrives(int seed)
+    {
+        var b = Smooth(RandomTerrain(seed));
+        output.WriteLine(string.Join("\n", b.Rows));
+        var sc = new Scenario($"sloped_{seed}", b, Real(pick: 35, builds: 30), new(), 3000);
+        Run(sc, false, maxReplans: 3);
+        Run(sc, true, maxReplans: 3);
+    }
+
+    [Theory]
+    [MemberData(nameof(CaveSeeds))]
+    public void RandomSlopedCave_Arrives(int seed)
+    {
+        var b = Smooth(RandomCave(seed));
+        output.WriteLine(string.Join("\n", b.Rows));
+        var sc = new Scenario($"sloped_cave_{seed}", b, Real(pick: 35, builds: 30), new(), 4000);
+        Run(sc, false, maxReplans: 3);
+        Run(sc, true, maxReplans: 3);
+    }
+
     public static IEnumerable<object[]> Cases() =>
         Scenarios.Keys.SelectMany(n => new[] { new object[] { n, false }, new object[] { n, true } });
 
@@ -233,7 +310,7 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
     private void Run(Scenario sc, bool mirrored, int maxReplans = 0)
     {
         var rows = sc.Grid.Rows;
-        var (g, m) = ArrayTileGrid.Parse(mirrored ? rows.Select(r => new string(r.Reverse().ToArray())).ToArray() : rows);
+        var (g, m) = ArrayTileGrid.Parse(mirrored ? rows.Select(Mirror).ToArray() : rows);
         TilePoint start = m['S'], goal = m['G'];
         if (mirrored)
         {
@@ -299,6 +376,10 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             if (sc.Options.CloseDoorsBehind) Assert.False(sim.AnyDoorOpen, "a door the path opened was left open");
         }
     }
+
+    /// <summary>A row read right to left; floor slopes swap their high side.</summary>
+    internal static string Mirror(string row) =>
+        new(row.Reverse().Select(c => c switch { '/' => '\\', '\\' => '/', 'r' => 'q', 'q' => 'r', _ => c }).ToArray());
 
     private PathResult Plan(ArrayTileGrid g, TilePoint from, TilePoint goal, Scenario sc)
     {
