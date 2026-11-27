@@ -1,4 +1,5 @@
 using LlmPlayer.Control;
+using LlmPlayer.Core.Build;
 using LlmPlayer.Core.Gather;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Nav;
@@ -24,8 +25,10 @@ namespace LlmPlayer.Tasks;
 /// <item>Fails after 5 consecutive failed replans (a plan that fails, or a follower that gets stuck/derailed
 /// without completing any step), with the last reason, and after the same Stuck/NeedsReplan from the same tile
 /// <see cref="ReplanGuard"/> times however much the plans in between progressed.</item>
-/// <item>Dig steps hold the best pickaxe, build steps a platform (else the cheapest block); the previously held
-/// item comes back when the task ends (<see cref="HeldItemLease"/>).</item>
+/// <item>Dig steps hold the best pickaxe, build steps a platform or a cheap block (<see cref="BuildReserve"/>: the
+/// plan keeps <see cref="PlatformReserve"/> platforms unless no route fits without them, bridges/climbs switch to blocks
+/// at the reserve, descents take platforms); the previously held item comes back when the task ends
+/// (<see cref="HeldItemLease"/>). Result: platforms/blocks used, platforms left.</item>
 /// <item>Doors: when the follower asks to interact with a door (OpenDoor / CloseDoor steps) it is opened or closed
 /// like a right-click (<see cref="DoorActions"/>, vanilla reach), at most every <see cref="DoorRetryTicks"/> ticks.</item>
 /// <item>Torches (<see cref="Torches"/>, move_to's <c>torches</c>): in the dark underground or in a dug tunnel, with no
@@ -55,7 +58,28 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     /// <summary>Torches placed so far.</summary>
     public int TorchesPlaced => _torchPacer.Placed;
 
-    public object? Result => Torches ? new MoveToResult(TorchesPlaced) : null;
+    public object? Result
+    {
+        get
+        {
+            if (_startPlatforms < 0) return Torches ? new MoveToResult(TorchesPlaced) : null;
+            var p = Main.LocalPlayer;
+            int platforms = HeldItemLease.PlatformCount(p), blocks = HeldItemLease.BlockCount(p);
+            return new MoveToResult(TorchesPlaced, Math.Max(0, _startPlatforms - platforms), Math.Max(0, _startBlocks - blocks),
+                platforms, _reserveReleased,
+                _allowBuild && (_startPlatforms != platforms || _reserveReleased) ? BuildReserve.Note(platforms, PlatformReserve, _reserveReleased) : null);
+        }
+    }
+
+    /// <summary>Platforms walks keep for later descents (set_reflexes <c>platform_reserve</c>; in memory only).</summary>
+    public static int DefaultPlatformReserve = BuildReserve.DefaultPlatforms;
+
+    /// <summary>Platforms this walk keeps unless no route fits without them (<see cref="BuildReserve"/>).</summary>
+    public int PlatformReserve { get; init; } = DefaultPlatformReserve;
+
+    private bool _reserveReleased;
+    private int _startPlatforms = -1, _startBlocks;
+    private int EffectiveReserve => _reserveReleased ? 0 : PlatformReserve;
 
     private const int LightSettleTicks = 10;
     private readonly WalkTorch _torchPacer = new();
@@ -73,7 +97,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private PathFollower? _follower;
     private bool _partial, _pathCrossesUnknown;
     private TilePoint? _resolvedGoal;
-    private readonly ProgressGuard _progress = new(maxStalls: 3);
+    private ProgressGuard _progress = new(maxStalls: 3);
     private readonly ReplanGuard _repeats = new();
     private readonly RouteCommitment _route = new();
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
@@ -126,6 +150,11 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         var p = ctx.Player;
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
         var here = NavMath.StandingTile(k, ctx.Grid);
+        if (_startPlatforms < 0)
+        {
+            _startPlatforms = HeldItemLease.PlatformCount(p);
+            _startBlocks = HeldItemLease.BlockCount(p);
+        }
 
         if (_entityId is { } id && !UpdateEntityGoal(id, here, out var why)) return Finish(ctx, GameTaskStatus.Failed, why);
 
@@ -175,7 +204,16 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                     return Finish(ctx, GameTaskStatus.Succeeded, null);
                 // Any plan (partial or not) that keeps ending no closer to the goal: give up instead of looping.
                 if (_progress.RecordArrival(Chebyshev(here, _goal)))
+                {
+                    // The route within the platform reserve leads nowhere: try once more with every build item.
+                    if (TryReleaseReserve(p, "no progress"))
+                    {
+                        StartPlan(p, here);
+                        ControlState.Pending = default;
+                        return GameTaskStatus.Running;
+                    }
                     return Finish(ctx, GameTaskStatus.Failed, $"unreachable: no progress toward {_goal}");
+                }
                 if (_partial || Chebyshev(here, _goal) > _tolerance) StartPlan(p, here);
                 ControlState.Pending = default;
                 return GameTaskStatus.Running;
@@ -294,6 +332,12 @@ public sealed class MoveToTask : IGameTask<GameCtx>
             // A fixed goal inside rock won't improve by retrying; other failures may (tiles revealed, player moved,
             // a moving target).
             bool deterministic = _entityId == null && r.FailureReason?.StartsWith("goal_not_standable") == true;
+            // No route within the platform reserve: replan at once with every build item (not counted as a failure).
+            if (TryReleaseReserve(ctx.Player, r.FailureReason))
+            {
+                _retryIn = 0;
+                return GameTaskStatus.Running;
+            }
             if (deterministic || ++_failures >= MaxConsecutiveFailures)
                 return Finish(ctx, GameTaskStatus.Failed, r.FailureReason);
             _retryIn = RetryDelayTicks;
@@ -330,7 +374,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private void StartPlan(Player p, TilePoint here)
     {
         _job?.Cancel();
-        var profile = ProfileBuilder.From(p, _allowDig, _allowBuild);
+        var profile = ProfileBuilder.From(p, _allowDig, _allowBuild, EffectiveReserve);
         // Replans stick to the current partial target unless a clearly better one appears (no ping-pong between two).
         var hint = _route.BeforePlan(here, _goal);
         _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig,
@@ -363,11 +407,21 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         int slot = step?.Kind switch
         {
             MoveKind.Dig => HeldItemLease.BestPickaxe(p),
-            MoveKind.BuildPlatform or MoveKind.BuildDown => HeldItemLease.BuildItem(p),
+            MoveKind.BuildPlatform or MoveKind.BuildDown => HeldItemLease.BuildItemFor(p, step.Value.Kind == MoveKind.BuildDown, EffectiveReserve),
             _ => -2,
         };
         if (slot == -2) return true;
         return slot >= 0 && _lease.Hold(p, slot);
+    }
+
+    private bool TryReleaseReserve(Player p, string? failure)
+    {
+        if (!BuildReserve.ShouldRelease(_reserveReleased, _allowBuild, HeldItemLease.PlatformCount(p), HeldItemLease.BlockCount(p),
+                PlatformReserve, failure))
+            return false;
+        _reserveReleased = true;
+        _progress = new ProgressGuard(maxStalls: 3);
+        return true;
     }
 
     private static bool CrossesUnknown(ITileGrid g, IReadOnlyList<PathStep> steps)

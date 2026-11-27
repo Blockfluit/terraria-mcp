@@ -97,6 +97,8 @@ public static class CombatCommands
             if (!hasAmmo && defAmmo != null && defWeapon != null && defWeapon.useAmmo != defAmmo.ammo) defAmmo = null; // new weapon, old ammo doesn't fit
             bool? autoDefend = Params.Has(p, "auto_defend") ? Params.Bool(p, "auto_defend") : null;
             bool? pause = Params.Has(p, "pause_when_idle") ? Params.Bool(p, "pause_when_idle") : null;
+            int? reserve = Params.Has(p, "platform_reserve") ? Params.Int(p, "platform_reserve") : null;
+            if (reserve is < 0 or > 9999) throw new CommandError(ErrorCodes.BadParams, "platform_reserve must be 0..9999");
             float? threshold = null;
             if (Params.Has(p, "quick_heal_threshold"))
             {
@@ -111,6 +113,7 @@ public static class CombatCommands
             if (autoDefend is { } a) cfg.AutoDefend = a;
             if (threshold is { } th) cfg.QuickHealThreshold = th;
             if (pause is { } pw) cfg.PauseWhenIdle = pw;
+            if (reserve is { } pr) MoveToTask.DefaultPlatformReserve = pr;
             if (hasWeapon || hasAmmo) Reflexes.SetDefendLoadout(pl, defWeapon, defAmmo);
             bool sp = Main.netMode == NetmodeID.SinglePlayer;
             return new
@@ -120,6 +123,7 @@ public static class CombatCommands
                 Ammo = Reflexes.DefendAmmo?.Name ?? "auto",
                 QuickHealThreshold = cfg.QuickHealThreshold,
                 PauseWhenIdle = cfg.PauseWhenIdle,
+                PlatformReserve = MoveToTask.DefaultPlatformReserve,
                 Note = cfg.PauseWhenIdle && !sp ? "pause_when_idle only works in singleplayer" : null,
             };
         }, isAction: true);

@@ -8,6 +8,28 @@ export const DAMAGE_DETAIL_LIMIT = 3;
 /** Events that change what the LLM should do next: never folded or dropped by the cap. */
 const MUST_KEEP = new Set(["control_changed", "task_finished", "player_died", "died", "respawned", "weapon_switch"]);
 
+/** True for events that must reach the LLM however many others arrive (the mod emits deaths as `player_died`). */
+export const isMustKeep = (e: ModEvent) => MUST_KEEP.has(e.event);
+
+/**
+ * Cap a raw event buffer at `max` entries by dropping the oldest droppable events first; must-keep events (deaths,
+ * control changes, finished tasks) only go when nothing else is left to drop. Seen in play: a long wait under
+ * auto-defend produced hundreds of reflex events and a plain oldest-first trim could push a death out.
+ */
+export function trimBuffer(events: ModEvent[], max: number): ModEvent[] {
+  if (events.length <= max) return events;
+  let excess = events.length - max;
+  const out: ModEvent[] = [];
+  for (const e of events) {
+    if (excess > 0 && !isMustKeep(e)) {
+      excess--;
+      continue;
+    }
+    out.push(e);
+  }
+  return out.length > max ? out.slice(out.length - max) : out;
+}
+
 const isAutoDefend = (e: ModEvent) =>
   e.event === "reflex" && (e.kind === "auto_defend" || e.kind === "auto_defend_end");
 

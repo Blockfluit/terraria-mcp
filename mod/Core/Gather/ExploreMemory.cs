@@ -12,6 +12,10 @@ namespace LlmPlayer.Core.Gather;
 /// <see cref="FrontierStrikes"/> walks toward frontiers within <see cref="FrontierRadius"/> of each other failed, frontier
 /// cells around there are ignored too (the next pick would otherwise be a neighbouring stand on the same ledge).</item>
 /// <item>Failed tunnels/relocations: (direction, start) pairs that couldn't be walked to or dug at all.</item>
+/// <item>Reported stops: a valuable that already ended a call (stop_on) never stops a later call again. Seen in game:
+/// four calls in a row stopped at the same unreachable underwater Water Chest, and loot_chest failed each time.</item>
+/// <item>Opened chests (no expiry): chests the player has had open; one of them found empty again is known to be
+/// looted (fair: the player saw inside), so it doesn't stop the explorer (<see cref="SkipStop"/>).</item>
 /// <item>A new world (or the game's tick counter going backwards, i.e. a reload) forgets everything.</item>
 /// </list>
 /// </summary>
@@ -26,6 +30,8 @@ public sealed class ExploreMemory
     private readonly List<(TilePoint Stand, TilePoint Frontier, long Expires)> _walks = new();
     private readonly List<(TunnelDir Dir, TilePoint Start, long Expires)> _tunnels = new();
     private List<TilePoint>? _blockedFrontiers; // cache: centres of frontier areas with enough strikes
+    private readonly List<(string Kind, TilePoint At, long Expires)> _reported = new();
+    private readonly HashSet<TilePoint> _openedChests = new();
 
     public ExploreMemory(long ttlTicks = DefaultTtlTicks) => _ttl = ttlTicks;
 
@@ -44,6 +50,8 @@ public sealed class ExploreMemory
     {
         _walks.Clear();
         _tunnels.Clear();
+        _reported.Clear();
+        _openedChests.Clear();
         _blockedFrontiers = null;
         _lastNow = long.MinValue;
     }
@@ -91,6 +99,46 @@ public sealed class ExploreMemory
         return false;
     }
 
+    /// <summary>This valuable (kind + object origin) ended an explore_caves call.</summary>
+    public void StopReported(string kind, TilePoint at, long now)
+    {
+        Tick(now);
+        if (WasReported(kind, at, now)) return;
+        _reported.Add((kind, at, now + _ttl));
+        if (_reported.Count > MaxEntries) _reported.RemoveAt(0);
+    }
+
+    public bool WasReported(string kind, TilePoint at, long now)
+    {
+        Tick(now);
+        foreach (var r in _reported)
+            if (r.Kind == kind && r.At == at) return true;
+        return false;
+    }
+
+    /// <summary>The player had this chest (its top-left tile) open.</summary>
+    public void ChestOpened(TilePoint at)
+    {
+        if (_openedChests.Count < MaxEntries * 10) _openedChests.Add(at);
+    }
+
+    public bool ChestSeenOpened(TilePoint at) => _openedChests.Contains(at);
+
+    /// <summary>
+    /// Why a stop_on valuable must not stop explore_caves (it is still listed in <c>found</c>), or null to stop:
+    /// reported by an earlier call; a rigged Dead Man's Chest (open_chest refuses it); a chest the player opened before
+    /// that is empty now (<paramref name="emptyNow"/> is only consulted for those: an unopened chest's contents are
+    /// unknown to the player).
+    /// </summary>
+    public static string? SkipStop(bool reported, bool isChest, bool rigged, bool openedBefore, bool emptyNow)
+    {
+        if (reported) return "already reported";
+        if (!isChest) return null;
+        if (rigged) return "rigged";
+        if (openedBefore && emptyNow) return "looted";
+        return null;
+    }
+
     /// <summary>Drop expired entries; a clock that went backwards (world reloaded) forgets everything.</summary>
     private void Tick(long now)
     {
@@ -98,6 +146,7 @@ public sealed class ExploreMemory
         _lastNow = now;
         if (_walks.RemoveAll(w => w.Expires <= now) > 0) _blockedFrontiers = null;
         _tunnels.RemoveAll(t => t.Expires <= now);
+        _reported.RemoveAll(r => r.Expires <= now);
     }
 }
 

@@ -35,6 +35,8 @@ public sealed class ArrayTileGrid : ITileGrid
     /// '?' unknown, '|' closed door (protected solid that can be opened); any of "SGABCD" is air recorded as a marker.
     /// Shaped solid blocks: '/' floor slope high at the right (SlopeDownRight, the surface rises left to right),
     /// '\' floor slope high at the left (SlopeDownLeft), '_' half block, 'r' / 'q' ceiling slopes UpLeft / UpRight.
+    /// The same shapes in unbreakable rock (like 'X', e.g. Ebonstone slopes for a weak pickaxe; written by dev_dump):
+    /// ')' for '/', '(' for '\', '-' for '_', 'R' for 'r', 'Q' for 'q'.
     /// </summary>
     public static (ArrayTileGrid Grid, Dictionary<char, TilePoint> Markers) Parse(params string[] rows)
     {
@@ -69,9 +71,49 @@ public sealed class ArrayTileGrid : ITileGrid
                     '_' => new TileInfo(TileKind.Solid, HalfBlock: true),
                     'r' => new TileInfo(TileKind.Solid, Slope: TileSlope.UpLeft),
                     'q' => new TileInfo(TileKind.Solid, Slope: TileSlope.UpRight),
+                    ')' => new TileInfo(TileKind.Solid, int.MaxValue, Slope: TileSlope.DownRight),
+                    '(' => new TileInfo(TileKind.Solid, int.MaxValue, Slope: TileSlope.DownLeft),
+                    '-' => new TileInfo(TileKind.Solid, int.MaxValue, HalfBlock: true),
+                    'R' => new TileInfo(TileKind.Solid, int.MaxValue, Slope: TileSlope.UpLeft),
+                    'Q' => new TileInfo(TileKind.Solid, int.MaxValue, Slope: TileSlope.UpRight),
                     _ => throw new ArgumentException($"Unknown glyph '{c}' at ({x},{y})"),
                 };
             }
         return (new ArrayTileGrid(0, 0, tiles), markers);
+    }
+
+    /// <summary>
+    /// The <see cref="Parse"/> glyph for a tile (dev_dump's fixture capture), so a dump parses back to the same
+    /// kind/shape/breakability. A solid block needing more than <paramref name="maxPickPower"/> pick power counts as
+    /// unbreakable: 'X', or its hard shape glyph for a slope / half block. Hardness is checked before the shape (a hard
+    /// Ebonstone slope used to come out as a plain diggable slope).
+    /// </summary>
+    public static char GlyphOf(TileInfo t, int maxPickPower = 35)
+    {
+        if (t.Kind == TileKind.Solid)
+        {
+            if (t.IsClosedDoor) return '|';
+            bool hard = t.PickPowerRequired > maxPickPower;
+            if (t.HalfBlock) return hard ? '-' : '_';
+            switch (t.Slope)
+            {
+                case TileSlope.DownRight: return hard ? ')' : '/';
+                case TileSlope.DownLeft: return hard ? '(' : '\\';
+                case TileSlope.UpLeft: return hard ? 'R' : 'r';
+                case TileSlope.UpRight: return hard ? 'Q' : 'q';
+            }
+            if (hard) return 'X';
+            return t.Protected ? 'P' : '#';
+        }
+        return t.Kind switch
+        {
+            TileKind.Platform => '=',
+            TileKind.Water => '~',
+            TileKind.Honey => 'h',
+            TileKind.Lava => 'L',
+            TileKind.Hazard => '^',
+            TileKind.Unknown => '?',
+            _ => '.',
+        };
     }
 }

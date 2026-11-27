@@ -102,6 +102,36 @@ public sealed class HeldItemLease
         return -1;
     }
 
+    /// <summary>Slot of the item a walk's build step places (<see cref="Core.Build.BuildReserve.Pick"/>): BuildDown
+    /// takes a platform whenever there is one; bridges and climbs use platforms above <paramref name="reserve"/>, then
+    /// cheap blocks, then the reserve. -1 if none.</summary>
+    public static int BuildItemFor(Player p, bool buildDown, int reserve)
+    {
+        var pick = Core.Build.BuildReserve.Pick(buildDown, PlatformCount(p), BlockCount(p), reserve);
+        if (pick == Core.Build.BuildPick.None) return -1;
+        if (pick == Core.Build.BuildPick.Platform)
+        {
+            for (int i = 0; i < 58; i++)
+                if (IsPlatform(p.inventory[i])) return i;
+            return -1;
+        }
+        foreach (int type in CheapBlocks)
+            for (int i = 0; i < 58; i++)
+                if (!p.inventory[i].IsAir && p.inventory[i].type == type) return i;
+        return -1;
+    }
+
+    public static int PlatformCount(Player p)
+    {
+        int n = 0;
+        for (int i = 0; i < 58; i++)
+            if (IsPlatform(p.inventory[i])) n += p.inventory[i].stack;
+        return n;
+    }
+
+    /// <summary>Cheap blocks a walk may build with (dirt, mud, stone, ash, clay, wood).</summary>
+    public static int BlockCount(Player p) => BuildItemCount(p) - PlatformCount(p);
+
     public static int BuildItemCount(Player p)
     {
         int n = 0;

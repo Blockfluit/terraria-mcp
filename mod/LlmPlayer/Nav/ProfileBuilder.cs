@@ -50,7 +50,9 @@ public static class ProfileBuilder
             RunSlowdown: Math.Max(p.runSlowdown, 0.01f));
     }
 
-    public static MovementProfile From(Player p, bool allowDig = true, bool allowBuild = true)
+    /// <param name="platformReserve">Platforms the plan may not use (<see cref="Core.Build.BuildReserve.Budget"/>);
+    /// 0 = everything.</param>
+    public static MovementProfile From(Player p, bool allowDig = true, bool allowBuild = true, int platformReserve = 0)
     {
         var phys = Physics(p);
         if (_cachedJumps == null || _cachedPhysics != phys)
@@ -63,7 +65,9 @@ public static class ProfileBuilder
             SafeFallTiles = Math.Max(0, 25 + p.extraFall - 5),
             NoFallDamage = p.noFallDmg || p.equippedWings != null,
             PickPower = allowDig ? HeldItemLease.PickPower(p) : 0,
-            BuildItemCount = allowBuild ? HeldItemLease.BuildItemCount(p) : 0,
+            BuildItemCount = allowBuild
+                ? Core.Build.BuildReserve.Budget(HeldItemLease.PlatformCount(p), HeldItemLease.BlockCount(p), platformReserve, released: platformReserve <= 0)
+                : 0,
             MaxSubmergedSteps = BreathMath.MaxSubmergedSteps(p.breathMax, p.breathCDMax),
             WaterBreathing = Tasks.Reflexes.CanBreatheInLiquid(p),
             CanSwim = CanSwim(p),

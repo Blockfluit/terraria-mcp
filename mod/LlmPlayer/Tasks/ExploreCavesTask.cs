@@ -39,7 +39,9 @@ public sealed record ExploreCavesResult(int RevealedTiles, List<FoundThing> Foun
 /// stands must be on a known floor away from lava; the pathfinder's own fall/lava rules apply to every walk.</item>
 /// <item>Every <see cref="ScanTicks"/> ticks it scans for valuables (<see cref="ValuableScan"/>, radius
 /// <see cref="ScanRadius"/>). Anything not visible at the start goes into <c>found</c>; a kind in <c>stop_on</c> stops
-/// the task (succeeded) with what and where. With <c>collect_pots</c>, visible pots within
+/// the task (succeeded) with what and where — once: a thing that already stopped a call (remembered across calls in
+/// <see cref="Memory"/>), a rigged Dead Man's Chest, or a chest the player opened before and that is empty now is only
+/// listed. With <c>collect_pots</c>, visible pots within
 /// <see cref="PotReach"/> tiles are broken on the way (<see cref="CollectTask"/>).</item>
 /// <item>Underground first: started in the surface layer (above <c>Main.worldSurface</c>) it first goes down
 /// (<see cref="ExploreTask"/> down: walking, or a 2-wide shaft) to <see cref="CaveTunnel.DescentDistance"/> below it.
@@ -141,7 +143,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         if (!_seeded)
         {
             _seeded = true;
-            Memory.UseWorld($"{Main.worldID}:{Main.worldName}");
+            Memory.UseWorld(WorldKey);
             Seed(p, here);
         }
         _elapsed++;
@@ -638,10 +640,36 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
             if (_found.Count < MaxFound) _found.Add(thing);
             if (h.Kind == ValuableKind.LifeCrystal && !_lifeCrystals.Any(c => c.X == h.X && c.Y == h.Y)) _lifeCrystals.Add(thing);
             // A pot we're about to break on the way isn't a reason to stop.
-            if (_stopOn.Contains(h.Kind) && !(h.Kind == ValuableKind.Pot && _collectPots) && _stopHit == null)
+            if (_stopOn.Contains(h.Kind) && !(h.Kind == ValuableKind.Pot && _collectPots) && _stopHit == null
+                && StopSkip(h, thing) == null)
+            {
                 _stopHit = thing;
+                Memory.StopReported(thing.Kind, new TilePoint(h.X, h.Y), Now);
+            }
         }
     }
+
+    /// <summary>Why this stop_on hit must not end the call (<see cref="ExploreMemory.SkipStop"/>), or null.</summary>
+    private static string? StopSkip(ValuableHit h, FoundThing thing)
+    {
+        var at = new TilePoint(h.X, h.Y);
+        bool chest = h.Kind == ValuableKind.Chest;
+        bool opened = chest && Memory.ChestSeenOpened(at);
+        return ExploreMemory.SkipStop(Memory.WasReported(thing.Kind, at, Now), chest,
+            rigged: chest && WorldGen.IsChestRigged(h.X, h.Y), openedBefore: opened, emptyNow: opened && ChestEmpty(h.X, h.Y));
+    }
+
+    private static bool ChestEmpty(int x, int y)
+    {
+        int idx = Chest.FindChest(x, y);
+        if (idx < 0 || Main.chest[idx]?.item == null) return false;
+        foreach (var it in Main.chest[idx].item)
+            if (it != null && !it.IsAir) return false;
+        return true;
+    }
+
+    /// <summary>Memory's world key (see <see cref="ExploreMemory.UseWorld"/>).</summary>
+    public static string WorldKey => $"{Main.worldID}:{Main.worldName}";
 
     private static long Key(int x, int y) => ((long)x << 32) | (uint)y;
 

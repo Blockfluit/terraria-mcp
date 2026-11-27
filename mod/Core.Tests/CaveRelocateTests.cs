@@ -246,3 +246,43 @@ public class CaveRelocateTests
         Assert.False(mem.StandBlocked(p, 300));
     }
 }
+
+public class ExploreMemoryStopTests
+{
+    private static readonly LlmPlayer.Core.Grid.TilePoint Chest = new(4038, 687);
+
+    [Fact]
+    public void ReportedStop_IsRememberedAcrossCalls_UntilItExpires()
+    {
+        var m = new LlmPlayer.Core.Gather.ExploreMemory(ttlTicks: 1000);
+        m.UseWorld("w");
+        Assert.False(m.WasReported("chest", Chest, 0));
+        m.StopReported("chest", Chest, 0);
+        Assert.True(m.WasReported("chest", Chest, 500));
+        Assert.False(m.WasReported("life_crystal", Chest, 500));
+        Assert.False(m.WasReported("chest", new(4039, 687), 500));
+        Assert.False(m.WasReported("chest", Chest, 1001));
+    }
+
+    [Fact]
+    public void NewWorld_ForgetsReportsAndOpenedChests()
+    {
+        var m = new LlmPlayer.Core.Gather.ExploreMemory();
+        m.UseWorld("a");
+        m.StopReported("chest", Chest, 10);
+        m.ChestOpened(Chest);
+        m.UseWorld("b");
+        Assert.False(m.WasReported("chest", Chest, 10));
+        Assert.False(m.ChestSeenOpened(Chest));
+    }
+
+    [Theory]
+    [InlineData(true, true, false, false, false, "already reported")]
+    [InlineData(false, true, true, false, false, "rigged")]
+    [InlineData(false, true, false, true, true, "looted")]
+    [InlineData(false, true, false, false, true, null)]   // never opened: its contents are unknown, so it still stops
+    [InlineData(false, true, false, true, false, null)]   // opened before but refilled
+    [InlineData(false, false, true, true, true, null)]    // not a chest
+    public void SkipStop(bool reported, bool isChest, bool rigged, bool opened, bool empty, string? expected) =>
+        Assert.Equal(expected, LlmPlayer.Core.Gather.ExploreMemory.SkipStop(reported, isChest, rigged, opened, empty));
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compactEvents, MAX_EVENTS } from "../src/events.js";
+import { compactEvents, MAX_EVENTS, trimBuffer } from "../src/events.js";
 import type { ModEvent } from "../src/connection.js";
 
 const defend = (name: string): ModEvent => ({ event: "reflex", kind: "auto_defend", target: 1, name, paused: null });
@@ -63,5 +63,24 @@ describe("compactEvents", () => {
   it("drops the result payload from task_finished (the report carries it)", () => {
     const evs = [{ event: "task_finished", name: "talk_to_npc", status: "succeeded", result: { chat: "hi" } }];
     expect(compactEvents(evs)).toEqual([{ event: "task_finished", name: "talk_to_npc", status: "succeeded" }]);
+  });
+});
+
+describe("trimBuffer", () => {
+  it("keeps a death that a plain oldest-first trim would drop", () => {
+    const death: ModEvent = { event: "player_died", text: "Bot was slain by a Zombie", killer: "Zombie", x: 1, y: 2 };
+    const evs: ModEvent[] = [death];
+    for (let i = 0; i < 50; i++) evs.push(defend("Zombie"));
+    const out = trimBuffer(evs, 10);
+    expect(out).toHaveLength(10);
+    expect(out[0]).toEqual(death);
+    expect(compactEvents(out)[0]).toEqual(death);
+  });
+
+  it("returns short buffers unchanged and caps a buffer of only must-keep events", () => {
+    const evs: ModEvent[] = [hit(1, "Zombie", 99)];
+    expect(trimBuffer(evs, 10)).toBe(evs);
+    const deaths: ModEvent[] = Array.from({ length: 5 }, (_, i) => ({ event: "player_died", n: i }));
+    expect(trimBuffer(deaths, 3).map((e) => e.n)).toEqual([2, 3, 4]);
   });
 });
