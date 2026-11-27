@@ -22,7 +22,7 @@ public static class GatherCommands
         {
             var t = new TilePoint(Params.Int(p, "x"), Params.Int(p, "y"));
             var tiles = MineTask.Validate(Main.LocalPlayer, new[] { t }, area: false, out _);
-            var task = new MineTask(tiles, "mine");
+            var task = new MineTask(tiles, "mine", torches: Params.Bool(p, "torches", true));
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name };
         }, isAction: true);
@@ -52,7 +52,7 @@ public static class GatherCommands
             var tiles = MineTask.Validate(player, ordered, area: true, out var skipped);
             if (tiles.Count == 0)
                 throw new CommandError(ErrorCodes.BadParams, $"nothing in that vein can be mined (skipped: {skipped.Summary()})");
-            var task = new MineTask(tiles, "mine_vein", skipped);
+            var task = new MineTask(tiles, "mine_vein", skipped, Params.Bool(p, "torches", true));
             TaskHost.Start(task);
             return new
             {
@@ -73,7 +73,7 @@ public static class GatherCommands
             var tiles = MineTask.Validate(player, ordered, area: true, out var skipped);
             if (tiles.Count == 0)
                 throw new CommandError(ErrorCodes.BadParams, $"nothing a pickaxe can mine in that area (skipped: {skipped.Summary()})");
-            var task = new MineTask(tiles, "mine_area", skipped);
+            var task = new MineTask(tiles, "mine_area", skipped, Params.Bool(p, "torches", true));
             TaskHost.Start(task);
             return new
             {

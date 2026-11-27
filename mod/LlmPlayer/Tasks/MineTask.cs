@@ -45,13 +45,15 @@ public sealed class MineTask : IGameTask<GameCtx>
     public object? Result => _skips == null ? null : new
     {
         Mined = _mined,
+        TorchesPlaced = _worker.TorchesPlaced,
         Skipped = _skips.Count,
         SkippedReasons = _skips.ByReason,
         SkippedTiles = _skips.Examples,
     };
 
     /// <param name="skips">Area mode: tiles skipped by <see cref="Validate"/>; tiles that become protected are added.</param>
-    public MineTask(IReadOnlyList<TilePoint> tiles, string name = "mine", SkipReport? skips = null)
+    /// <param name="torches">Light the walks between tiles with torches (<see cref="MoveToTask.Torches"/>).</param>
+    public MineTask(IReadOnlyList<TilePoint> tiles, string name = "mine", SkipReport? skips = null, bool torches = false)
     {
         _skips = skips;
         _tiles = tiles;
@@ -59,7 +61,7 @@ public sealed class MineTask : IGameTask<GameCtx>
         foreach (var t in tiles)
             if (WorldGen.InWorld(t.X, t.Y) && Main.tile[t.X, t.Y].HasTile) _typeAtStart[t] = Main.tile[t.X, t.Y].TileType;
         Name = name;
-        _worker = new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease);
+        _worker = new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease) { Torches = torches };
         Progress = $"mined 0/{tiles.Count}";
     }
 

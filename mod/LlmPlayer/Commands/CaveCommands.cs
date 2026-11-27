@@ -23,7 +23,7 @@ public static class CaveCommands
             var target = CollectTask.Resolve(Main.LocalPlayer, Params.Int(p, "x"), Params.Int(p, "y"),
                 allowOrb: Params.Has(p, "allow_orb") && Params.Bool(p, "allow_orb"),
                 allowBossSummon: Params.Has(p, "allow_boss_summon") && Params.Bool(p, "allow_boss_summon"));
-            var task = new CollectTask(target);
+            var task = new CollectTask(target, torches: Params.Bool(p, "torches", true));
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name, Target = new { target.At.X, target.At.Y, target.Name } };
         }, isAction: true);

@@ -90,6 +90,21 @@ describe("registerTools", () => {
     expect(JSON.parse(res.content[0].text)).toEqual({ started: "move_to" });
   });
 
+  it("move_to and the walking gather tools forward torches and describe it", async () => {
+    const conn = new FakeConn(() => ({ started: true }));
+    const client = await setup(conn);
+    expect((await call(client, "move_to", { x: 1, y: 2, torches: false })).isError).toBeFalsy();
+    expect((await call(client, "mine_vein", { x: 1, y: 2, torches: false })).isError).toBeFalsy();
+    expect((await call(client, "collect", { x: 1, y: 2, torches: true })).isError).toBeFalsy();
+    expect(conn.calls.map((c) => c.params.torches)).toEqual([false, false, true]);
+    const tools = (await client.listTools()).tools;
+    for (const name of ["move_to", "mine", "mine_area", "mine_vein", "collect"]) {
+      const t = tools.find((x) => x.name === name)!;
+      expect(Object.keys(t.inputSchema.properties ?? {})).toContain("torches");
+    }
+    expect(tools.find((t) => t.name === "move_to")?.description).toContain("torchesPlaced");
+  });
+
   it("explore forwards allow_dig/torches and describes digging, torches and the result", async () => {
     const conn = new FakeConn(() => ({ started: true, task: "explore" }));
     const client = await setup(conn);
@@ -449,7 +464,7 @@ describe("registerTools", () => {
       expect((await call(client, "blast", { x: 1, y: 2, item: "" })).isError).toBe(true);
       expect(conn.calls).toEqual([{ method: "blast", params: { x: 5377, y: 693, item: "Sticky Bomb", allow_orb: true } }]);
       const desc = (await client.listTools()).tools.find((t) => t.name === "blast")?.description ?? "";
-      for (const s of ["Ebonstone", "Crimstone", "Shadow Orb", "allow_orb", "allow_boss_summon", "hurt", "furniture", "radius", "protected_tile", "expectedDestroyed"])
+      for (const s of ["Ebonstone", "Crimstone", "Shadow Orb", "allow_orb", "allow_boss_summon", "hurt", "furniture", "radius", "protected_tile", "expectedDestroyed", "pots are fine"])
         expect(desc).toContain(s);
     });
 

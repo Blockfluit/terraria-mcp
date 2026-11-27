@@ -15,7 +15,7 @@ public static class TaskCommands
     {
         CommandRouter.Register("move_to", p =>
         {
-            bool dig = Params.Bool(p, "allow_dig", true), build = Params.Bool(p, "allow_build", true);
+            bool dig = Params.Bool(p, "allow_dig", true), build = Params.Bool(p, "allow_build", true), torches = Params.Bool(p, "torches", true);
             MoveToTask task;
             if (Params.Has(p, "entity_id"))
             {
@@ -24,7 +24,7 @@ public static class TaskCommands
                     throw new CommandError(ErrorCodes.BadParams, $"no entity {id} (ids come from get_entities)");
                 if (!Visibility.IsEntityVisible(e))
                     throw new CommandError(ErrorCodes.NotVisible, $"entity {id} is not visible");
-                task = new MoveToTask(id, dig, build);
+                task = new MoveToTask(id, dig, build) { Torches = torches };
             }
             else
             {
@@ -33,7 +33,7 @@ public static class TaskCommands
                 int x = Params.Int(p, "x"), y = Params.Int(p, "y");
                 if (!WorldGen.InWorld(x, y, 10))
                     throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
-                task = new MoveToTask(new TilePoint(x, y), dig, build);
+                task = new MoveToTask(new TilePoint(x, y), dig, build) { Torches = torches };
             }
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name };

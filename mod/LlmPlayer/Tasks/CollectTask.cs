@@ -14,7 +14,7 @@ namespace LlmPlayer.Tasks;
 public readonly record struct CollectTarget(TilePoint At, ushort Type, ValuableKind Kind, string Name);
 
 /// <summary>What collect reports in the task's result.</summary>
-public sealed record CollectResult(string Broke, int X, int Y, List<ItemDelta> PickedUp);
+public sealed record CollectResult(string Broke, int X, int Y, List<ItemDelta> PickedUp, int TorchesPlaced = 0);
 
 /// <summary>
 /// Break one piece of natural loot (pot, life crystal, life fruit, the Enchanted Sword shrine's sword in stone) with
@@ -40,13 +40,14 @@ public sealed class CollectTask : IGameTask<GameCtx>
     public string? Progress { get; private set; }
     public object? Result { get; private set; }
 
-    public CollectTask(CollectTarget target, string name = "collect")
+    /// <param name="torches">Light the walk there with torches (<see cref="MoveToTask.Torches"/>).</param>
+    public CollectTask(CollectTarget target, string name = "collect", bool torches = false)
     {
         _t = target;
         Name = name;
         _worker = _t.Kind == ValuableKind.Orb
-            ? new TileWorker(name, BestHammer, "hammer", _lease) // vanilla: orbs break only to hammers
-            : new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease);
+            ? new TileWorker(name, BestHammer, "hammer", _lease) { Torches = torches } // vanilla: orbs break only to hammers
+            : new TileWorker(name, HeldItemLease.BestPickaxe, "pickaxe", _lease) { Torches = torches };
         Progress = $"breaking {_t.Name} at {_t.At}";
     }
 
@@ -67,7 +68,7 @@ public sealed class CollectTask : IGameTask<GameCtx>
             if (c == GameTaskStatus.Running) return GameTaskStatus.Running;
             _collect = null;
             var gained = InteractMath.Diff(_invBefore!, InventorySnapshot(ctx.Player)).Where(d => d.Count > 0).ToList();
-            Result = new CollectResult(_t.Name, _t.At.X, _t.At.Y, gained);
+            Result = new CollectResult(_t.Name, _t.At.X, _t.At.Y, gained, _worker.TorchesPlaced);
             return Finish(ctx, GameTaskStatus.Succeeded, gained.Count == 0 ? $"broke {_t.Name}; nothing picked up" : $"broke {_t.Name}");
         }
 

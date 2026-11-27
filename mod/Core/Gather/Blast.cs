@@ -441,8 +441,11 @@ public enum BlastTileKind
     Protected,
     /// <summary>Shadow Orb / Crimson Heart: only with allow_orb.</summary>
     Orb,
-    /// <summary>Life Crystal, Life Fruit, pots, the sword in stone: collect them instead.</summary>
+    /// <summary>Life Crystal, Life Fruit, the sword in stone: collect them instead.</summary>
     Collectible,
+    /// <summary>A pot: the explosion breaks it and its loot drops (picked up afterwards). Not worth protecting, and a
+    /// pot inside rock can't be collected first (seen in game: an orb couldn't be blasted for a pot 4 tiles away).</summary>
+    Breakable,
 }
 
 /// <param name="ProtectedArea">Within the spawn radius or a housed NPC's room.</param>
@@ -453,7 +456,7 @@ public readonly record struct BlastTile(BlastTileKind Kind, string? Name = null,
 
 /// <summary>Outcome of <see cref="BlastSafety.Check"/>.</summary>
 /// <param name="Refusal">Why the blast must not happen, or null.</param>
-/// <param name="Destroys">Visible tiles expected to be destroyed (explosion-proof ones excluded).</param>
+/// <param name="Destroys">Visible tiles expected to be destroyed (explosion-proof ones excluded; pots included).</param>
 /// <param name="DestroysByName">Count per tile name (visible ones).</param>
 /// <param name="UnseenInRadius">Unseen tiles within the tile radius (whatever they are, they may go too).</param>
 /// <param name="Orbs">Distinct orbs within the checked zone (radius + margin, with allow_orb): counted for the boss rule.</param>
@@ -468,12 +471,12 @@ public sealed record BlastReport(string? Refusal, IReadOnlyList<TilePoint> Destr
 /// <item>Zone: every tile whose centre is within the tile radius + <see cref="ProtectMargin"/> of the predicted
 /// explosion or of the target (in case the throw lands short or long).</item>
 /// <item>Refused: anything in the spawn area or an NPC house; protected objects (furniture, chests, doors, stations,
-/// beds); collectibles (Life Crystal, Life Fruit, pots, sword in stone: collect them first); Shadow Orbs / Crimson
+/// beds); collectibles (Life Crystal, Life Fruit, sword in stone: collect them first); Shadow Orbs / Crimson
 /// Hearts unless allow_orb, and with allow_orb when breaking them would make the orb count reach 3 (the boss
 /// summon) unless allow_boss_summon — the same rule as collect.</item>
-/// <item>Fine: altars and other explosion-proof tiles.</item>
+/// <item>Fine: altars and other explosion-proof tiles; pots (they break and drop their loot).</item>
 /// </list>
-/// Expected losses: blocks (and orbs) whose centre is within the tile radius of the predicted explosion.
+/// Expected losses: blocks (and orbs, pots) whose centre is within the tile radius of the predicted explosion.
 /// </summary>
 public static class BlastSafety
 {
@@ -532,7 +535,7 @@ public static class BlastSafety
                     continue;
                 }
                 if (t.Wall) walls++;
-                if (t.Kind is BlastTileKind.Block or BlastTileKind.Orb)
+                if (t.Kind is BlastTileKind.Block or BlastTileKind.Orb or BlastTileKind.Breakable)
                 {
                     destroys.Add(at);
                     byName[name] = byName.TryGetValue(name, out var n) ? n + 1 : 1;

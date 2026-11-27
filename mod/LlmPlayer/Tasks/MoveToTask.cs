@@ -1,4 +1,5 @@
 using LlmPlayer.Control;
+using LlmPlayer.Core.Gather;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Nav;
 using LlmPlayer.Core.Tasks;
@@ -6,6 +7,7 @@ using LlmPlayer.Interact;
 using LlmPlayer.Nav;
 using LlmPlayer.Observe;
 using Terraria;
+using Terraria.ID;
 
 namespace LlmPlayer.Tasks;
 
@@ -26,6 +28,10 @@ namespace LlmPlayer.Tasks;
 /// item comes back when the task ends (<see cref="HeldItemLease"/>).</item>
 /// <item>Doors: when the follower asks to interact with a door (OpenDoor / CloseDoor steps) it is opened or closed
 /// like a right-click (<see cref="DoorActions"/>, vanilla reach), at most every <see cref="DoorRetryTicks"/> ticks.</item>
+/// <item>Torches (<see cref="Torches"/>, move_to's <c>torches</c>): in the dark underground or in a dug tunnel, with no
+/// torch within 10 tiles, it stops between steps, places one within reach (<see cref="PlaceTask"/>: real controls,
+/// vanilla rules) and replans, so the way is revealed for this and later trips (<see cref="WalkTorch"/> decides when
+/// and where). Never in protected areas. Result: <see cref="MoveToResult"/> {torchesPlaced}.</item>
 /// </list>
 /// As a sub-task: construct it, call <see cref="Tick"/> from the parent's Tick until it returns non-Running, and
 /// call <see cref="OnCancel"/> if the parent is cancelled or abandons it. It finishes cleanly on its own
@@ -41,6 +47,22 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private TilePoint _goal;
     private readonly int? _entityId;
     private readonly bool _allowDig, _allowBuild;
+
+    /// <summary>Light the way with torches from the inventory (see the class summary). Off for sub-walks of tasks
+    /// that place their own (explore) and for the torch's own placement.</summary>
+    public bool Torches { get; init; }
+
+    /// <summary>Torches placed so far.</summary>
+    public int TorchesPlaced => _torchPacer.Placed;
+
+    public object? Result => Torches ? new MoveToResult(TorchesPlaced) : null;
+
+    private const int LightSettleTicks = 10;
+    private readonly WalkTorch _torchPacer = new();
+    private readonly HashSet<TilePoint> _badTorchSpots = new();
+    private PlaceTask? _torch;
+    private TilePoint _torchSpot;
+    private bool _dug;
 
     /// <summary>Keep a goal inside diggable rock and dig to it (PathOptions.DigToGoal) instead of snapping.</summary>
     public bool DigToGoal { get; init; }
@@ -92,6 +114,9 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         int dist = Chebyshev(here, _goal);
         Progress = $"{dist} tiles remaining";
         if (dist <= _tolerance && k.OnGround) return Finish(ctx, GameTaskStatus.Succeeded, null);
+
+        if (_torch != null) return TickTorch(ctx, here);
+        if (Torches && _follower != null && TryStartTorch(ctx, k, here)) return GameTaskStatus.Running;
 
         if (_job != null) return PollPlan(ctx, k, here);
         if (_follower == null)
@@ -168,6 +193,64 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     }
 
     public void OnCancel(GameCtx ctx) => Cleanup(ctx);
+
+    // ---- torches ----------------------------------------------------------------------------------------------
+
+    /// <summary>Dark and due: drop the path, place a torch, then replan from where the player stands.</summary>
+    private bool TryStartTorch(GameCtx ctx, PlayerKinematics k, TilePoint here)
+    {
+        var step = _follower!.Remaining.Select(s => (PathStep?)s).FirstOrDefault();
+        if (step?.Kind == MoveKind.Dig) _dug = true;
+        if (!_torchPacer.Due()) return false;
+        var p = ctx.Player;
+        int slot = ExploreTask.TorchSlot(p);
+        var sense = new WalkTorchSense(slot >= 0, k.OnGround, p.wet, step?.Kind, here.Y > Main.worldSurface, _dug,
+            ExploreTask.BodyBrightness(here), ExploreTask.NearestTorch(here, TorchPlanner.SpacingTiles),
+            Safety.Protection.IsProtectedArea(here.X, here.Y));
+        if (WalkTorch.Blocker(sense) != null) return false;
+        var reach = new ReachSpec(Player.tileRangeX, Player.tileRangeY, p.inventory[slot].tileBoost);
+        if (WalkTorch.Spot(ctx.Grid, TorchCellAt, here, reach, _follower.Remaining) is not { } spot) return false;
+        _job?.Cancel();
+        _job = null;
+        DropFollower();
+        ControlState.Pending = default;
+        _torch = new PlaceTask(p, slot, spot);
+        _torchSpot = spot;
+        Progress = "placing a torch";
+        return true;
+    }
+
+    private GameTaskStatus TickTorch(GameCtx ctx, TilePoint here)
+    {
+        var st = _torch!.Tick(ctx);
+        if (st == GameTaskStatus.Running)
+        {
+            Progress = "placing a torch";
+            return GameTaskStatus.Running;
+        }
+        _torch = null;
+        ControlState.Pending = default;
+        if (st == GameTaskStatus.Succeeded) _torchPacer.OnPlaced();
+        else
+        {
+            _badTorchSpots.Add(_torchSpot);
+            _torchPacer.OnFailed();
+        }
+        // Let the new light spread, then plan again from here (the follower was dropped: it can't resume mid-step).
+        _retryIn = LightSettleTicks;
+        return GameTaskStatus.Running;
+    }
+
+    /// <summary>Vanilla torch rules the planner can't see: empty (or cuttable plants), dry, a wall behind; never a
+    /// protected tile or a spot the game already refused.</summary>
+    private TorchCell TorchCellAt(TilePoint t)
+    {
+        if (!WorldGen.InWorld(t.X, t.Y, 2) || _badTorchSpots.Contains(t) || Safety.Protection.IsProtected(t.X, t.Y))
+            return new TorchCell(false, false);
+        var tile = Main.tile[t.X, t.Y];
+        bool free = (!tile.HasTile || Main.tileCut[tile.TileType]) && tile.LiquidAmount == 0;
+        return new TorchCell(free, tile.WallType != WallID.None);
+    }
 
     private GameTaskStatus PollPlan(GameCtx ctx, PlayerKinematics k, TilePoint here)
     {
@@ -281,6 +364,8 @@ public sealed class MoveToTask : IGameTask<GameCtx>
 
     private void Cleanup(GameCtx ctx)
     {
+        _torch?.OnCancel(ctx);
+        _torch = null;
         _job?.Cancel();
         _job = null;
         DropFollower();
