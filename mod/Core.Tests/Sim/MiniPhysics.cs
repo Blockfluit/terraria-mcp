@@ -20,7 +20,7 @@ public enum SimTool { None, Pickaxe, Platform }
 /// ≤16 px when velocity.Y ≥ gravity and Down is not held. A platform step only while Up is held, and not when
 /// another platform is right above it.</item>
 /// <item>Platforms: solid from above only, ignored while Down is held (fallThrough = controlDown).</item>
-/// <item>Water: gravity 0.2, max fall 5, jump 6.01 x30, displacement halved. No swimming without Flippers: a jump
+/// <item>Water: gravity 0.2, max fall 5, jump 6.01 x30, displacement halved (a component the tile collision changed moves in full, as Player.WaterCollision). No swimming without Flippers: a jump
 /// still needs velocity.Y == 0 (the bottom). Leaving water cuts the remaining jump to 30/5 ticks.</item>
 /// <item>Fall damage as vanilla: fallStart resets while jumping/wet/on ground; landing more than 25 tiles below it hurts.</item>
 /// <item>Tools: reach is vanilla's tileRangeX/Y = 5/4 box with the item's tileBoost (pickaxe -1 here, like early picks; platforms 0).
@@ -129,15 +129,18 @@ public sealed class MiniPhysics
         if (VY >= g && !c.Down) StepUp(c.Up);
 
         bool fallThrough = c.Down;
+        float vxIn = VX, vyIn = VY;
         float vx = CollideX(VX);
         VX = vx;
         float vy = CollideY(VY, fallThrough, out bool up);
         VY = vy;
-        float dx = _wet ? VX * 0.5f : VX;
+        // Player.WaterCollision: half the velocity, except a component the tile collision changed moves in full (else a
+        // landing in water never reaches velocity.Y == 0: each tick covers only half the gap to the floor).
+        float dx = _wet && VX == vxIn ? VX * 0.5f : VX;
         if (_wet)
         {
-            X += VX * 0.5f;
-            Y += VY * 0.5f;
+            X += dx;
+            Y += VY == vyIn ? VY * 0.5f : VY;
         }
         else
         {

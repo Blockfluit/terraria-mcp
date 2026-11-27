@@ -18,7 +18,8 @@ namespace LlmPlayer.Tasks;
 /// sticky), every 120 ticks while the remaining path crosses Unknown tiles, every 60 ticks for an entity goal
 /// that moved, and on reaching the end of a partial plan (goal beyond the planning window).</item>
 /// <item>Fails after 5 consecutive failed replans (a plan that fails, or a follower that gets stuck/derailed
-/// without completing any step), with the last reason.</item>
+/// without completing any step), with the last reason, and after the same Stuck/NeedsReplan from the same tile
+/// <see cref="ReplanGuard"/> times however much the plans in between progressed.</item>
 /// <item>Dig steps hold the best pickaxe, build steps a platform (else the cheapest block); the previously held
 /// item comes back when the task ends (<see cref="HeldItemLease"/>).</item>
 /// <item>Doors: when the follower asks to interact with a door (OpenDoor / CloseDoor steps) it is opened or closed
@@ -49,6 +50,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private bool _partial, _pathCrossesUnknown;
     private TilePoint? _resolvedGoal;
     private readonly ProgressGuard _progress = new(maxStalls: 3);
+    private readonly ReplanGuard _repeats = new();
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
     private string? _lastFailure;
 
@@ -137,6 +139,9 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                 // it can't replan forever.
                 bool learned = o.Status == FollowerStatus.NeedsReplan && _pathCrossesUnknown && ++_learnedReplans <= MaxLearnedReplans;
                 if (!progressed && !learned && ++_failures >= MaxConsecutiveFailures) return Finish(ctx, GameTaskStatus.Failed, _lastFailure);
+                // The same failure from the same spot over and over (each plan in between walking a step or two, so the
+                // count above keeps resetting): give up instead of looping until cancelled.
+                if (!learned && _repeats.Record(here, _lastFailure)) return Finish(ctx, GameTaskStatus.Failed, _lastFailure + " (repeatedly)");
                 if (progressed) _failures = 0;
                 StartPlan(p, here);
                 return GameTaskStatus.Running;
