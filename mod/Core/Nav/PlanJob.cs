@@ -33,6 +33,8 @@ public sealed class PlanJob
     private volatile bool _cancelled;
 
     public TilePoint Start { get; }
+    /// <summary>The movement profile this job plans with (the follower uses its water-walk flags).</summary>
+    public MovementProfile Profile => _profile;
     public TilePoint RequestedGoal { get; }
 
     /// <summary>Where the result's path ends up heading (the requested goal, or a partial target). Valid once done.</summary>
@@ -238,7 +240,7 @@ public sealed class PlanJob
     {
         if (_hint is not { } h || _cancelled) return null;
         var t = h.Target;
-        if (!Inside(t, EdgeKeepOut) || !Pathfinder.CanStand(g, t)) return null;
+        if (!Inside(t, EdgeKeepOut) || !Pathfinder.CanStand(g, t, _profile)) return null;
         if (bestDistance < Distance(t, RequestedGoal) - h.SwitchMargin) return null;
         var r = Pathfinder.FindPath(g, Start, t, _profile, _options with { GoalSet = null });
         return r.Success ? (r, t, true) : null;
@@ -273,7 +275,7 @@ public sealed class PlanJob
             for (int x = _x0; x < _x0 + _w; x++)
             {
                 var p = new TilePoint(x, y);
-                if (!Inside(p, EdgeKeepOut) || !Pathfinder.CanStand(g, p) || HasUnknown(g, p)) continue;
+                if (!Inside(p, EdgeKeepOut) || !Pathfinder.CanStand(g, p, _profile) || HasUnknown(g, p)) continue;
                 long dx = goal.X - x, dy = goal.Y - y;
                 all.Add((dx * dx + dy * dy, p));
             }

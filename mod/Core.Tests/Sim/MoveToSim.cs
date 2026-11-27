@@ -192,7 +192,14 @@ public sealed class MoveToSim
     private MoveOutcome? Plan(TilePoint here, bool holdStill = true)
     {
         // Like ProfileBuilder: the platforms actually left in the inventory.
-        var profile = _profile with { BuildItemCount = Math.Min(_profile.BuildItemCount, _sim.Platforms) };
+        // Water walking as the sim has it now (the buff counts down like ProfileBuilder's buff time).
+        var profile = _profile with
+        {
+            BuildItemCount = Math.Min(_profile.BuildItemCount, _sim.Platforms),
+            WaterWalk = _profile.WaterWalk && _sim.WaterWalk,
+            LavaWalk = _profile.LavaWalk && _sim.LavaWalk,
+            WaterWalkTicks = Math.Min(_profile.WaterWalkTicks, _sim.WaterWalkTicks),
+        };
         var hint = _route.BeforePlan(here, _goal);
         if (!Commit) hint = null;
         var job = new PlanJob(here, _goal, profile, _options with { GoalTolerance = _tolerance }, hint);
@@ -224,7 +231,8 @@ public sealed class MoveToSim
         _resolvedGoal = r.ResolvedGoal;
         _route.OnPlanned(job.PlannedGoal, job.IsPartial);
         PlanLog.Add((job.Start, job.PlannedGoal, job.IsPartial));
-        _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(_view, job.Start));
+        _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(_view, job.Start),
+            waterWalk: profile.WaterWalk, lavaWalk: profile.LavaWalk);
         _stepsAtPlan = _follower.RemainingSteps;
         _pathCrossesUnknown = CrossesUnknown(_view, r.Steps);
         _ticksSincePlan = 0;

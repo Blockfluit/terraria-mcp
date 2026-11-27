@@ -21,6 +21,8 @@ namespace LlmPlayer.Nav;
 /// Gear raise breathCDMax); WaterBreathing = gills or merfolk (no breath loss at all).</item>
 /// <item>CanSwim (<see cref="CanSwim"/>): without it the pathfinder treats water like vanilla does for a player
 /// without Flippers (sink, walk along the bottom, jump off it).</item>
+/// <item>Water walking (<see cref="WaterWalkState"/>): WaterWalk from waterWalk / waterWalk2, LavaWalk only with
+/// waterWalk and lava immunity, WaterWalkTicks = the potion buff's time left (unlimited from gear).</item>
 /// </list>
 /// </summary>
 public static class ProfileBuilder
@@ -55,6 +57,7 @@ public static class ProfileBuilder
     public static MovementProfile From(Player p, bool allowDig = true, bool allowBuild = true, int platformReserve = 0)
     {
         var phys = Physics(p);
+        var ww = WaterWalkState(p);
         if (_cachedJumps == null || _cachedPhysics != phys)
         {
             _cachedJumps = JumpModel.Apply(new MovementProfile(), phys);
@@ -71,7 +74,33 @@ public static class ProfileBuilder
             MaxSubmergedSteps = BreathMath.MaxSubmergedSteps(p.breathMax, p.breathCDMax),
             WaterBreathing = Tasks.Reflexes.CanBreatheInLiquid(p),
             CanSwim = CanSwim(p),
+            WaterWalk = ww.Water,
+            LavaWalk = ww.Lava,
+            WaterWalkTicks = ww.Ticks,
+            MaxRunSpeed = phys.MaxRunSpeed,
         };
+    }
+
+    /// <summary>
+    /// Water walking (wiki "Water Walking Potion", "Water Walking Boots"): vanilla's <c>waterWalk</c> (the potion's
+    /// buff, Lava Waders and their upgrades) walks on water, honey and lava, <c>waterWalk2</c> (Water Walking Boots,
+    /// Obsidian Water Walking Boots) on water and honey. Lava only counts with <c>lavaImmune</c> (a slip or the buff
+    /// running out would be deadly). Ticks: the Water Walking buff's time left when it is the only possible source
+    /// (no waterWalk2 from boots); with waterWalk but the buff gone, it comes from gear: unlimited. With both the buff
+    /// and waterWalk gear the buff time is used (conservative: the buff can't be told apart from the gear).
+    /// </summary>
+    public static (bool Water, bool Lava, int Ticks) WaterWalkState(Player p)
+    {
+        bool water = p.waterWalk || p.waterWalk2;
+        if (!water) return (false, false, int.MaxValue);
+        bool lava = p.waterWalk && p.lavaImmune;
+        int ticks = int.MaxValue;
+        if (!p.waterWalk2)
+        {
+            int idx = p.FindBuffIndex(BuffID.WaterWalking);
+            if (idx >= 0) ticks = Math.Max(0, p.buffTime[idx]);
+        }
+        return (true, lava, ticks);
     }
 
     /// <summary>

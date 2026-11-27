@@ -17,6 +17,15 @@ namespace LlmPlayer.Core.Nav;
 /// with a water jump from it (<paramref name="MaxWaterJumpUp"/>) and sinks everywhere else.</param>
 /// <param name="MaxWaterJumpUp">How many tiles the feet rise in one jump off the bottom of liquid
 /// (<see cref="JumpModel.WaterJumpUp"/>; vanilla 8).</param>
+/// <param name="WaterWalk">Water Walking (Water Walking Potion buff, Water Walking Boots and their upgrades: vanilla
+/// <c>waterWalk</c> / <c>waterWalk2</c>): the top cell of water or honey holds the player like a platform (vanilla
+/// Collision.WaterCollision, only while Down isn't held), so lakes can be walked over (<see cref="LiquidWalk"/>).</param>
+/// <param name="LavaWalk">The lava surface holds the player too. Vanilla's <c>waterWalk</c> (the potion, Lava Waders)
+/// also walks on lava, but the mod only sets this with lava immunity: a slip is deadly otherwise.</param>
+/// <param name="WaterWalkTicks">Ticks of <paramref name="WaterWalk"/> left (the potion's remaining buff time;
+/// int.MaxValue = from gear, unlimited). The planner never stands the player on a liquid surface later than the
+/// estimated arrival time allows (<see cref="LiquidWalk.UsableTicks"/>, at <paramref name="MaxRunSpeed"/>).</param>
+/// <param name="MaxRunSpeed">Running speed in px/tick (vanilla 3), for the travel-time estimate.</param>
 public sealed record MovementProfile(
     int MaxJumpUp = 5,
     int MaxJumpGap = 6,
@@ -28,7 +37,11 @@ public sealed record MovementProfile(
     int MaxSubmergedSteps = BreathMath.VanillaMaxSubmergedSteps,
     bool WaterBreathing = false,
     bool CanSwim = false,
-    int MaxWaterJumpUp = JumpModel.VanillaWaterJumpUp)
+    int MaxWaterJumpUp = JumpModel.VanillaWaterJumpUp,
+    bool WaterWalk = false,
+    bool LavaWalk = false,
+    int WaterWalkTicks = int.MaxValue,
+    float MaxRunSpeed = 3f)
 {
     /// <summary>Largest |dx| for a jump landing dy rows lower (negative dy = higher), with the body able to rise at
     /// most <paramref name="ceiling"/> tiles and sideways motion blocked until the feet are <paramref name="launch"/>

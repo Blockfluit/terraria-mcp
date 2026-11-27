@@ -348,7 +348,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         _route.OnPlanned(job.PlannedGoal, job.IsPartial);
         // The search started from the normalized start (FindPath): the follower's first "previous position" must match.
         _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(ctx.Grid, job.Start), physics: ProfileBuilder.Physics(ctx.Player),
-            canSwim: ProfileBuilder.CanSwim(ctx.Player));
+            canSwim: ProfileBuilder.CanSwim(ctx.Player), waterWalk: job.Profile.WaterWalk, lavaWalk: job.Profile.LavaWalk);
         _stepsAtPlan = _follower.RemainingSteps;
         _pathCrossesUnknown = CrossesUnknown(ctx.Grid, r.Steps);
         _ticksSincePlan = 0;

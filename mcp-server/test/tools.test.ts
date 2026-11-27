@@ -105,6 +105,16 @@ describe("registerTools", () => {
     expect(tools.find((t) => t.name === "move_to")?.description).toContain("torchesPlaced");
   });
 
+  it("move_to and explore explain walking over lakes with Water Walking", async () => {
+    const client = await setup(new FakeConn(() => ({ started: true })));
+    const tools = (await client.listTools()).tools;
+    for (const name of ["move_to", "explore"]) {
+      const d = tools.find((t) => t.name === name)?.description ?? "";
+      for (const word of ["Water Walking", "use_item"]) expect(d).toContain(word);
+    }
+    expect(tools.find((t) => t.name === "move_to")?.description).toContain("water walking would run out");
+  });
+
   it("explore forwards allow_dig/torches and describes digging, torches and the result", async () => {
     const conn = new FakeConn(() => ({ started: true, task: "explore" }));
     const client = await setup(conn);

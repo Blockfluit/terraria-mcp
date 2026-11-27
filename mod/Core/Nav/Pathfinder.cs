@@ -46,6 +46,12 @@ namespace LlmPlayer.Core.Nav;
 /// <item>CloseDoor: stand at Pos (= the previous position, the body clear of the door column) and close the door
 /// at WorkTile that an earlier OpenDoor opened (<see cref="PathOptions.CloseDoorsBehind"/>). Best effort.</item>
 /// </list>
+/// With <see cref="MovementProfile.WaterWalk"/> (and <see cref="MovementProfile.LavaWalk"/>) the topmost cell of a
+/// walkable liquid (<see cref="LiquidWalk.IsSurface"/>) supports the body like solid ground for walking, jumping,
+/// falling and landing, but never anchors a placed tile and is never dropped through (that needs Down, which sinks).
+/// A position held only by a liquid surface is refused once the estimated travel time to it exceeds
+/// <see cref="LiquidWalk.UsableTicks"/> (the buff would run out under the player), and with a time-limited buff a path
+/// never ends on one (goal, tolerance or best-effort end).
 /// </summary>
 public static class Pathfinder
 {
@@ -72,6 +78,23 @@ public static class Pathfinder
             for (int dx = 0; dx < 2; dx++)
                 if (grid.Get(p.X + dx, p.Y - dy).BlocksBody) return false;
         return grid.Get(p.X, p.Y + 1).IsStandable || grid.Get(p.X + 1, p.Y + 1).IsStandable;
+    }
+
+    /// <summary><see cref="CanStand(ITileGrid, TilePoint)"/> as a place to stop: with unlimited
+    /// <see cref="MovementProfile.WaterWalk"/> / <see cref="MovementProfile.LavaWalk"/> (gear) a walkable liquid surface
+    /// under the body holds it too. Not with a time-limited buff: a path never ends on liquid then (the buff would run
+    /// out under the waiting player), it only crosses it.</summary>
+    public static bool CanStand(ITileGrid grid, TilePoint p, MovementProfile profile)
+    {
+        if (!(profile.WaterWalk || profile.LavaWalk) || profile.WaterWalkTicks != int.MaxValue) return CanStand(grid, p);
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 2; dx++)
+            {
+                var t = grid.Get(p.X + dx, p.Y - dy);
+                if (t.BlocksBody || (profile.LavaWalk && t.Kind == TileKind.Lava)) return false;
+            }
+        return LiquidWalk.Holds(grid, p.X, p.Y + 1, profile.WaterWalk, profile.LavaWalk)
+               || LiquidWalk.Holds(grid, p.X + 1, p.Y + 1, profile.WaterWalk, profile.LavaWalk);
     }
 
     /// <summary>
@@ -152,6 +175,8 @@ public static class Pathfinder
         /// <summary>Non-swimmers in liquid with nothing under the feet: tiles risen in the current water jump
         /// (1..MaxWaterJumpUp) or <see cref="Sinking"/>. 0 everywhere else (ground, dry, swimmers).</summary>
         public int Rise;
+        /// <summary>Estimated ticks of travel from the start (only tracked while water walking is time-limited).</summary>
+        public float T;
         public float G;
         public bool Built, Closed, HasWork, Door;
         public MoveKind Kind;
@@ -170,6 +195,8 @@ public static class Pathfinder
         private readonly int _buildCap, _maxFallScan, _maxSub;
         private readonly bool _trackBreath, _swim;
         private readonly int _waterRise;
+        private readonly float _surfaceTicks, _ticksPerTile;
+        private int _surfaceCut;
 
         private Node[] _nodes = new Node[1024];
         private int _count;
@@ -190,7 +217,10 @@ public static class Pathfinder
             _canDig = o.AllowDig && p.PickPower > 0;
             _canBuild = o.AllowBuild && p.BuildItemCount > 0;
             _buildCap = Math.Min(p.BuildItemCount, MaxBuildsTracked);
-            _t = new TileCache(grid, start, goal, _canDig ? p.PickPower : 0);
+            _t = new TileCache(grid, start, goal, _canDig ? p.PickPower : 0, p.WaterWalk, p.LavaWalk);
+            int usable = p.WaterWalk || p.LavaWalk ? LiquidWalk.UsableTicks(p) : int.MaxValue;
+            _surfaceTicks = usable == int.MaxValue ? float.PositiveInfinity : usable;
+            _ticksPerTile = LiquidWalk.TicksPerTile(p);
             _flatIndex = ArrayPool<int>.Shared.Rent(_t.Size);
             Array.Clear(_flatIndex, 0, _t.Size);
             _fallMemo = ArrayPool<int>.Shared.Rent(_t.Size);
@@ -263,7 +293,7 @@ public static class Pathfinder
                         return Success(ni, expanded) with { ResolvedGoal = end };
                     }
                 }
-                else if (n.X == _goal.X && n.Y == _goal.Y) return Success(ni, expanded);
+                else if (n.X == _goal.X && n.Y == _goal.Y && !EndsOnLiquid(n.X, n.Y)) return Success(ni, expanded);
                 if (_goalSet == null && fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance && CanEnd(n))
                 {
                     // Prefer the exact goal, but don't spend much more effort looking for it.
@@ -282,13 +312,19 @@ public static class Pathfinder
                 var r = Success(closest, expanded);
                 return r with { ResolvedGoal = new TilePoint(_nodes[closest].X, _nodes[closest].Y) };
             }
-            return new PathResult(false, Array.Empty<PathStep>(), $"unreachable: searched {expanded} nodes", expanded);
+            string why = _surfaceCut > 0
+                ? $"; water walking would run out on the way ({_surfaceTicks / 60f + LiquidWalk.MarginTicks / 60f:F0} s left, routes over liquid longer than that were dropped)"
+                : "";
+            return new PathResult(false, Array.Empty<PathStep>(), $"unreachable: searched {expanded} nodes{why}", expanded);
         }
 
         /// <summary>A path may end here: a non-swimmer can't stay in liquid with nothing underfoot (it sinks) and,
         /// unless it breathes water, mustn't be left with the head under (only swimmers can come up anywhere).</summary>
         private bool CanEnd(in Node n) =>
-            _swim || n.Rise == 0 && (!_trackBreath || !HeadWet(n.X, n.Y)) || n.Built;
+            (_swim || n.Rise == 0 && (!_trackBreath || !HeadWet(n.X, n.Y)) || n.Built) && !EndsOnLiquid(n.X, n.Y);
+
+        /// <summary>With a time-limited water-walking buff, the body at (x, y) would wait on a liquid surface.</summary>
+        private bool EndsOnLiquid(int x, int y) => !float.IsPositiveInfinity(_surfaceTicks) && SurfaceOnly(x, y);
 
         /// <summary>A non-swimmer's body is in liquid with no ground under it: it rises in a water jump or sinks.</summary>
         private bool Afloat(int x, int y) => !_swim && BodyHas(x, y, TileCache.Liquid) && !HasSupport(x, y);
@@ -320,7 +356,7 @@ public static class Pathfinder
             if (!(BodyClear(x, y) || (_o.DigToGoal && _canDig && BodyDiggable(x, y)))) return false;
             bool wet = BodyHas(x, y, TileCache.Liquid);
             if (!_swim && wet && _trackBreath && HeadWet(x, y)) return false;
-            return HasSupport(x, y) || (wet && _swim)
+            return (HasSupport(x, y) && !EndsOnLiquid(x, y)) || (wet && _swim)
                    || (_canBuild && _buildCap > 0 && PlainAir(x, y + 1) && Anchored(x, y + 1));
         }
 
@@ -416,6 +452,19 @@ public static class Pathfinder
             bool withDigs = false, int wx = 0, int wy = 0, bool hasWork = false, bool door = false, int rise = Sinking)
         {
             if (built || !Afloat(x, y)) rise = 0;
+            float t = 0f;
+            if (!float.IsPositiveInfinity(_surfaceTicks))
+            {
+                ref var pp = ref _nodes[parent];
+                int tiles = Math.Max(1, Math.Max(Math.Abs(x - pp.X), Math.Abs(y - pp.Y)));
+                t = pp.T + tiles * _ticksPerTile + (withDigs ? _digs.Count * DigTicksEstimate : 0)
+                    + (hasWork ? WorkTicksEstimate : 0) + (door ? WorkTicksEstimate : 0);
+                if (t > _surfaceTicks && !built && SurfaceOnly(x, y))
+                {
+                    _surfaceCut++;
+                    return; // the buff would be gone by then: the player would sink
+                }
+            }
             float g = _nodes[parent].G + cost;
             if (BodyHas(x, y, TileCache.Unknown)) g += UnknownPenalty;
             int sub = 0;
@@ -450,13 +499,29 @@ public static class Pathfinder
             _nodes[idx] = new Node
             {
                 Depth = depth, DigAnc = digAnc,
-                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub, Rise = rise,
+                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub, Rise = rise, T = t,
                 DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy, Door = door,
             };
             _open.Enqueue(idx, g + H(x, y));
         }
 
+        /// <summary>Rough ticks per dug tile and per placed tile / opened door, for the water-walk time estimate.</summary>
+        private const float DigTicksEstimate = 30f, WorkTicksEstimate = 20f;
+
         // ---- tile predicates -------------------------------------------------------------
+
+        /// <summary>The body at (x, y) is held, but only by a liquid surface (water walking).</summary>
+        private bool SurfaceOnly(int x, int y)
+        {
+            bool surface = false;
+            for (int c = x; c <= x + 1; c++)
+            {
+                if (!Holds(c, y + 1)) continue;
+                if ((_t.F(c, y + 1) & TileCache.Surface) == 0) return false;
+                surface = true;
+            }
+            return surface;
+        }
 
         private bool InSource(int x, int y) => x >= _sx && x <= _sx + 1 && y >= _sy - 2 && y <= _sy;
 
@@ -1054,7 +1119,10 @@ public static class Pathfinder
         /// never got placed and the player jumped and fell back forever.</summary>
         private bool Anchored(int x, int y) =>
             (_t.F(x, y) & TileCache.Wall) != 0
-            || ((Held(x - 1, y) | Held(x + 1, y) | Held(x, y - 1) | Held(x, y + 1)) & TileCache.Stand) != 0;
+            || AnchorTile(Held(x - 1, y)) || AnchorTile(Held(x + 1, y)) || AnchorTile(Held(x, y - 1)) || AnchorTile(Held(x, y + 1));
+
+        /// <summary>A tile something can be placed against: standable, but not a liquid surface (water walking).</summary>
+        private static bool AnchorTile(int f) => (f & (TileCache.Stand | TileCache.Surface)) == TileCache.Stand;
 
         /// <summary>Tile flags, except that the cells of the body being expanded are clear (it stands there; this path may
         /// have dug them out: seen in the fuzz, a climb platform "anchored" to the rock just mined and never placed).</summary>
@@ -1073,7 +1141,7 @@ public static class Pathfinder
         }
 
         /// <summary>A standable tile at (x, y) that this path hasn't mined (nor stands in).</summary>
-        private bool HeldBy(int ni, int x, int y) => Holds(x, y);
+        private bool HeldBy(int ni, int x, int y) => Holds(x, y) && (_t.F(x, y) & TileCache.Surface) == 0;
 
         /// <summary>
         /// Tiles mined by the last <see cref="DugLookback"/> steps up to the node being expanded. The search doesn't write
@@ -1243,20 +1311,25 @@ public static class Pathfinder
             Door = 256, Wall = 512, Occupied = 1024,
             // Shaped solid blocks (still Block|Stand): LowTop = half block or floor slope; RisesRight / RisesLeft = a
             // floor slope whose surface climbs toward the right (vanilla SlopeDownRight) / the left (SlopeDownLeft).
-            LowTop = 2048, RisesRight = 4096, RisesLeft = 8192;
+            LowTop = 2048, RisesRight = 4096, RisesLeft = 8192,
+            // Water walking: the topmost cell of a walkable liquid (also Stand; still Liquid / Deadly for the body).
+            Surface = 16384;
         private const int Margin = 128, MaxDim = 1024;
 
         private readonly ITileGrid _g;
         private readonly int _x0, _y0, _w, _h, _pick;
+        private readonly bool _waterWalk, _lavaWalk;
         private readonly ushort[] _f;
 
         /// <summary>OR of the flags of every tile classified so far.</summary>
         public int Seen;
 
-        public TileCache(ITileGrid g, TilePoint start, TilePoint goal, int pickPower)
+        public TileCache(ITileGrid g, TilePoint start, TilePoint goal, int pickPower, bool waterWalk = false, bool lavaWalk = false)
         {
             _g = g;
             _pick = pickPower;
+            _waterWalk = waterWalk;
+            _lavaWalk = lavaWalk;
             _w = Math.Min(MaxDim, Math.Abs(goal.X - start.X) + 2 * Margin);
             _h = Math.Min(MaxDim, Math.Abs(goal.Y - start.Y) + 2 * Margin);
             int cx = (int)(((long)start.X + goal.X) / 2), cy = (int)(((long)start.Y + goal.Y) / 2);
@@ -1351,13 +1424,13 @@ public static class Pathfinder
 
         public ushort F(int x, int y)
         {
-            if (!TryIndex(x, y, out int i)) return Classify(_g.Get(x, y));
+            if (!TryIndex(x, y, out int i)) return Classify(_g.Get(x, y), x, y);
             ushort b = _f[i];
-            if (b == 0) _f[i] = b = Classify(_g.Get(x, y));
+            if (b == 0) _f[i] = b = Classify(_g.Get(x, y), x, y);
             return b;
         }
 
-        private ushort Classify(TileInfo t)
+        private ushort Classify(TileInfo t, int x, int y)
         {
             int b = Computed;
             switch (t.Kind)
@@ -1379,6 +1452,7 @@ public static class Pathfinder
             }
             if (t.Wall) b |= Wall;
             if (t.Occupied) b |= Occupied;
+            if ((_waterWalk || _lavaWalk) && LiquidWalk.IsSurface(_g, x, y, _waterWalk, _lavaWalk)) b |= Stand | Surface;
             Seen |= b;
             return (ushort)b;
         }

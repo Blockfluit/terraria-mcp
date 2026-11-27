@@ -18,6 +18,7 @@ public static class NavMath
     /// that row and the 2x3 body would overlap the block. Then the body really stands on it, one row up (a clear,
     /// supported body there; the neighbouring column on the hitbox's side if the rounded one has no support). Seen in game: on a sloped hillside the plain tile overlapped the slope, the planner exempted
     /// the start cells and planned a Walk the follower rejected at once ("path changed at Walk"), over and over.
+    /// A hitbox standing on a liquid surface (water walking) with its feet inside the top liquid cell counts the same way.
     /// </summary>
     public static TilePoint StandingTile(PlayerKinematics k, ITileGrid grid)
     {
@@ -26,7 +27,15 @@ public static class NavMath
         if (bottom >= t.Y + 1f - 1f / 32f) return t; // resting on top of the row below: nothing sunk in
         int c0 = (int)MathF.Floor(k.X + 0.01f), c1 = (int)MathF.Floor(k.X + PlayerPhysics.HitboxWidth - 0.01f);
         bool sunk = false;
-        for (int c = c0; c <= c1 && !sunk; c++) sunk = grid.Get(c, t.Y).IsLowTop;
+        // Also standing on a liquid surface (water walking): the grid calls a cell liquid from half full, so the
+        // feet rest up to half a tile inside the top liquid cell's row. On the ground mid-row in a liquid cell can't
+        // be anything else (a body in liquid on ground rests on the row's bottom, or on a half block / slope).
+        for (int c = c0; c <= c1 && !sunk; c++)
+        {
+            var cell = grid.Get(c, t.Y);
+            sunk = cell.IsLowTop || (k.OnGround && cell.Kind is TileKind.Water or TileKind.Honey or TileKind.Lava
+                                     && grid.Get(c, t.Y - 1).Kind is TileKind.Air or TileKind.Platform);
+        }
         if (!sunk) return t;
         // One row up; the hitbox may rest on a slope in a column the rounded body doesn't cover (it spans 3 columns
         // part of the time), so also try the neighbouring column on the hitbox's side.
