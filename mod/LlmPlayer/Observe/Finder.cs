@@ -50,6 +50,14 @@ public static class Finder
         return FindSelector.Select(cands, px, py, FindSelector.MaxResults, cluster, name);
     }
 
+    /// <summary>Every visible tree base (or root beside one) within <paramref name="radius"/>, uncapped and unsorted:
+    /// chop_tree ranks them itself (near spawn the 10 nearest can all be protected).</summary>
+    public static List<FindCandidate> AllTrees(Player p, int radius = DefaultRadius)
+    {
+        var (px, py) = StateReader.StandingTile(p);
+        return ScanTiles(p, "tree", px, py, Math.Clamp(radius, 0, MaxRadius));
+    }
+
     private static List<FindCandidate> ScanTiles(Player p, string cat, int px, int py, int radius)
     {
         var screen = Visibility.Screen;

@@ -117,7 +117,8 @@ public sealed record HouseLayout(int X, int FloorY, int Width, int Height, DoorS
 }
 
 /// <summary>What one build step places.</summary>
-public enum HousePart { Frame, Door, BackWall, Table, Chair, Torch }
+/// <remarks><see cref="Flatten"/>: hammer an existing half block / slope in the frame back to a full block.</remarks>
+public enum HousePart { Frame, Door, BackWall, Table, Chair, Torch, Flatten }
 
 public readonly record struct HouseStep(HousePart Part, TilePoint Target);
 
@@ -129,6 +130,8 @@ public readonly record struct HouseStep(HousePart Part, TilePoint Target);
 /// <item>Frame, in a preferred order (floor; far wall bottom-up; ceiling from the far side; door-side wall top-down,
 /// which hangs from the ceiling), each next tile being the first one in that order that is anchored by what exists or
 /// was placed before (<see cref="AnchoredOrder"/>). Tiles that never get an anchor are returned separately.</item>
+/// <item>Flatten: existing half blocks and slopes in the frame are hammered to full blocks (a door or furniture
+/// can't stand on one; the game refuses the placement), floor first.</item>
 /// <item>Door (its anchors are frame tiles).</item>
 /// <item>Background walls, bottom row first, each attached to the frame or an earlier wall.</item>
 /// <item>Table, chair, then the torch (on the back wall).</item>
@@ -197,13 +200,13 @@ public static class HousePlan
     }
 
     /// <summary>
-    /// The whole step list: frame, door, walls, table, chair, torch. <paramref name="frameToPlace"/> /
+    /// The whole step list: frame, flatten (<paramref name="flatten"/>), door, walls, table, chair, torch. <paramref name="frameToPlace"/> /
     /// <paramref name="wallsToPlace"/>: tiles still missing; <paramref name="tileAnchor"/>: an existing tile (or wall)
     /// that anchors blocks; <paramref name="wallAnchor"/>: an existing tile or wall that anchors walls (frame tiles
     /// count as placed). Problems (unanchorable tiles) go to <paramref name="problem"/>.
     /// </summary>
     public static List<HouseStep> Steps(HouseLayout l, ISet<TilePoint> frameToPlace, ISet<TilePoint> wallsToPlace,
-        Func<TilePoint, bool> tileAnchor, Func<TilePoint, bool> wallAnchor, out string? problem)
+        Func<TilePoint, bool> tileAnchor, Func<TilePoint, bool> wallAnchor, out string? problem, ISet<TilePoint>? flatten = null)
     {
         problem = null;
         var steps = new List<HouseStep>();
@@ -211,6 +214,8 @@ public static class HousePlan
         if (loose.Count > 0)
             problem = $"nothing to attach {loose.Count} frame tile(s) to (first {loose[0]}): build on solid ground";
         steps.AddRange(frame.Select(t => new HouseStep(HousePart.Frame, t)));
+        if (flatten != null)
+            steps.AddRange(flatten.OrderByDescending(t => t.Y).ThenBy(t => t.X).Select(t => new HouseStep(HousePart.Flatten, t)));
         steps.Add(new HouseStep(HousePart.Door, l.DoorAim));
         var frameSet = new HashSet<TilePoint>(l.FrameTiles());
         var walls = WallOrder(l, wallsToPlace, p => frameSet.Contains(p) || l.IsDoorTile(p) || wallAnchor(p), out var looseWalls);

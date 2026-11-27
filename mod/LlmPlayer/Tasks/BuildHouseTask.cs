@@ -21,8 +21,10 @@ public sealed record HouseResult(int X, int Y, int Width, int Height, string Doo
 /// tile and use it. Every tile, wall and piece of furniture goes through vanilla ItemCheck/PlaceThing (reach, anchors,
 /// item consumed); nothing is set directly.
 /// <list type="bullet">
+/// <item>First, natural bumps inside the plot and decoration are mined (<see cref="HouseSite"/>).</item>
 /// <item>Order from <see cref="HousePlan.Steps"/>: frame (floor, far wall, ceiling, door-side wall hanging from it),
-/// door, background walls, table, chair, torch. The command checked the site and the bill of materials and did any
+/// flatten (half blocks / slopes in the frame hammered to full blocks with the best hammer: the game refuses a door or
+/// furniture on a shaped block), door, background walls, table, chair, torch. The command checked the site and the bill of materials and did any
 /// crafting before starting.</item>
 /// <item>The player stands inside on the floor (<see cref="HousePlan.InsideStand"/>), on the spot that reaches the next
 /// tile and the most following ones; the first walk there may dig/build, every later walk may not (it would break or
@@ -38,6 +40,8 @@ public sealed record HouseResult(int X, int Y, int Width, int Height, string Doo
 public sealed class BuildHouseTask : IGameTask<GameCtx>
 {
     public const int MaxAttempts = 3, AttemptTicks = 20, MaxMoves = 3, HoldTimeoutTicks = 300;
+    /// <summary>Hammer swings to try on one block: the shape cycles (slopes, half block, full) one step per hit.</summary>
+    public const int FlattenAttempts = 10;
 
     private enum Phase { Build, Exit, Done }
 
@@ -64,7 +68,8 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
 
     private MineTask? _clear;
 
-    /// <param name="clearFirst">Natural decoration in the plot (rock piles, dye plants) to break before building.</param>
+    /// <param name="clearFirst">Natural decoration (rock piles, dye plants) and small ground bumps in the plot to mine
+    /// before building, top-down.</param>
     public BuildHouseTask(HouseLayout layout, List<HouseStep> steps, bool canExit, List<TilePoint>? clearFirst = null)
     {
         if (clearFirst is { Count: > 0 }) _clear = new MineTask(clearFirst, "build_house");
@@ -81,7 +86,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         if (_clear != null)
         {
             var cs = _clear.Tick(ctx);
-            Progress = $"clearing decoration from the plot ({_clear.Progress})";
+            Progress = $"clearing the plot ({_clear.Progress})";
             if (cs == GameTaskStatus.Running) return GameTaskStatus.Running;
             string? why = _clear.Reason;
             _clear = null;
@@ -130,6 +135,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             if (slot < 0) return Finish(ctx, GameTaskStatus.Failed, $"out of {Needed(step.Part)} (placed {Summary()})");
             var item = p.inventory[slot];
             bool solid = step.Part == HousePart.Frame;
+            bool tool = step.Part == HousePart.Flatten;
             var aim = Aim(step);
 
             if (_move != null)
@@ -144,7 +150,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
                 ControlState.Pending = default;
             }
 
-            int range = p.blockRange; // vanilla adds blockRange for every item that places a tile or wall
+            int range = tool ? 0 : p.blockRange; // vanilla adds blockRange for every item that places a tile or wall
             bool inReach = ReachMath.InItemRange(p.position.X, p.position.Y, p.width, p.height,
                 Player.tileRangeX + range, Player.tileRangeY + range, item.tileBoost, aim.X, aim.Y);
             bool overlaps = solid && ReachMath.OverlapsBody(p.position.X, p.position.Y, p.width, p.height, aim.X, aim.Y);
@@ -174,17 +180,22 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             if (_attemptTick >= AttemptTicks)
             {
                 _attemptTick = 0;
-                if (++_attempts >= MaxAttempts)
+                if (++_attempts >= (tool ? FlattenAttempts : MaxAttempts))
                 {
                     if (step.Part == HousePart.BackWall) { _skips.Add(step.Target, "game refused to place"); NextStep(ctx); continue; }
+                    // A block that won't flatten isn't fatal by itself; a door or furniture on it fails later, with the reason.
+                    if (tool) { _skips.Add(step.Target, "couldn't hammer flat"); NextStep(ctx); continue; }
+                    string why = ShapedFloorUnder(step) is { } sh
+                        ? $"the floor block at {sh} is a half block or slope: furniture and doors need full blocks"
+                        : "something in the way, or nothing to attach to";
                     return Finish(ctx, GameTaskStatus.Failed,
                         $"the game refused to place the {PartName(step.Part)} ({item.Name}) at {aim} after {MaxAttempts} attempts " +
-                        $"(something in the way, or nothing to attach to); placed {Summary()}");
+                        $"({why}); placed {Summary()}");
                 }
                 return AimAt(Aim(step), use: false);
             }
             _attemptTick++;
-            Progress = $"{_idx}/{_steps.Count} steps: placing the {PartName(step.Part)}";
+            Progress = tool ? $"{_idx}/{_steps.Count} steps: hammering {aim} flat" : $"{_idx}/{_steps.Count} steps: placing the {PartName(step.Part)}";
             return AimAt(aim, use: true);
         }
         return GameTaskStatus.Running;
@@ -302,6 +313,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             HousePart.Table => tile.HasTile && IsIn(TileID.Sets.RoomNeeds.CountsAsTable, tile.TileType),
             HousePart.Chair => tile.HasTile && IsIn(TileID.Sets.RoomNeeds.CountsAsChair, tile.TileType),
             HousePart.Torch => tile.HasTile && IsIn(TileID.Sets.RoomNeeds.CountsAsTorch, tile.TileType),
+            HousePart.Flatten => !tile.HasTile || (!tile.IsHalfBlock && tile.Slope == SlopeType.Solid),
             _ => false,
         };
     }
@@ -314,12 +326,29 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             var w = Main.tile[s.Target.X, s.Target.Y];
             return w.WallType != WallID.None && !Main.wallHouse[w.WallType] ? "a natural wall" : null;
         }
-        if (s.Part == HousePart.Door) return null; // the door's own tiles are checked by IsDone; vanilla decides the rest
+        if (s.Part is HousePart.Door or HousePart.Flatten) return null; // door: its own tiles are checked by IsDone; vanilla decides the rest
         var t = Main.tile[s.Target.X, s.Target.Y];
         return t.HasTile && !Main.tileCut[t.TileType] ? TileClass.Name(t.TileType) : null;
     }
 
     private static bool IsIn(int[] set, int type) => Array.IndexOf(set, type) >= 0;
+
+    /// <summary>A half block / slope in the floor under a table, chair or door (why the game refused it), or null.</summary>
+    private TilePoint? ShapedFloorUnder(HouseStep s)
+    {
+        IEnumerable<int> xs = s.Part switch
+        {
+            HousePart.Table => new[] { s.Target.X - 1, s.Target.X, s.Target.X + 1 },
+            HousePart.Chair or HousePart.Door => new[] { s.Target.X },
+            _ => Array.Empty<int>(),
+        };
+        foreach (int x in xs)
+        {
+            var t = Main.tile[x, _l.FloorY];
+            if (t.HasTile && (t.IsHalfBlock || t.Slope != SlopeType.Solid)) return new TilePoint(x, _l.FloorY);
+        }
+        return null;
+    }
 
     private static string PartName(HousePart part) => part switch
     {
@@ -328,6 +357,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         HousePart.BackWall => "background wall",
         HousePart.Table => "table",
         HousePart.Chair => "chair",
+        HousePart.Flatten => "flattened block",
         _ => "torch",
     };
 
@@ -338,6 +368,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         HousePart.BackWall => "background walls",
         HousePart.Table => "tables/work benches",
         HousePart.Chair => "chairs",
+        HousePart.Flatten => "a hammer",
         _ => "torches",
     };
 
