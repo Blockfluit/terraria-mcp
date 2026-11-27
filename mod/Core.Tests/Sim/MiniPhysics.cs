@@ -30,6 +30,13 @@ public enum SimTool { None, Pickaxe, Platform }
 /// <item>Doors (Interact, within the 5/4 interaction box): a closed door's whole column of door tiles becomes air
 /// (WorldGen.OpenDoor; the swing column isn't modelled: an open door is passable anyway); interacting with an open
 /// one closes it again unless the hitbox overlaps its column (WorldGen.CloseDoor's Collision.EmptyTile check).</item>
+/// <item>Shaped blocks (an approximation of Collision.SlopeCollision / StepUp / StepDown, not a port): a half block is
+/// solid in its bottom half; a floor slope (DownRight = high at the right, DownLeft = high at the left) is solid below
+/// its diagonal, its high side is a full-height wall, its low side no wall at all. Moving into a slope's diagonal (or
+/// landing on it at an angle) lifts the hitbox out by up to 16 px; walking downhill keeps the feet on the surface
+/// (snaps down by up to the step's horizontal distance + 1 px, 8.5 px near a half block) while the player was on the
+/// ground and isn't jumping. The hitbox rests on the highest surface point under it, i.e. a corner on a slope.
+/// StepUp onto a half block rises 8 px, onto a full block from a half block 8 px. Ceiling slopes are full blocks.</item>
 /// </list>
 /// </summary>
 public sealed class MiniPhysics
@@ -77,11 +84,14 @@ public sealed class MiniPhysics
 
     public PlayerKinematics Kinematics => NavMath.FromPixels(X, Y, VX, VY);
 
-    public TilePoint StandingTile => NavMath.StandingTile(Kinematics);
+    /// <summary>The grid-aware standing tile (feet riding a slope / half block count as standing on it), as the game
+    /// tasks compute it.</summary>
+    public TilePoint StandingTile => NavMath.StandingTile(Kinematics, _g);
 
     public void Step(ControlIntent c, SimTool tool = SimTool.None)
     {
         Ticks++;
+        bool grounded = VY == 0f;
         _wet = Overlaps(X, Y, k => k is TileKind.Water or TileKind.Honey);
         float g = _wet ? WetGravity : Gravity, maxFall = _wet ? WetMaxFall : MaxFall;
         float js = _wet ? WetJumpSpeed : JumpSpeed;
@@ -113,6 +123,7 @@ public sealed class MiniPhysics
             _releaseJump = true;
         }
 
+        bool jumping = VY < 0f;
         VY = Math.Min(VY + g, maxFall);
 
         if (VY >= g && !c.Down) StepUp(c.Up);
@@ -122,6 +133,7 @@ public sealed class MiniPhysics
         VX = vx;
         float vy = CollideY(VY, fallThrough, out bool up);
         VY = vy;
+        float dx = _wet ? VX * 0.5f : VX;
         if (_wet)
         {
             X += VX * 0.5f;
@@ -132,6 +144,7 @@ public sealed class MiniPhysics
             X += VX;
             Y += VY;
         }
+        ResolveShapes(dx, grounded && !jumping && !_wet, fallThrough);
         if (up)
         {
             VY = 0.01f;
@@ -178,6 +191,11 @@ public sealed class MiniPhysics
         int col = (int)MathF.Floor((nx + W / 2 + (W / 2 + 1) * dir) / 16f);
         int feet = (int)MathF.Floor((Y + H - 1f) / 16f);
         const int bodyRows = (H + 15) / 16; // 3
+        if (ShapeOf(col, feet) is not (Shape.None or Shape.Full) || ShapeOf(col, feet - 1) is not (Shape.None or Shape.Full))
+        {
+            ShapedStepUp(col, feet, dir, nx);
+            return;
+        }
         bool platformStep = up && Kind(col, feet) == TileKind.Platform && Kind(col, feet - 1) != TileKind.Platform;
         if (!Solid(col, feet) && !platformStep) return;
         if (Solid(col, feet - 1)) return;
@@ -191,6 +209,144 @@ public sealed class MiniPhysics
         if (rise <= 16.1f) Y = top - H;
     }
 
+    /// <summary>StepUp where the step involves a half block or slope: rise onto the highest surface of the step column
+    /// (rows feet-1..feet) under the moved hitbox, by at most 16 px, if the lifted hitbox is free.</summary>
+    private void ShapedStepUp(int col, int feet, int dir, float nx)
+    {
+        float top = float.MaxValue;
+        for (int row = feet - 1; row <= feet; row++)
+        {
+            var sh = ShapeOf(col, row);
+            if (sh == Shape.None) continue;
+            top = Math.Min(top, FacingTop(col, row, sh, dir, nx, nx + W));
+        }
+        if (top == float.MaxValue) return;
+        if (!(col * 16 < nx + W && col * 16 + 16 > nx)) return;
+        if (!(top < Y + H)) return;
+        if (Y + H - top > 16.1f) return;
+        if (BoxBlocked(nx, top - H, nx + W, top)) return;
+        Y = top - H;
+    }
+
+    /// <summary>Top of a block met while moving in direction dir over [x0, x1]: a slope's high side is a wall (the tile
+    /// top), its diagonal is its surface there.</summary>
+    private static float FacingTop(int tx, int ty, Shape sh, int dir, float x0, float x1) => sh switch
+    {
+        Shape.RisesRight when dir < 0 => ty * 16,
+        Shape.RisesLeft when dir > 0 => ty * 16,
+        _ => TopOver(tx, ty, sh, x0, x1),
+    };
+
+    private enum Shape { None, Full, Half, RisesRight, RisesLeft }
+
+    private Shape ShapeOf(int x, int y)
+    {
+        var t = _g.Get(x, y);
+        if (t.Kind != TileKind.Solid) return Shape.None;
+        if (t.HalfBlock) return Shape.Half;
+        return t.Slope switch
+        {
+            TileSlope.DownRight => Shape.RisesRight,
+            TileSlope.DownLeft => Shape.RisesLeft,
+            _ => Shape.Full, // ceiling slopes count as full blocks
+        };
+    }
+
+    /// <summary>Highest point (smallest y, px) of the block's solid top over [x0, x1].</summary>
+    private static float TopOver(int tx, int ty, Shape sh, float x0, float x1) => sh switch
+    {
+        Shape.Half => ty * 16 + 8,
+        Shape.RisesRight => ty * 16 + 16 - Math.Clamp(x1 - tx * 16, 0f, 16f),
+        Shape.RisesLeft => ty * 16 + Math.Clamp(x0 - tx * 16, 0f, 16f),
+        _ => ty * 16,
+    };
+
+    /// <summary>Does the box overlap the block's solid part? (The box already overlaps the tile's cell.)</summary>
+    private static bool ShapeOverlaps(int tx, int ty, Shape sh, float x0, float x1, float y1) => sh switch
+    {
+        Shape.None => false,
+        Shape.Full => true,
+        _ => y1 > TopOver(tx, ty, sh, x0, x1) + Eps,
+    };
+
+    private bool BoxBlocked(float x0, float y0, float x1, float y1)
+    {
+        int c0 = (int)MathF.Floor((x0 + Eps) / 16f), c1 = (int)MathF.Floor((x1 - Eps) / 16f);
+        int r0 = (int)MathF.Floor((y0 + Eps) / 16f), r1 = (int)MathF.Floor((y1 - Eps) / 16f);
+        for (int ty = r0; ty <= r1; ty++)
+            for (int tx = c0; tx <= c1; tx++)
+                if (ShapeOverlaps(tx, ty, ShapeOf(tx, ty), x0, x1, y1)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// After the move: pushed into a half block / slope diagonal (walking uphill, landing at an angle) → lift out by up
+    /// to 16 px, or undo the horizontal move if that doesn't fit. Otherwise, walking downhill on the ground → keep the
+    /// feet on the surface.
+    /// </summary>
+    private void ResolveShapes(float dx, bool mayStick, bool fallThrough)
+    {
+        float need = 0f;
+        int c0 = (int)MathF.Floor((X + Eps) / 16f), c1 = (int)MathF.Floor((X + W - Eps) / 16f);
+        int r0 = (int)MathF.Floor((Y + Eps) / 16f), r1 = (int)MathF.Floor((Y + H - Eps) / 16f);
+        for (int ty = r0; ty <= r1; ty++)
+            for (int tx = c0; tx <= c1; tx++)
+            {
+                var sh = ShapeOf(tx, ty);
+                if (sh is Shape.None or Shape.Full || !ShapeOverlaps(tx, ty, sh, X, X + W, Y + H)) continue;
+                need = Math.Max(need, Y + H - TopOver(tx, ty, sh, X, X + W));
+            }
+        if (need > 0f)
+        {
+            if (need <= 16.1f && !BoxBlocked(X, Y - need, X + W, Y - need + H))
+            {
+                Y -= need;
+                if (VY > 0f) VY = 0f;
+            }
+            else
+            {
+                X -= dx;
+                VX = 0f;
+            }
+            return;
+        }
+        if (!mayStick) return;
+
+        // Walking downhill: the surface under the hitbox fell away by about the horizontal step.
+        bool lowTop = LowTopNear(X - dx, X - dx + W, Y + H) || LowTopNear(X, X + W, Y + H);
+        if (!lowTop) return;
+        float limit = Math.Max(Math.Abs(dx) + 1f, 8.5f);
+        float best = float.MaxValue;
+        int rb0 = (int)MathF.Floor((Y + H - Eps) / 16f), rb1 = (int)MathF.Floor((Y + H + limit) / 16f);
+        for (int ty = rb0; ty <= rb1; ty++)
+            for (int tx = c0; tx <= c1; tx++)
+            {
+                var k = _g.Get(tx, ty).Kind;
+                float top;
+                if (k == TileKind.Solid) top = TopOver(tx, ty, ShapeOf(tx, ty), X, X + W);
+                else if (k == TileKind.Platform && !fallThrough) top = ty * 16;
+                else continue;
+                if (top >= Y + H - Eps) best = Math.Min(best, top);
+            }
+        float gap = best - (Y + H);
+        if (gap > Eps && gap <= limit)
+        {
+            Y += gap;
+            VY = 0f;
+        }
+    }
+
+    /// <summary>A half block or floor slope right under (or in the bottom row of) the hitbox spanning [x0, x1].</summary>
+    private bool LowTopNear(float x0, float x1, float bottom)
+    {
+        int c0 = (int)MathF.Floor((x0 + Eps) / 16f), c1 = (int)MathF.Floor((x1 - Eps) / 16f);
+        int r0 = (int)MathF.Floor((bottom - Eps) / 16f), r1 = (int)MathF.Floor((bottom + 16f) / 16f);
+        for (int ty = r0; ty <= r1; ty++)
+            for (int tx = c0; tx <= c1; tx++)
+                if (_g.Get(tx, ty).IsLowTop) return true;
+        return false;
+    }
+
     private float CollideX(float vx)
     {
         if (vx == 0f) return 0f;
@@ -202,6 +358,12 @@ public sealed class MiniPhysics
             for (int tx = x0; tx <= x1; tx++)
             {
                 if (!Solid(tx, ty)) continue;
+                // Shaped blocks: a half block only where the hitbox reaches its solid half; a slope only on its high
+                // (wall) side, its diagonal lifts the hitbox instead (ResolveShapes).
+                var sh = ShapeOf(tx, ty);
+                if (sh == Shape.Half && !(Y + H > ty * 16 + 8 + Eps)) continue;
+                if (sh == Shape.RisesRight && vx > 0) continue;
+                if (sh == Shape.RisesLeft && vx < 0) continue;
                 if (vx > 0 && X + W <= tx * 16 + Eps) r = Math.Min(r, tx * 16 - (X + W));
                 else if (vx < 0 && X >= tx * 16 + 16 - Eps) r = Math.Max(r, tx * 16 + 16 - X);
             }
@@ -223,7 +385,9 @@ public sealed class MiniPhysics
                 if (vy > 0)
                 {
                     bool blocks = k == TileKind.Solid || (k == TileKind.Platform && !fallThrough);
-                    if (blocks && Y + H <= ty * 16 + Eps) r = Math.Min(r, ty * 16 - (Y + H));
+                    float top = k == TileKind.Solid ? TopOver(tx, ty, ShapeOf(tx, ty), X, X + W) : ty * 16;
+                    // (Never negative: resting a hair inside a slope's surface must still read as velocity.Y == 0.)
+                    if (blocks && Y + H <= top + Eps) r = Math.Min(r, Math.Max(0f, top - (Y + H)));
                 }
                 else if (k == TileKind.Solid && Y >= ty * 16 + 16 - Eps)
                 {

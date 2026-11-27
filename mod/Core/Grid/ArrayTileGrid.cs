@@ -33,6 +33,8 @@ public sealed class ArrayTileGrid : ITileGrid
     /// Parse ASCII rows (origin 0,0, row 0 = top). Glyphs: '#' solid, 'X' unbreakable,
     /// 'P' protected solid, '=' platform, '.' air, '~' water, 'L' lava, '^' hazard,
     /// '?' unknown, '|' closed door (protected solid that can be opened); any of "SGABCD" is air recorded as a marker.
+    /// Shaped solid blocks: '/' floor slope high at the right (SlopeDownRight, the surface rises left to right),
+    /// '\' floor slope high at the left (SlopeDownLeft), '_' half block, 'r' / 'q' ceiling slopes UpLeft / UpRight.
     /// </summary>
     public static (ArrayTileGrid Grid, Dictionary<char, TilePoint> Markers) Parse(params string[] rows)
     {
@@ -62,6 +64,11 @@ public sealed class ArrayTileGrid : ITileGrid
                     '^' => new TileInfo(TileKind.Hazard),
                     '?' => new TileInfo(TileKind.Unknown),
                     '|' => ClosedDoor,
+                    '/' => new TileInfo(TileKind.Solid, Slope: TileSlope.DownRight),
+                    '\\' => new TileInfo(TileKind.Solid, Slope: TileSlope.DownLeft),
+                    '_' => new TileInfo(TileKind.Solid, HalfBlock: true),
+                    'r' => new TileInfo(TileKind.Solid, Slope: TileSlope.UpLeft),
+                    'q' => new TileInfo(TileKind.Solid, Slope: TileSlope.UpRight),
                     _ => throw new ArgumentException($"Unknown glyph '{c}' at ({x},{y})"),
                 };
             }

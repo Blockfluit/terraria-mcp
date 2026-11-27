@@ -47,6 +47,10 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 public sealed class PathFollower
 {
     private const float ArriveTolerance = 0.5f;
+    /// <summary>How far below a waypoint's feet row the feet may be when its support is a floor slope or half block:
+    /// the hitbox rides the block's surface, up to (almost) a tile under its top (a 45° slope with the hitbox off
+    /// centre by <see cref="ArriveTolerance"/>: 0.875). Landing a full row lower (1.0) still doesn't count.</summary>
+    private const float LowTopTolerance = 0.95f;
     private const float AlignTolerance = 0.2f;
     private const float StillSpeed = 0.04f;      // tiles/tick (~0.6 px)
     private const float SettleDistance = 0.08f;
@@ -104,8 +108,8 @@ public sealed class PathFollower
     public FollowerOutput Tick(PlayerKinematics k, ITileGrid grid)
     {
         if (_terminal != FollowerStatus.Running) return new(default, _terminal, Current);
-        _prev ??= NavMath.StandingTile(k);
         _grid = grid;
+        _prev ??= Pathfinder.NormalizeStart(grid, NavMath.StandingTile(k, grid));
 
         if (PathInvalidated(grid)) return Finish(FollowerStatus.NeedsReplan);
 
@@ -188,8 +192,19 @@ public sealed class PathFollower
         return false;
     }
 
-    private static bool StandingAt(TilePoint p, PlayerKinematics k) =>
-        k.OnGround && Math.Abs(k.Y - p.Y) <= ArriveTolerance && Math.Abs(k.X - Tx(p)) <= ArriveTolerance;
+    /// <summary>On the ground at p: within <see cref="ArriveTolerance"/> sideways and of its feet row, or up to
+    /// <see cref="LowTopTolerance"/> lower when p stands on a floor slope / half block (the feet sink into its row; on
+    /// a slope how far depends on where the hitbox is, so a fixed half-tile window flickered on and off).</summary>
+    private bool StandingAt(TilePoint p, PlayerKinematics k)
+    {
+        if (!k.OnGround || Math.Abs(k.X - Tx(p)) > ArriveTolerance) return false;
+        float dy = k.Y - p.Y;
+        float below = _grid != null && LowTopSupport(_grid, p) ? LowTopTolerance : ArriveTolerance;
+        return dy >= -ArriveTolerance && dy <= below;
+    }
+
+    private static bool LowTopSupport(ITileGrid grid, TilePoint p) =>
+        grid.Get(p.X, p.Y + 1).IsLowTop || grid.Get(p.X + 1, p.Y + 1).IsLowTop;
 
     private bool SwimReached(TilePoint p, PlayerKinematics k)
     {
@@ -308,7 +323,8 @@ public sealed class PathFollower
             // Landed, but Satisfied() didn't accept it: back on the source (retry), a little short of the target on
             // its row (an obstacle on the way ate some air time: walk the rest), or somewhere else (off the path).
             _airborne = false;
-            var here = NavMath.StandingTile(k);
+            var here = Pathfinder.NormalizeStart(grid, NavMath.StandingTile(k, grid));
+            if (StandingAt(s, k)) here = s;
             if (here.Y == t.Y && Math.Abs(here.X - t.X) <= 2) _walkRest = true;
             else if (here != s) return FollowerStatus.NeedsReplan;
             else if (++_attempts >= MaxJumpAttempts) return FollowerStatus.Stuck;
@@ -581,6 +597,9 @@ public sealed class PathFollower
                 for (int by = p.Y - 2; by <= p.Y; by++)
                 {
                     var t = grid.Get(bx, by);
+                    // A floor slope / half block in the feet row is walked over (the hitbox rides its surface);
+                    // the start body can overlap one (the plain feet row of a hitbox sunk into a slope).
+                    if (by == p.Y && t.IsLowTop) continue;
                     if (t.BlocksBody && !IsPlannedWork(new TilePoint(bx, by), MoveKind.Dig, i)
                         && !(t.IsClosedDoor && IsPlannedDoor(bx, by, i)))
                         return true;

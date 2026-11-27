@@ -48,7 +48,7 @@ public static class DevCommands
             int tol = Params.Has(p, "tolerance") ? Params.Int(p, "tolerance") : 1;
             var grid = new LlmPlayer.Observe.GameTileGrid(pl);
             var k = LlmPlayer.Core.Nav.NavMath.FromPixels(pl.position.X, pl.position.Y, pl.velocity.X, pl.velocity.Y, pl.height);
-            var here = LlmPlayer.Core.Nav.NavMath.StandingTile(k);
+            var here = LlmPlayer.Core.Nav.NavMath.StandingTile(k, grid);
             var r = LlmPlayer.Core.Nav.Pathfinder.FindPath(grid, here, goal, LlmPlayer.Nav.ProfileBuilder.From(pl),
                 new LlmPlayer.Core.Nav.PathOptions(GoalTolerance: tol));
             string? firstTick = null;

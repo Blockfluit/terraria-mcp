@@ -219,7 +219,7 @@ public sealed class Surfacer
 
     public ControlIntent Tick(ITileGrid grid, PlayerKinematics k)
     {
-        var body = NavMath.StandingTile(k);
+        var body = NavMath.StandingTile(k, grid);
         bool rising = !_canSwim && !k.OnGround && k.VelY < 0 && _jumpHeld;
         if (_choice == null || (!rising && (body != _at || ++_age >= RechooseTicks)))
         {

@@ -62,6 +62,8 @@ public static class ObserveCommands
                 Liquid = t.LiquidAmount > 0 ? (t.LiquidType == Terraria.ID.LiquidID.Lava ? "lava" : t.LiquidType == Terraria.ID.LiquidID.Honey ? "honey" : "water") : null,
                 Protected = Safety.Protection.IsProtected(x, y),
                 PickPower = t.HasTile && Main.tileSolid[t.TileType] ? info.PickPowerRequired : (int?)null,
+                // Sloped / half blocks: the player walks over them without jumping.
+                Shape = info.ShapeName,
             };
         }, isAction: false);
 

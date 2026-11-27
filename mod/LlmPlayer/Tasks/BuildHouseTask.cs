@@ -207,7 +207,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
     private void StartMove(GameCtx ctx, Player p, Item item, bool solid, int range)
     {
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-        var here = NavMath.StandingTile(k);
+        var here = NavMath.StandingTile(k, ctx.Grid);
         var upcoming = new List<TilePoint> { Aim(_steps[_idx]) };
         for (int i = _idx + 1; i < _steps.Count && upcoming.Count < 8; i++)
             if (_steps[i].Part == _steps[_idx].Part) upcoming.Add(_steps[i].Target);

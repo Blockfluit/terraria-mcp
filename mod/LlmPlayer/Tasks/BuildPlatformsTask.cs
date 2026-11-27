@@ -223,7 +223,7 @@ public sealed class BuildPlatformsTask : IGameTask<GameCtx>
     private void StartMove(GameCtx ctx, Player p, TilePoint t, Item item, bool solid)
     {
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-        var here = NavMath.StandingTile(k);
+        var here = NavMath.StandingTile(k, ctx.Grid);
         var upcoming = new List<TilePoint> { t };
         if (_remaining != null) upcoming.AddRange(_remaining);
         var reach = new ReachSpec(Player.tileRangeX + p.blockRange, Player.tileRangeY + p.blockRange, item.tileBoost);
