@@ -54,7 +54,8 @@ public sealed record ExploreCavesResult(int RevealedTiles, List<FoundThing> Foun
 public sealed class ExploreCavesTask : IGameTask<GameCtx>
 {
     public const int ScanTicks = 30, ScanRadius = 35, RevealRadius = 30, SeedRadius = 50, PotReach = 12;
-    public const int MaxStalls = 6, LegTimeoutTicks = 30 * 60, MaxFound = 30;
+    public const int MaxStalls = 6, LegTimeoutTicks = 30 * 60, LegStallTicks = 8 * 60, MaxFound = 30;
+    private int _legBest = int.MaxValue, _legStallTicks;
     private const int TorchCheckTicks = 60, LightSettleTicks = 20, MaxTorchFailures = 4, NearRejected = 2;
     public const int MaxTunnels = 10, BreakCheckTicks = 45;
 
@@ -217,6 +218,8 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         _revealedAtLegStart = _revealed;
         _legs++;
         _leg = new MoveToTask(pick.Stand, allowDig: true, allowBuild: true, tolerance: 1, name: Name);
+        _legBest = int.MaxValue;
+        _legStallTicks = 0;
         _mode = $"walking to {pick.Stand}";
         return GameTaskStatus.Running;
     }
@@ -386,9 +389,16 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
                 return GameTaskStatus.Running;
             }
         }
-        var st = ++_legTicks > LegTimeoutTicks ? GameTaskStatus.Failed : _leg!.Tick(ctx);
+        // A walk that stops getting closer for LegStallTicks is abandoned (that spot is rejected) so the exploration
+        // goes on; before, it ran into the task-wide stall watchdog, which cancelled the whole explore_caves (seen in
+        // game at a cave pool).
+        int dist = Math.Max(Math.Abs(here.X - _legStand.X), Math.Abs(here.Y - _legStand.Y));
+        if (dist < _legBest) { _legBest = dist; _legStallTicks = 0; }
+        else _legStallTicks++;
+        bool giveUp = ++_legTicks > LegTimeoutTicks || _legStallTicks > LegStallTicks;
+        var st = giveUp ? GameTaskStatus.Failed : _leg!.Tick(ctx);
         if (st == GameTaskStatus.Running) return GameTaskStatus.Running;
-        if (_legTicks > LegTimeoutTicks) _leg!.OnCancel(ctx);
+        if (giveUp) _leg!.OnCancel(ctx);
         _leg = null;
         ControlState.Pending = default;
         bool revealedSomething = _revealed > _revealedAtLegStart;
