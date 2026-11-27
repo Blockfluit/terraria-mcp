@@ -66,6 +66,26 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             new GridBuilder(20, 16).Fill(0, 6, 19, 15, '#').Fill(9, 0, 10, 5, '#').Fill(6, 6, 13, 10, '~')
                 .Put(2, 5, 'S').Put(16, 5, 'G'),
             Real(), new(AllowDig: false, AllowBuild: false), 1200),
+        new("wade_out_of_shallow_pool",
+            new GridBuilder(16, 8).Fill(0, 6, 15, 7, '#').Fill(0, 5, 3, 5, '#').Fill(12, 5, 15, 5, '#')
+                .Fill(4, 5, 11, 5, '~').Put(7, 5, 'S').Put(13, 4, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
+        new("pool_edge_step_off_drop",
+            new GridBuilder(14, 16).Fill(0, 15, 13, 15, '#').Fill(7, 6, 13, 14, '#').Fill(7, 5, 13, 5, '~')
+                .Put(6, 5, 'S').Put(1, 14, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
+        new("jump_out_of_puddle_pit",
+            new GridBuilder(14, 10).Fill(0, 6, 13, 9, '#').Fill(6, 6, 7, 8, '.').Fill(6, 8, 7, 8, '~')
+                .Put(6, 8, 'S').Put(11, 5, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 600),
+        new("two_deep_pool_by_wall",
+            new GridBuilder(14, 8).Fill(0, 0, 0, 7, 'X').Fill(0, 6, 13, 7, '#').Fill(7, 4, 13, 5, '#')
+                .Fill(1, 4, 6, 5, '~').Put(1, 5, 'S').Put(10, 3, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 800),
+        new("submerged_swim_out",
+            new GridBuilder(14, 10).Fill(0, 0, 0, 9, 'X').Fill(0, 8, 13, 9, '#').Fill(7, 3, 13, 7, '#')
+                .Fill(1, 3, 6, 7, '~').Put(2, 7, 'S').Put(10, 2, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 1200),
         new("door_in_wall",
             new GridBuilder(30, 10).Fill(0, 8, 29, 9, '#').Fill(14, 0, 14, 4, 'X').Fill(14, 5, 14, 7, '|')
                 .Put(2, 7, 'S').Put(24, 7, 'G'),
