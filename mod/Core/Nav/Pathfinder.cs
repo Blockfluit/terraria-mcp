@@ -72,9 +72,35 @@ public static class Pathfinder
         return int.MaxValue;
     }
 
+    /// <summary>
+    /// The 2-tile-wide body model can put a start cell inside a block the real 1.25-tile hitbox doesn't touch (seen in
+    /// game: standing left of a 1-tile sand step, the feet-left tile's body covered the sand; the search treats start
+    /// cells as clear and planned to walk through it). If the start body overlaps a blocking tile, use the neighbouring
+    /// column (left, then right) where the body fits.
+    /// </summary>
+    public static TilePoint NormalizeStart(ITileGrid grid, TilePoint start)
+    {
+        if (BodyFits(grid, start)) return start;
+        foreach (int dx in new[] { -1, 1 })
+        {
+            var c = new TilePoint(start.X + dx, start.Y);
+            if (BodyFits(grid, c)) return c;
+        }
+        return start;
+    }
+
+    private static bool BodyFits(ITileGrid grid, TilePoint p)
+    {
+        for (int dy = 0; dy < 3; dy++)
+            for (int dx = 0; dx < 2; dx++)
+                if (grid.Get(p.X + dx, p.Y - dy).BlocksBody) return false;
+        return true;
+    }
+
     public static PathResult FindPath(ITileGrid grid, TilePoint start, TilePoint goal,
         MovementProfile profile, PathOptions options)
     {
+        start = NormalizeStart(grid, start);
         if (start == goal) return new PathResult(true, Array.Empty<PathStep>(), null, 0, goal);
         var s = new Search(grid, start, goal, profile, options);
         try { return s.Run(); }

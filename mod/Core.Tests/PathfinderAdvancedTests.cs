@@ -387,6 +387,27 @@ public class PathfinderAdvancedTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void StartBodyOverlappingAStep_PlansAStepUpNotAWalkThrough()
+    {
+        // Seen in game: feet-left tile 4789 with a 1-tile sand block at (4790,556), i.e. inside the 2-wide body model
+        // (the real hitbox doesn't touch it). The plan walked straight through the sand.
+        var (g, _) = ArrayTileGrid.Parse(
+            "..............",
+            "..............",
+            "..............",
+            "...#..........",
+            "##############");
+        var start = new TilePoint(2, 3); // body x=2..3 overlaps the block at (3,3)
+        var goal = new TilePoint(10, 2);
+        var r = Pathfinder.FindPath(g, start, goal, new(), new(AllowDig: false, AllowBuild: false));
+        Assert.True(r.Success, r.FailureReason);
+        foreach (var st in r.Steps)
+            for (int dx = 0; dx < 2; dx++)
+                for (int dy = 0; dy < 3; dy++)
+                    Assert.False(g.Get(st.Pos.X + dx, st.Pos.Y - dy).BlocksBody, $"step {st.Kind} {st.Pos} puts the body in a block");
+    }
+
+    [Fact]
     public void ExactGoal_ResolvedGoalIsRequested()
     {
         var (g, m) = ArrayTileGrid.Parse("..........", "..........", "S......G..", "##########");
