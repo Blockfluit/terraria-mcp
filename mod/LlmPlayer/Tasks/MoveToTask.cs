@@ -17,6 +17,8 @@ namespace LlmPlayer.Tasks;
 /// <item>Replans when the follower reports Stuck/NeedsReplan (a fresh follower each time: those states are
 /// sticky), every 120 ticks while the remaining path crosses Unknown tiles, every 60 ticks for an entity goal
 /// that moved, and on reaching the end of a partial plan (goal beyond the planning window).</item>
+/// <item>Replans keep the current partial target (<see cref="RouteCommitment"/>): each plan used to choose one from
+/// scratch, and plans from either end of a pool flipped between two (seen in game, until the stall watchdog).</item>
 /// <item>Fails after 5 consecutive failed replans (a plan that fails, or a follower that gets stuck/derailed
 /// without completing any step), with the last reason, and after the same Stuck/NeedsReplan from the same tile
 /// <see cref="ReplanGuard"/> times however much the plans in between progressed.</item>
@@ -51,6 +53,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private TilePoint? _resolvedGoal;
     private readonly ProgressGuard _progress = new(maxStalls: 3);
     private readonly ReplanGuard _repeats = new();
+    private readonly RouteCommitment _route = new();
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
     private string? _lastFailure;
 
@@ -116,6 +119,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
             case FollowerStatus.Arrived:
                 _failures = 0;
                 DropFollower();
+                _route.OnArrived();
                 // A complete plan whose goal was snapped (the requested tile wasn't standable) ends within tolerance
                 // of the snapped goal, maybe 2-4 tiles from _goal: that's as close as the body can get, so done.
                 // Without this the task replanned the same path forever ("2 tiles remaining").
@@ -191,6 +195,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         }
         _partial = job.IsPartial;
         _resolvedGoal = r.ResolvedGoal;
+        _route.OnPlanned(job.PlannedGoal, job.IsPartial);
         // The search started from the normalized start (FindPath): the follower's first "previous position" must match.
         _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(ctx.Grid, job.Start), physics: ProfileBuilder.Physics(ctx.Player),
             canSwim: ProfileBuilder.CanSwim(ctx.Player));
@@ -220,7 +225,9 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     {
         _job?.Cancel();
         var profile = ProfileBuilder.From(p, _allowDig, _allowBuild);
-        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig));
+        // Replans stick to the current partial target unless a clearly better one appears (no ping-pong between two).
+        var hint = _route.BeforePlan(here, _goal);
+        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig), hint);
     }
 
     private void DropFollower()

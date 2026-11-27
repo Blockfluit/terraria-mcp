@@ -1,5 +1,6 @@
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Nav;
+using LlmPlayer.Core.Tasks;
 
 namespace LlmPlayer.Core.Tests.Sim;
 
@@ -11,14 +12,20 @@ public enum MoveOutcome { Arrived, Failed, Hurt, Drowning, TimedOut }
 /// plans with a real <see cref="PlanJob"/> (snapshot window, partial plans), holds still while the job copies tiles
 /// (one tick per <see cref="PlanJob.TilesPerTick"/> tiles, like in game), follows with a fresh
 /// <see cref="PathFollower"/> per plan, replans on Stuck/NeedsReplan and at the end of partial plans, gives up after
-/// <see cref="MaxConsecutiveFailures"/> failed replans or a <see cref="ProgressGuard"/> stall. Keep it in step with
-/// MoveToTask: the real-terrain fuzz measures exactly this loop.
+/// <see cref="MaxConsecutiveFailures"/> failed replans or a <see cref="ProgressGuard"/> stall, replans every
+/// <see cref="UnknownReplanTicks"/> while the path crosses Unknown tiles ("learned" replans when it changed because they
+/// came into view), keeps partial targets with a <see cref="RouteCommitment"/>, and stops like the host's
+/// <see cref="StallWatchdog"/>. With a <see cref="FogGrid"/> the planner and follower only see revealed tiles while
+/// physics uses the true grid. Keep it in step with MoveToTask: the real-terrain fuzz measures exactly this loop.
 /// </summary>
 public sealed class MoveToSim
 {
-    public const int MaxConsecutiveFailures = 5, RetryDelayTicks = 20;
+    public const int MaxConsecutiveFailures = 5, RetryDelayTicks = 20, MaxLearnedReplans = 15, UnknownReplanTicks = 120;
 
     private readonly ArrayTileGrid _g;
+    /// <summary>What the planner and follower see: the fog view, or the true grid.</summary>
+    private readonly ITileGrid _view;
+    private readonly FogGrid? _fog;
     private readonly MiniPhysics _sim;
     private readonly TilePoint _goal;
     private readonly MovementProfile _profile;
@@ -28,10 +35,17 @@ public sealed class MoveToSim
 
     private readonly ProgressGuard _progress = new(maxStalls: 3);
     private readonly ReplanGuard _repeats = new();
+    private readonly RouteCommitment _route = new();
+    private readonly StallWatchdog _watchdog = new();
     private PathFollower? _follower;
-    private bool _partial;
+    private bool _partial, _pathCrossesUnknown;
     private TilePoint? _resolvedGoal;
-    private int _failures, _stepsAtPlan, _retryIn;
+    private int _failures, _stepsAtPlan, _retryIn, _ticksSincePlan, _learnedReplans;
+
+    /// <summary>Every successful plan's start and target (the requested goal, or a partial target), in order.</summary>
+    public readonly List<(TilePoint Start, TilePoint Target, bool Partial)> PlanLog = new();
+    /// <summary>The route commitment saw a plan come back to an earlier start without progress.</summary>
+    public bool Oscillated => _route.Oscillating;
 
     public string? Reason { get; private set; }
     public int Plans { get; private set; }
@@ -46,9 +60,11 @@ public sealed class MoveToSim
     public readonly Queue<string> Trace = new();
 
     public MoveToSim(ArrayTileGrid g, MiniPhysics sim, TilePoint goal, MovementProfile profile, PathOptions options,
-        int tolerance = 1, Action<string>? log = null)
+        int tolerance = 1, Action<string>? log = null, FogGrid? fog = null)
     {
         _g = g;
+        _fog = fog;
+        _view = (ITileGrid?)fog ?? g;
         _sim = sim;
         _goal = goal;
         _profile = profile;
@@ -102,8 +118,13 @@ public sealed class MoveToSim
     private MoveOutcome? Tick()
     {
         var k = _sim.Kinematics;
-        var here = NavMath.StandingTile(k, _g);
-        if (Chebyshev(here, _goal) <= _tolerance && k.OnGround) return MoveOutcome.Arrived;
+        var here = NavMath.StandingTile(k, _view);
+        _fog?.Reveal(here);
+        int dist = Chebyshev(here, _goal);
+        if (dist <= _tolerance && k.OnGround) return MoveOutcome.Arrived;
+        // The host's stall watchdog (no new tile, no new progress text for 20 s); the sim has no inventory to change.
+        if (_watchdog.Tick(this, $"{dist} tiles remaining", here.X, here.Y, 0, paused: false))
+            return Fail($"stuck: no progress for {_watchdog.IdleSeconds} s");
 
         if (_follower == null)
         {
@@ -116,13 +137,23 @@ public sealed class MoveToSim
             return Plan(here);
         }
 
-        var o = _follower.Tick(k, _g);
+        _ticksSincePlan++;
+        if (_pathCrossesUnknown && _ticksSincePlan >= UnknownReplanTicks)
+        {
+            // In game the player keeps following the old path while the job copies its window.
+            var replanned = Plan(here, holdStill: false);
+            if (replanned != null) return replanned;
+            if (_follower == null) return null;
+        }
+
+        var o = _follower.Tick(k, _view);
         Remember($"{_sim} | {o.Status} {o.Current?.Kind}{o.Current?.Pos}");
         switch (o.Status)
         {
             case FollowerStatus.Arrived:
                 _failures = 0;
                 _follower = null;
+                _route.OnArrived();
                 if (!_partial && _resolvedGoal is { } rg && Chebyshev(here, rg) <= _tolerance && k.OnGround)
                     return MoveOutcome.Arrived;
                 if (_progress.RecordArrival(Chebyshev(here, _goal)))
@@ -139,8 +170,9 @@ public sealed class MoveToSim
                 _log?.Invoke($"t={_sim.Ticks} {failure} from {here}");
                 _follower = null;
                 Reason = failure;
-                if (!progressed && ++_failures >= MaxConsecutiveFailures) return Fail(failure);
-                if (_repeats.Record(here, failure)) return Fail($"{failure} (repeatedly)");
+                bool learned = o.Status == FollowerStatus.NeedsReplan && _pathCrossesUnknown && ++_learnedReplans <= MaxLearnedReplans;
+                if (!progressed && !learned && ++_failures >= MaxConsecutiveFailures) return Fail(failure);
+                if (!learned && _repeats.Record(here, failure)) return Fail($"{failure} (repeatedly)");
                 if (progressed) _failures = 0;
                 Replans++;
                 return Plan(here);
@@ -157,16 +189,19 @@ public sealed class MoveToSim
     }
 
     /// <summary>StartPlan + PollPlan: hold still while the job copies its window, then search.</summary>
-    private MoveOutcome? Plan(TilePoint here)
+    private MoveOutcome? Plan(TilePoint here, bool holdStill = true)
     {
         // Like ProfileBuilder: the platforms actually left in the inventory.
         var profile = _profile with { BuildItemCount = Math.Min(_profile.BuildItemCount, _sim.Platforms) };
-        var job = new PlanJob(here, _goal, profile, _options with { GoalTolerance = _tolerance });
+        var hint = _route.BeforePlan(here, _goal);
+        if (!Commit) hint = null;
+        var job = new PlanJob(here, _goal, profile, _options with { GoalTolerance = _tolerance }, hint);
         Plans++;
-        while (!job.Step(_g)) Thread.Yield();
+        while (!job.Step(_view)) Thread.Yield();
         // In game the job copies its window over several ticks (the player holds still), then the result is picked up
         // a tick or two later: deterministic stand-in for that wait.
-        for (int i = 0; i < job.CopyTicks + 2; i++) Step(default);
+        if (holdStill)
+            for (int i = 0; i < job.CopyTicks + 2; i++) Step(default);
         var r = job.Result!;
         if (!FirstPlanDone)
         {
@@ -175,6 +210,7 @@ public sealed class MoveToSim
         }
         if (!r.Success)
         {
+            _follower = null;
             FailedPlans++;
             Events.Add($"plan failed: {r.FailureReason} (from {here})");
             _log?.Invoke($"t={_sim.Ticks} plan failed from {here}: {r.FailureReason}");
@@ -186,8 +222,12 @@ public sealed class MoveToSim
         }
         _partial = job.IsPartial;
         _resolvedGoal = r.ResolvedGoal;
-        _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(_g, job.Start));
+        _route.OnPlanned(job.PlannedGoal, job.IsPartial);
+        PlanLog.Add((job.Start, job.PlannedGoal, job.IsPartial));
+        _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(_view, job.Start));
         _stepsAtPlan = _follower.RemainingSteps;
+        _pathCrossesUnknown = CrossesUnknown(_view, r.Steps);
+        _ticksSincePlan = 0;
         _log?.Invoke($"t={_sim.Ticks} plan from {job.Start}{(job.IsPartial ? " (partial)" : "")} ({r.Steps.Count}): " +
                      string.Join(" ", r.Steps.Select(s => $"{s.Kind}{s.Pos}{(s.WorkTile is { } w ? "w" + w : "")}")));
         return null;
@@ -199,6 +239,9 @@ public sealed class MoveToSim
         return MoveOutcome.Failed;
     }
 
+    /// <summary>Off: replans ignore the route commitment (to measure what it changes).</summary>
+    public bool Commit { get; init; } = true;
+
     /// <summary>Log every tick too (debugging one case).</summary>
     public bool LogTicks { get; init; }
 
@@ -207,6 +250,15 @@ public sealed class MoveToSim
         if (LogTicks) _log?.Invoke(line);
         Trace.Enqueue(line);
         if (Trace.Count > 80) Trace.Dequeue();
+    }
+
+    private static bool CrossesUnknown(ITileGrid g, IReadOnlyList<PathStep> steps)
+    {
+        foreach (var s in steps)
+            for (int y = s.Pos.Y - 2; y <= s.Pos.Y + 1; y++)
+                for (int x = s.Pos.X; x <= s.Pos.X + 1; x++)
+                    if (g.Get(x, y).Kind == TileKind.Unknown) return true;
+        return false;
     }
 
     private static int Chebyshev(TilePoint a, TilePoint b) => Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
