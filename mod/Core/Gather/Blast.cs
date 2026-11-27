@@ -364,6 +364,7 @@ public static class BlastPlanner
             if (t is not { } th) continue;
             float cost = Manhattan(s, player) + 4f * th.Miss;
             if (cost >= bestCost) continue;
+            if (!ThrowsFromWholeTile(grid, s, target, spec, margin)) continue;
             bestCost = cost;
             best = new BlastPlan(s, th.Cursor, th.Result.X, th.Result.Y, th.Miss, th.Result.Ticks);
         }
@@ -380,6 +381,23 @@ public static class BlastPlanner
                 : $"no predictable throw path toward {target} (unknown tiles or liquid in the way): light/explore the area first";
         }
         return best;
+    }
+
+    /// <summary>Standing at tile s, the real hitbox is anywhere up to half a tile left or right of
+    /// <see cref="Hitbox"/> (StandingTile rounds). The task re-aims from the real position, so a stand only qualifies if
+    /// a good, safe throw exists from both extremes (seen in game: three stands in a row planned fine, then the re-aim
+    /// from the real position found no throw: "no safe throw from here; gave up after 3 replans").</summary>
+    private static bool ThrowsFromWholeTile(ITileGrid grid, TilePoint s, TilePoint target, ExplosiveSpec spec, float margin)
+    {
+        var (ox, oy) = Origin(s);
+        var h = Hitbox(s);
+        foreach (float d in new[] { -0.45f, 0.45f })
+        {
+            var hd = (h.L + d, h.T, h.R + d, h.B);
+            if (BestThrow(grid, ox + d, oy, target, spec, out _, out _, hd, margin) == null) return false;
+            if (!HitboxSafe(hd, target.X + 0.5f, target.Y + 0.5f, spec, margin)) return false;
+        }
+        return true;
     }
 
     /// <summary>A real floor (block or platform) under the body: standing "on" liquid sinks the player to the bottom

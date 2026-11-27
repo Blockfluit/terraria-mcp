@@ -474,3 +474,25 @@ public class BlastStandTests
             $"stand {plan.Stand} has no full floor ({k}/{k2})");
     }
 }
+public class BlastWholeTileTests
+{
+    /// <summary>The real hitbox sits up to half a tile left/right of the modelled one; the task re-aims from there, so
+    /// the planned stand must also throw from both extremes.</summary>
+    [Fact]
+    public void PlannedStand_ThrowsFromAnywhereOnItsTile()
+    {
+        var rows = new string[35];
+        for (int y = 0; y < 35; y++) rows[y] = y < 20 ? new string('.', 60) : new string('#', 60);
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var spec = Explosives.Spec(ExplosiveKind.StickyBomb);
+        foreach (var target in new TilePoint[] { new(30, 20), new(38, 20), new(30, 21) })
+        {
+            var plan = BlastPlanner.Plan(g, new TilePoint(20, 19), target, spec, out var why);
+            if (plan == null) continue; // a deeper target may need a crater first
+            var (ox, oy) = BlastPlanner.Origin(plan.Stand);
+            var h = BlastPlanner.Hitbox(plan.Stand);
+            foreach (float d in new[] { -0.45f, 0.45f })
+                Assert.NotNull(BlastPlanner.BestThrow(g, ox + d, oy, target, spec, out _, out _, (h.L + d, h.T, h.R + d, h.B)));
+        }
+    }
+}
