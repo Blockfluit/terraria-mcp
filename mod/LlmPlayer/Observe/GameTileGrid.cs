@@ -97,6 +97,13 @@ public sealed class GameTileGrid : ITileGrid
 
             if (TileID.Sets.TouchDamageImmediate[type] > 0)
                 return new TileInfo(TileKind.Hazard, PickPower(type, x, y, tile), prot);
+            // Pressure plates trigger wired traps (boulders, darts, explosives): never step on one, never break it
+            // (seen in game: "Bot was turned into monster food by Boulder" while exploring caves).
+            if (type is TileID.PressurePlates or TileID.WeightedPressurePlate or TileID.ProjectilePressurePad)
+                return new TileInfo(TileKind.Hazard, int.MaxValue, true, '^', TileClass.Name(type));
+            // A boulder is a trap too: it rolls when anything under it goes.
+            if (type is TileID.Boulder or TileID.RollingCactus)
+                return new TileInfo(TileKind.Solid, int.MaxValue, true, 'F', TileClass.Name(type));
 
             if (TileID.Sets.Platforms[type] || (Main.tileSolidTop[type] && !Main.tileSolid[type]))
                 return new TileInfo(TileKind.Platform, PickPower(type, x, y, tile), prot);
