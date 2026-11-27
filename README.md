@@ -44,10 +44,14 @@ mod/LlmPlayer tModLoader mod inside Terraria
 - **Explore caves and loot them.** `explore_caves` explores underground through the open cave space, frontier by
   frontier: it walks to a known ledge next to the nearest reachable edge between known open space and unknown
   tiles (digging only through walls up to 3 tiles thick to reach the next cave), lights the dark opening with your
-  torches, looks, and moves on. It never walks through lava, skips
+  torches, looks, and moves on. Started on the surface it first goes underground (walking or digging a shaft down).
+  When a cave pocket is exhausted it tunnels toward the nearest large unrevealed region (down preferred, else
+  sideways; at most 40 tiles per tunnel, never toward known lava, through liquids or into unsafe drops) and explores
+  again as soon as it breaks into open space (`tunnels`/`tunnelled` in the result). It never walks through lava, skips
   openings next to it and keeps to safe falls. It stops when something you asked for comes into view (`stop_on`:
   life crystals, chests, the Enchanted Sword shrine, pots, ore, altars, orbs, Fallen Stars), when time is up or when
-  nothing reachable is left within `radius`, and reports what it found, tiles revealed and torches placed.
+  nothing reachable and no safe tunnel is left, and reports what it found, tiles revealed, torches placed and every
+  Life Crystal seen (`lifeCrystals`; a Life Crystal coming into view stops it with its coordinates).
   `collect_pots` breaks pots on the way. `find` with `category: "valuable"` lists the same things by name
   ("Life Crystal", "Pot", "Locked Gold Chest", "Demon Altar", "Shadow Orb (don't break)"…). `collect` breaks a pot,
   life crystal, life fruit or the sword in stone with your pickaxe and picks up what drops. `loot_chest` opens a

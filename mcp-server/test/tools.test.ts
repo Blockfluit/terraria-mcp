@@ -420,7 +420,8 @@ describe("registerTools", () => {
     it("explore_caves describes frontiers, torches, lava, stop_on and the result", async () => {
       const client = await setup(new FakeConn());
       const tool = (await client.listTools()).tools.find((t) => t.name === "explore_caves");
-      for (const s of ["unknown", "torches", "lava", "stop_on", "revealedTiles", "found", "stoppedBecause", "collect_pots"])
+      for (const s of ["unknown", "torches", "lava", "stop_on", "revealedTiles", "found", "stoppedBecause", "collect_pots",
+        "surface layer", "tunnels", "tunnelled", "40 tiles", "descended", "lifeCrystals", "found a Life Crystal at (x,y)"])
         expect(tool?.description).toContain(s);
       expect(Object.keys((tool?.inputSchema as { properties: object }).properties).sort()).toEqual(
         ["collect_pots", "max_seconds", "radius", "stop_on", "torches"],
