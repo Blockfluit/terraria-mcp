@@ -65,24 +65,36 @@ public static class HousingCommands
             }
             else
             {
-                layout = HouseSite.Find(new TilePoint(px, py), width, height, Housing.Cell, SearchRadius)
+                var found = HouseSite.FindWithCheck(new TilePoint(px, py), width, height, Housing.Cell, SearchRadius)
                          ?? throw new CommandError(ErrorCodes.BadParams,
-                             $"no flat, clear, visible spot for a {width}x{height} house within {SearchRadius} tiles " +
-                             $"(needs {width} tiles of level ground, {height - 1} tiles of open air above it, no trees, room outside the door); " +
+                             $"no clear, visible spot for a {width}x{height} house within {SearchRadius} tiles " +
+                             $"(needs ground under at least {HouseSite.MinGround(width)} of the {width} floor tiles, gaps at most {HouseSite.MaxDipDepth} deep " +
+                             $"(filled with blocks), {height - 1} tiles of open air above the floor apart from natural bumps at most {HouseSite.MaxBumpHeight} tall " +
+                             "(mined first), no trees, no natural background walls, room to stand outside the door); " +
                              "explore or give x,y (bottom-left floor tile)");
+                (layout, site) = found;
                 if (doorParam != null)
                 {
                     var forced = layout with { Door = doorParam == "left" ? DoorSide.Left : DoorSide.Right };
-                    if (HouseSite.Check(forced, Housing.Cell, strict: true).Ok) layout = forced;
+                    var forcedSite = HouseSite.Check(forced, Housing.Cell, strict: true);
+                    if (forcedSite.Ok) (layout, site) = (forced, forcedSite);
                 }
-                site = HouseSite.Check(layout, Housing.Cell, strict: true);
             }
+
+            // Tiles to mine first (bumps, decoration) don't anchor anything: they'll be gone.
+            var mineFirst = site.MineFirst();
+            var mineSet = new HashSet<TilePoint>(mineFirst);
+            if (site.Bumps is { Count: > 0 } && HeldItemLease.BestPickaxe(pl) < 0)
+                throw new CommandError(ErrorCodes.MissingItem, $"a {layout} needs {site.Bumps.Count} ground bump(s) mined out of the way (first {site.Bumps.First()}) and you have no pickaxe");
+            if (site.Flatten is { Count: > 0 } && HouseItems.BestHammer(pl) < 0)
+                throw new CommandError(ErrorCodes.MissingItem,
+                    $"{site.Flatten.Count} frame block(s) are half blocks or slopes (first {site.Flatten.First()}): furniture and doors can't stand on them and you have no hammer to flatten them");
 
             // Anchors: existing blocks/platforms (and walls) where the frame attaches.
             var steps = HousePlan.Steps(layout, site.FrameToPlace, site.WallsToPlace,
-                t => Housing.Cell(t.X, t.Y) is var c && (c.IsBlock || c.Wall != WallState.None),
-                t => Housing.Cell(t.X, t.Y) is var c && (c.Tile != SiteTile.Air || c.Wall != WallState.None),
-                out var planProblem);
+                t => Housing.Cell(t.X, t.Y) is var c && ((c.IsBlock && !mineSet.Contains(t)) || c.Wall != WallState.None),
+                t => Housing.Cell(t.X, t.Y) is var c && ((c.Tile != SiteTile.Air && !mineSet.Contains(t)) || c.Wall != WallState.None),
+                out var planProblem, site.Flatten);
             if (planProblem != null) throw new CommandError(ErrorCodes.BadParams, $"can't build a {layout}: {planProblem}");
 
             // Bill of materials, up front: fail with exact counts rather than run out half-way.
@@ -106,7 +118,7 @@ public static class HousingCommands
                 throw new CommandError(ErrorCodes.MissingItem, $"still short after crafting ({Describe(crafted)}): " +
                     (after.Ok ? string.Join(", ", after.Crafts.Select(c => $"{c.Item} x{c.Times}")) : after.MissingText()));
 
-            var task = new BuildHouseTask(layout, steps, site.CanExit, site.ClearFirst?.ToList());
+            var task = new BuildHouseTask(layout, steps, site.CanExit, mineFirst);
             TaskHost.Start(task);
             return new
             {
@@ -121,6 +133,9 @@ public static class HousingCommands
                 },
                 Steps = steps.Count,
                 FrameBlocks = site.FrameToPlace.Count,
+                FloorGapsToFill = site.FrameToPlace.Count(t => t.Y == layout.FloorY),
+                MineFirst = mineFirst.Count > 0 ? mineFirst.Count : (int?)null,
+                Flatten = site.Flatten is { Count: > 0 } fl ? fl.Count : (int?)null,
                 BackgroundWalls = site.WallsToPlace.Count,
                 FrameUses = after.FrameUse.Select(f => new { Item = f.Name, f.Count }),
                 Crafted = crafted.Count > 0 ? crafted : null,

@@ -87,10 +87,17 @@ public static class GatherCommands
             bool hasX = Params.Has(p, "x"), hasY = Params.Has(p, "y");
             if (hasX != hasY) throw new CommandError(ErrorCodes.BadParams, "give both x and y, or neither (nearest tree)");
             TilePoint? at = hasX ? new TilePoint(Params.Int(p, "x"), Params.Int(p, "y")) : null;
-            var trunk = ChopTreeTask.ResolveBase(Main.LocalPlayer, at);
-            var task = new ChopTreeTask(trunk);
+            var target = ChopTreeTask.ResolveBase(Main.LocalPlayer, at);
+            var task = new ChopTreeTask(target);
             TaskHost.Start(task);
-            return new { Started = true, Task = task.Name, Tree = new { trunk.X, trunk.Y } };
+            var trunk = target.Base;
+            return new
+            {
+                Started = true, Task = task.Name, Tree = new { trunk.X, trunk.Y },
+                Skipped = target.Choice is { Skipped: > 0 } c ? c.Skipped : (int?)null,
+                SkippedReasons = target.Choice is { Skipped: > 0 } c2 ? c2.SkipText() : null,
+                Fallbacks = target.Alternatives.Count > 0 ? target.Alternatives.Select(t => new { t.X, t.Y }) : null,
+            };
         }, isAction: true);
 
         CommandRouter.Register("pick_up_items", p =>

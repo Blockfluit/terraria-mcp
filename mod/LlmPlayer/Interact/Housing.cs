@@ -190,11 +190,21 @@ public static class Housing
             if (TileID.Sets.Platforms[type]) return new SiteCell(SiteTile.Platform, wall);
             if (Valuables.IsNaturalDecor(type, t.TileFrameX) && !Protection.IsProtectedArea(x, y)) return new SiteCell(SiteTile.Decor, wall);
             if (Main.tileFrameImportant[type] || TileClass.IsProtectedType(type)) return new SiteCell(SiteTile.Object, wall);
-            if (Main.tileSolid[type]) return new SiteCell(Main.tileSolidTop[type] ? SiteTile.Platform : SiteTile.Solid, wall);
+            if (Main.tileSolid[type])
+                return Main.tileSolidTop[type]
+                    ? new SiteCell(SiteTile.Platform, wall)
+                    : new SiteCell(SiteTile.Solid, wall, IsNaturalGround(type) && !Protection.IsProtectedArea(x, y),
+                        t.IsHalfBlock || t.Slope != SlopeType.Solid);
             return new SiteCell(SiteTile.Object, wall);
         }
         return Liquidish(t, wall);
     }
+
+    /// <summary>Ground a player digs out of the way without a thought: dirt, grass of any kind, stone, mud, clay,
+    /// snow. Not sand (it falls), not ore, not bricks or wood (someone's build).</summary>
+    public static bool IsNaturalGround(int type) =>
+        type is TileID.Dirt or TileID.Stone or TileID.Mud or TileID.ClayBlock or TileID.SnowBlock
+        || TileID.Sets.Grass[type];
 
     private static SiteCell Liquidish(Tile t, WallState wall) =>
         t.LiquidAmount > 0 && (t.LiquidType == LiquidID.Lava || t.LiquidAmount >= 128)
@@ -235,6 +245,20 @@ public static class HouseItems
     /// <summary>3×2 tables (preferred) and 2×1 work benches: the flat surfaces the layout has room for.</summary>
     public static bool IsTable(Item it) => !it.IsAir && it.createTile is TileID.Tables or TileID.Tables2 or TileID.WorkBenches;
 
+    /// <summary>Slot of the hammer with the highest hammer power, or -1.</summary>
+    public static int BestHammer(Player p)
+    {
+        int best = -1, power = 0;
+        for (int i = 0; i < 58; i++)
+        {
+            var it = p.inventory[i];
+            if (it.IsAir || it.hammer <= power) continue;
+            best = i;
+            power = it.hammer;
+        }
+        return best;
+    }
+
     public static int Count(Player p, Func<Item, bool> pred)
     {
         int n = 0;
@@ -258,6 +282,8 @@ public static class HouseItems
                 }
                 return best;
             }
+            case HousePart.Flatten:
+                return BestHammer(p);
             case HousePart.Table:
                 for (int i = 0; i < 58; i++)
                     if (IsTable(p.inventory[i]) && p.inventory[i].createTile != TileID.WorkBenches) return i;

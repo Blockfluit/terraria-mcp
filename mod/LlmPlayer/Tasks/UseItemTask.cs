@@ -26,7 +26,7 @@ public sealed class UseItemTask : IGameTask<GameCtx>, IUninterruptibleTask
 {
     public const int StartTimeoutTicks = 60, MaxAnimationTicks = 600, HoldTimeoutTicks = 300;
 
-    private readonly int _slot;
+    private int _slot;
     private readonly Item _item;
     private readonly string _itemName;
     private readonly TilePoint? _aim;
@@ -76,6 +76,10 @@ public sealed class UseItemTask : IGameTask<GameCtx>, IUninterruptibleTask
         if (_item.potion && p.potionDelay > 0)
             return Finish(ctx, GameTaskStatus.Failed, $"potion sickness: can't drink {_itemName} for another {(p.potionDelay + 59) / 60}s");
 
+        // Follow the item if something moved it since the command picked its slot (see SlotTracking).
+        if (!_lease.IsHeld(p, _slot) && !ReferenceEquals(p.inventory[_slot], _item))
+            _slot = TaskItems.Track(p, _slot, _item, -1);
+        if (_slot < 0) return Finish(ctx, GameTaskStatus.Failed, $"{_itemName} is no longer in the inventory");
         if (!_lease.Hold(p, _slot))
         {
             ControlState.Pending = default(ControlIntent) with { CursorTile = aim };
@@ -125,6 +129,11 @@ public sealed class UseItemTask : IGameTask<GameCtx>, IUninterruptibleTask
 /// <summary>Small inventory helpers shared by item-using tasks.</summary>
 public static class TaskItems
 {
+    /// <summary>The slot holding <paramref name="item"/> now (<see cref="Core.Inventory.SlotTracking"/>): the
+    /// remembered slot, else wherever that Item object moved, else the first stack of the same type; -1 if gone.</summary>
+    public static int Track(Player p, int slot, Item item, int type) =>
+        Core.Inventory.SlotTracking.Resolve<Item>(p.inventory.Take(58).ToArray(), slot, item, it => it.IsAir, (a, _) => a.type == type);
+
     /// <summary>Is this exact Item object still a non-empty stack somewhere in inventory slots 0-57?</summary>
     public static bool StillHas(Player p, Item item)
     {

@@ -236,7 +236,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "chop_tree",
     description:
-      "Chop down a tree with the best axe. Give the trunk's x,y, or omit both to chop the nearest visible tree." +
+      "Chop down a tree with the best axe and collect the wood. Give the trunk's x,y, or omit both for the nearest visible tree that may be chopped: trees near spawn or in NPC houses (protected) and trees whose trunk base isn't visible are skipped (the reply says how many: skipped, skippedReasons), and if the chosen tree can't be reached it moves on to the next nearest (up to 3 trees; the report names the unreachable ones)." +
       COORDS +
       STARTS_TASK,
     shape: { x: tileX().optional(), y: tileY().optional() },
@@ -296,7 +296,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "place",
     description:
-      "Place a block, platform, torch or furniture (e.g. 'Work Bench') at tile x,y. The tile must be visible, empty and not protected; walks within reach first." +
+      "Place a block, platform, torch or furniture (e.g. 'Work Bench') at tile x,y. The tile must be visible, empty and not protected; walks within reach first, waits for any current swing/use to finish before switching to the item, and follows the item if it moved slots." +
       COORDS +
       STARTS_TASK,
     shape: { item: z.string().min(1).describe("Item name (case-insensitive)"), x: tileX(), y: tileY() },
@@ -335,10 +335,10 @@ const TOOLS: ToolDef[] = [
     name: "build_house",
     description:
       "Build a valid town-NPC house (Merchant, Nurse, Demolitionist, Arms Dealer… need one each) with real placement: frame of blocks (floor, walls, ceiling), a door in one side wall, background walls on every inside tile, then a table (or work bench), a chair and a torch. " +
-      "x,y = the bottom-left tile of the frame (floor row); omit both to use the nearest flat, clear, visible spot within 30 tiles (level ground as the floor, open air above, no trees, room to stand outside the door). Default size 10x6 outer (frame included): vanilla's minimum of 60 tiles; height at most 7 so the ceiling stays in reach. " +
+      "x,y = the bottom-left tile of the frame (floor row); omit both to pick the best visible spot within 30 tiles on ordinary uneven ground, scored by distance and work: ground under at least a third of the floor, floor gaps up to 4 deep get blocks placed over them, natural bumps (dirt/grass/stone, outside protected areas) up to 2 tiles above the floor inside the house or in the door spot are mined first, open air above that, no trees or natural background walls, room to stand outside the door. With x,y the same bump mining applies and dips are built over. Half blocks and slopes in the frame are hammered flat with your hammer (furniture and doors can't stand on them). Default size 10x6 outer (frame included): vanilla's minimum of 60 tiles; height at most 7 so the ceiling stays in reach. The reply lists frameBlocks, floorGapsToFill, mineFirst and flatten. " +
       "Materials come from your inventory: blocks for the frame (Wood first, then other wood, Stone, bricks, Dirt…; existing blocks in the frame's place are kept), owned doors/tables/chairs/torches/house walls first. What is missing is crafted first when possible (Wood Wall/Dirt Wall/Stone Wall 4 per block, Wooden Door, Chair, Table at a Work Bench in range; Work Bench as the table and Torch from Gel+Wood need no station). " +
       "If anything is short it fails up front with missing_item listing exact counts and where to get them; a site that isn't clear fails with bad_params naming the tile (tree: chop_tree it or pick another spot). " +
-      "The player stands inside while building and walks out through the door at the end (move_to opens/closes doors). Then vanilla's housing query runs: succeeded = valid house; failed = built but vanilla's reason (e.g. missing walls). report.result: {x, y, width, height, door, valid, reason?, placed {frame block, door, background wall, table, chair, torch}, skipped, skippedReasons, exitedThroughDoor, housing}." +
+      "The player stands inside while building and walks out through the door at the end (move_to opens/closes doors). Then vanilla's housing query runs: succeeded = valid house; failed = built but vanilla's reason (e.g. missing walls). report.result: {x, y, width, height, door, valid, reason?, placed {frame block, flattened block, door, background wall, table, chair, torch}, skipped, skippedReasons, exitedThroughDoor, housing}." +
       COORDS +
       STARTS_TASK,
     shape: {

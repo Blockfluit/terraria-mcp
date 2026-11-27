@@ -28,8 +28,9 @@ public sealed class PlaceTask : IGameTask<GameCtx>
     public const int MaxAttempts = 3, AttemptTicks = 30, MaxMoves = 3, HoldTimeoutTicks = 300;
 
     private readonly TilePoint _target;
-    private readonly int _slot;
+    private int _slot;
     private readonly Item _item;
+    private readonly int _itemType;
     private readonly string _itemName;
     private readonly int _createTile, _createWall;
     private readonly HeldItemLease _lease = new();
@@ -45,6 +46,7 @@ public sealed class PlaceTask : IGameTask<GameCtx>
         _slot = slot;
         _item = p.inventory[slot];
         _itemName = _item.Name;
+        _itemType = _item.type;
         _createTile = _item.createTile;
         _createWall = _item.createWall;
         _target = target;
@@ -57,7 +59,15 @@ public sealed class PlaceTask : IGameTask<GameCtx>
         var p = ctx.Player;
         if (Placed()) return Finish(ctx, GameTaskStatus.Succeeded, $"placed {_itemName} at {_target}");
         if (BlockedBy() is { } what) return Finish(ctx, GameTaskStatus.Failed, $"{_target} is now occupied by {what}");
-        if (!TaskItems.StillHas(p, _item)) return Finish(ctx, GameTaskStatus.Failed, $"no {_itemName} left in the inventory");
+        // The item may have moved since the command picked its slot (a cancelled task's lease swapping back, the
+        // auto-defend reflex): follow it (SlotTracking).
+        if (!_lease.IsHeld(p, _slot))
+        {
+            int now = TaskItems.Track(p, _slot, _item, _itemType);
+            if (now < 0) return Finish(ctx, GameTaskStatus.Failed, $"no {_itemName} left in the inventory");
+            _slot = now;
+        }
+        var item = p.inventory[_slot];
 
         if (_move != null)
         {
@@ -74,7 +84,7 @@ public sealed class PlaceTask : IGameTask<GameCtx>
         }
 
         bool inReach = ReachMath.InItemRange(p.position.X, p.position.Y, p.width, p.height,
-            Player.tileRangeX, Player.tileRangeY, _item.tileBoost, _target.X, _target.Y);
+            Player.tileRangeX, Player.tileRangeY, item.tileBoost, _target.X, _target.Y);
         bool overlaps = PlacesTile && Main.tileSolid[_createTile] && !Main.tileSolidTop[_createTile]
             && ReachMath.OverlapsBody(p.position.X, p.position.Y, p.width, p.height, _target.X, _target.Y);
         if (!inReach || overlaps)
@@ -95,10 +105,13 @@ public sealed class PlaceTask : IGameTask<GameCtx>
             return GameTaskStatus.Running;
         }
 
+        // Vanilla only switches items between uses: wait (bounded) for the current swing/use to end.
         if (!_lease.Hold(p, _slot))
         {
-            if (++_holdTicks > HoldTimeoutTicks) return Finish(ctx, GameTaskStatus.Failed, "couldn't switch to the item (busy using another item)");
-            Progress = "waiting to switch items";
+            if (++_holdTicks > HoldTimeoutTicks)
+                return Finish(ctx, GameTaskStatus.Failed, $"couldn't switch to {_itemName}: the current item use didn't end within " +
+                    $"{HoldTimeoutTicks / 60} s (itemAnimation {p.itemAnimation}, itemTime {p.itemTime}, channel {p.channel})");
+            Progress = "waiting for the current item use to end";
             return Hold(aimOnly: true);
         }
 
