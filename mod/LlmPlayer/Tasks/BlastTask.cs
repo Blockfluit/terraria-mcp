@@ -58,7 +58,9 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
     private PickUpTask? _collect;
     private HashSet<TilePoint> _expected = new();
     private Dictionary<TilePoint, ushort> _before = new();
-    private int _ticks, _blasts, _replans, _projIndex = -1, _projIdentity, _stillTicks, _retreatStuck;
+    private int _ticks, _blasts, _replans, _projIndex = -1, _projIdentity, _stillTicks, _retreatStuck, _alignTicks;
+    private const float AlignPx = 2f;
+    private const int MaxAlignTicks = 90;
     private bool _started, _targetGone;
 
     public string Name => "blast";
@@ -121,6 +123,18 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
     {
         var p = ctx.Player;
         ControlState.Pending = default;
+        // Line the hitbox up with the planned stand: StandingTile rounds, so the player can be up to half a tile off
+        // the spot the throw was planned from. Tap toward it while slow (vanilla friction stops the rest).
+        float err = (_plan.Stand.X + PlayerPhysics.CenterOffset) * 16f - p.position.X;
+        if (MathF.Abs(err) > AlignPx && _alignTicks < MaxAlignTicks && p.velocity.Y == 0f)
+        {
+            _alignTicks++;
+            _stillTicks = 0;
+            if (MathF.Abs(p.velocity.X) < 0.4f)
+                ControlState.Pending = new ControlIntent { Left = err < 0, Right = err > 0 };
+            Progress = $"lining up to throw at {_s.Target}";
+            return GameTaskStatus.Running;
+        }
         _stillTicks = p.velocity.X == 0f && p.velocity.Y == 0f ? _stillTicks + 1 : 0;
         Progress = $"steadying to throw at {_s.Target}";
         if (_stillTicks < 10 && _ticks < SettleMaxTicks) return GameTaskStatus.Running;

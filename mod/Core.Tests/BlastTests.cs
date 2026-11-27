@@ -491,7 +491,7 @@ public class BlastWholeTileTests
             if (plan == null) continue; // a deeper target may need a crater first
             var (ox, oy) = BlastPlanner.Origin(plan.Stand);
             var h = BlastPlanner.Hitbox(plan.Stand);
-            foreach (float d in new[] { -0.45f, 0.45f })
+            foreach (float d in new[] { -BlastPlanner.WholeTileSlack, BlastPlanner.WholeTileSlack })
                 Assert.NotNull(BlastPlanner.BestThrow(g, ox + d, oy, target, spec, out _, out _, (h.L + d, h.T, h.R + d, h.B)));
         }
     }

@@ -383,15 +383,19 @@ public static class BlastPlanner
         return best;
     }
 
-    /// <summary>Standing at tile s, the real hitbox is anywhere up to half a tile left or right of
-    /// <see cref="Hitbox"/> (StandingTile rounds). The task re-aims from the real position, so a stand only qualifies if
-    /// a good, safe throw exists from both extremes (seen in game: three stands in a row planned fine, then the re-aim
+    /// <summary>Standing at tile s, the real hitbox can be up to half a tile left or right of <see cref="Hitbox"/>
+    /// (StandingTile rounds); BlastTask lines it up, and the task re-aims from the real position, so a stand only
+    /// qualifies if a good, safe throw exists within <see cref="WholeTileSlack"/> either way (seen in game: three stands in a row planned fine, then the re-aim
     /// from the real position found no throw: "no safe throw from here; gave up after 3 replans").</summary>
+    /// <summary>How far (tiles) the real hitbox may still be off the modelled one: BlastTask lines the player up to
+    /// within 2 px, this leaves room for that and for vanilla's sub-pixel drift.</summary>
+    public const float WholeTileSlack = 0.2f;
+
     private static bool ThrowsFromWholeTile(ITileGrid grid, TilePoint s, TilePoint target, ExplosiveSpec spec, float margin)
     {
         var (ox, oy) = Origin(s);
         var h = Hitbox(s);
-        foreach (float d in new[] { -0.45f, 0.45f })
+        foreach (float d in new[] { -WholeTileSlack, WholeTileSlack })
         {
             var hd = (h.L + d, h.T, h.R + d, h.B);
             if (BestThrow(grid, ox + d, oy, target, spec, out _, out _, hd, margin) == null) return false;
