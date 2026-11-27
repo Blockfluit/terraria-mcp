@@ -16,6 +16,8 @@ namespace LlmPlayer.Nav;
 /// <item>Extra jumps (bottles), wings and rocket boots are ignored; run boots too (maxRunSpeed only).</item>
 /// <item>SafeFallTiles = 25 + extraFall (vanilla's damage threshold) - 5 margin; NoFallDamage = noFallDmg or wings
 /// equipped (vanilla skips fall damage for both).</item>
+/// <item>Breath: MaxSubmergedSteps from breathMax × breathCDMax (<see cref="BreathMath"/>; Breathing Reed / Diving
+/// Gear raise breathCDMax); WaterBreathing = gills or merfolk (no breath loss at all).</item>
 /// </list>
 /// </summary>
 public static class ProfileBuilder
@@ -59,6 +61,8 @@ public static class ProfileBuilder
             NoFallDamage = p.noFallDmg || p.equippedWings != null,
             PickPower = allowDig ? HeldItemLease.PickPower(p) : 0,
             BuildItemCount = allowBuild ? HeldItemLease.BuildItemCount(p) : 0,
+            MaxSubmergedSteps = BreathMath.MaxSubmergedSteps(p.breathMax, p.breathCDMax),
+            WaterBreathing = Tasks.Reflexes.CanBreatheInLiquid(p),
         };
     }
 }

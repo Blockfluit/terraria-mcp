@@ -192,6 +192,71 @@ public class ReflexArbiterTests
         Assert.True(resume.DefendEnded);
         Assert.False(resume.Defend);            // task ticks again this tick
     }
+
+    // ---- surfacing -------------------------------------------------------------------------------------------
+
+    private static ReflexInputs Underwater(TaskPhase phase, int breath) =>
+        Calm(phase) with { HeadInLiquid = true, Breath = breath, BreathMax = 200 };
+
+    [Theory]
+    [InlineData(TaskPhase.Idle)]
+    [InlineData(TaskPhase.Defendable)]
+    [InlineData(TaskPhase.Busy)]
+    public void LowBreath_Surfaces_EvenDuringBusyTasks(TaskPhase phase)
+    {
+        var a = new ReflexArbiter();
+        Assert.False(a.Tick(Underwater(phase, 100)).Surface); // 50 %: still fine
+        var d = a.Tick(Underwater(phase, 80));
+        Assert.True(d.Surface);
+        Assert.True(d.SurfaceStarted);
+        Assert.True(d.OwnsControls);
+        var d2 = a.Tick(Underwater(phase, 79));
+        Assert.True(d2.Surface);
+        Assert.False(d2.SurfaceStarted);
+    }
+
+    [Fact]
+    public void Surfacing_KeepsControlUntilBreathIsBack_ThenEndsOnce()
+    {
+        var a = new ReflexArbiter();
+        a.Tick(Underwater(TaskPhase.Busy, 60));
+        // head out: breath refills, still surfacing below 90 %
+        Assert.True(a.Tick(Calm(TaskPhase.Busy) with { Breath = 120, BreathMax = 200 }).Surface);
+        Assert.True(a.Tick(Calm(TaskPhase.Busy) with { Breath = 179, BreathMax = 200 }).Surface);
+        var end = a.Tick(Calm(TaskPhase.Busy) with { Breath = 180, BreathMax = 200 });
+        Assert.False(end.Surface);
+        Assert.True(end.SurfaceEnded);
+        Assert.False(a.Tick(Calm(TaskPhase.Busy) with { Breath = 200, BreathMax = 200 }).SurfaceEnded);
+    }
+
+    [Fact]
+    public void WaterBreathing_NeverSurfaces()
+    {
+        var a = new ReflexArbiter();
+        Assert.False(a.Tick(Underwater(TaskPhase.Idle, 10) with { WaterBreathing = true }).Surface);
+        Assert.False(a.Tick(Underwater(TaskPhase.Idle, 10) with { BreathMax = 0 }).Surface);
+    }
+
+    [Fact]
+    public void Surfacing_EndsADefence_AndBlocksIt()
+    {
+        var a = new ReflexArbiter();
+        Assert.True(a.Tick(Calm(TaskPhase.Defendable) with { ThreatInReach = true }).Defend);
+        var d = a.Tick(Underwater(TaskPhase.Defendable, 50) with { ThreatInReach = true });
+        Assert.True(d.Surface);
+        Assert.False(d.Defend);
+        Assert.True(d.DefendEnded);
+        Assert.False(a.Tick(Underwater(TaskPhase.Defendable, 50) with { ThreatInReach = true }).Defend);
+    }
+
+    [Fact]
+    public void Surfacing_StillQuickHeals()
+    {
+        var a = new ReflexArbiter();
+        var d = a.Tick(Underwater(TaskPhase.Busy, 50) with { Life = 20 });
+        Assert.True(d.Surface);
+        Assert.True(d.QuickHeal);
+    }
 }
 
 public class TaskPhasesTests

@@ -26,7 +26,7 @@ namespace LlmPlayer.Control;
 /// </summary>
 public sealed class PauseWhenIdle : ModSystem
 {
-    /// <summary>Pause now? Config on, single player, in a world, AI driving, alive, no task, not defending.</summary>
+    /// <summary>Pause now? Config on, single player, in a world, AI driving, alive, no task, not defending or surfacing.</summary>
     public static bool ShouldPause =>
         LlmConfig.Current.PauseWhenIdle
         && Main.netMode == NetmodeID.SinglePlayer
@@ -34,7 +34,8 @@ public sealed class PauseWhenIdle : ModSystem
         && ControlState.Driver == Driver.Ai
         && Main.LocalPlayer is { active: true, dead: false }
         && TaskHost.Runner.IsIdle
-        && !Reflexes.Defending;
+        && !Reflexes.Defending
+        && !Reflexes.Surfacing;
 
     public override void Load()
     {
