@@ -12,7 +12,7 @@ namespace LlmPlayer.Observe;
 /// </summary>
 public static class Finder
 {
-    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item", "block", "valuable" };
+    public static readonly string[] Categories = { "ore", "tree", "chest", "station", "bed", "npc", "item", "block", "valuable", "plant" };
     public const int DefaultRadius = 60;
     public const int MaxRadius = 100;
     private const int OreClusterRadius = 3;
@@ -81,15 +81,38 @@ public static class Finder
                 "bed" => LlmPlayer.Interact.BedAccess.IsBed(type),
                 "block" => Main.tileSolid[type] && !TileClass.IsOre(type) && !TileClass.IsTree(type)
                            && !TileClass.IsContainer(type) && !TileClass.IsStation(type),
+                "plant" => PlantName(tile) != null,
                 _ => false,
             };
             if (!match || !Visibility.IsTileVisible(x, y, screen, p)) continue;
             int rx = x, ry = y;
             if (cat is "chest" or "station" or "bed") (rx, ry) = TileClass.ObjectOrigin(x, y, tile);
             if (!seen.Add((rx, ry))) continue;
-            list.Add(new FindCandidate(TileClass.Name(type), rx, ry));
+            list.Add(new FindCandidate(cat == "plant" ? PlantName(tile)! : TileClass.Name(type), rx, ry));
         }
         return list;
+    }
+
+    private static readonly string[] HerbNames = { "Daybloom", "Moonglow", "Blinkroot", "Deathweed", "Waterleaf", "Fireblossom", "Shiverthorn" };
+
+    /// <summary>A plant worth harvesting (cut it with mine / any swing): a grown herb (mature or blooming; blooming ones
+    /// also drop seeds) or a mushroom (forest Mushroom, Vile / Vicious Mushroom, Glowing Mushroom). Immature herbs and
+    /// grass decoration are null. Herb style = frameX / 18; the mushroom is style 8 (frameX 144) of the forest and
+    /// corruption plant sheets and style 15 (frameX 270) of the crimson one.</summary>
+    internal static string? PlantName(Tile tile)
+    {
+        int type = tile.TileType, fx = tile.TileFrameX;
+        if (type is Terraria.ID.TileID.MatureHerbs or Terraria.ID.TileID.BloomingHerbs)
+        {
+            int style = fx / 18;
+            string? herb = style >= 0 && style < HerbNames.Length ? HerbNames[style] : null;
+            return herb == null ? null : type == Terraria.ID.TileID.BloomingHerbs ? herb + " (blooming)" : herb;
+        }
+        if (type == Terraria.ID.TileID.Plants && fx == 144) return "Mushroom";
+        if (type == Terraria.ID.TileID.CorruptPlants && fx == 144) return "Vile Mushroom";
+        if (type == Terraria.ID.TileID.CrimsonPlants && fx == 270) return "Vicious Mushroom";
+        if (type == Terraria.ID.TileID.MushroomPlants) return "Glowing Mushroom";
+        return null;
     }
 
     /// <summary>Bottom trunk tile: it rests on solid non-tree ground (branches hang over air, so they don't count;
