@@ -57,7 +57,8 @@ public static class HousingCommands
                 {
                     "left" => DoorSide.Left,
                     "right" => DoorSide.Right,
-                    _ => px + 1 < x + width / 2f ? DoorSide.Left : DoorSide.Right, // the side facing the player
+                    // A side with room to stand outside, the one facing the player first.
+                    _ => HouseSite.DefaultDoor(x, y, width, height, new TilePoint(px, py), Housing.Cell),
                 };
                 layout = new HouseLayout(x, y, width, height, door);
                 site = HouseSite.Check(layout, Housing.Cell, strict: false);
@@ -139,7 +140,8 @@ public static class HousingCommands
                 BackgroundWalls = site.WallsToPlace.Count,
                 FrameUses = after.FrameUse.Select(f => new { Item = f.Name, f.Count }),
                 Crafted = crafted.Count > 0 ? crafted : null,
-                Note = site.CanExit ? null : "no room to stand outside the door: the player stays inside when done",
+                Note = site.CanExit ? null
+                    : "no room to stand outside the door (2 wide, 3 high, on ground): the player stays inside when done and the house may be unreachable; clear the space or pick another spot/door side",
             };
         }, isAction: true);
     }

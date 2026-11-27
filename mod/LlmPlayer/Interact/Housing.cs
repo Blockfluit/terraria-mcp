@@ -178,6 +178,14 @@ public static class Housing
     public static SiteCell Cell(int x, int y)
     {
         if (!WorldGen.InWorld(x, y, 10) || !Visibility.IsTileVisible(x, y)) return new SiteCell(SiteTile.Unknown);
+        var c = RawCell(x, y);
+        var tile = Main.tile[x, y];
+        if (tile.HasTile && TileClass.IsDoor(tile.TileType)) c = c with { Door = true };
+        return c;
+    }
+
+    private static SiteCell RawCell(int x, int y)
+    {
         foreach (var room in Protection.HouseRooms)
             if (x >= room.Left && x < room.Right && y >= room.Top && y < room.Bottom) return new SiteCell(SiteTile.NpcHouse);
         var t = Main.tile[x, y];
