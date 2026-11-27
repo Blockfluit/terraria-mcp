@@ -149,9 +149,36 @@ public sealed class ExploreTask : IGameTask<GameCtx>
             return Fail($"stuck at {_covered}/{_distance} tiles: the way {DirName} is open but can't be walked{LastDigStop}");
         }
         if (stop.Kind == DigStopKind.Dark) return HandleDark(ctx, here, stop);
+        // Digging down inside the protected spawn/NPC-house area: walk out of it and dig there instead (seen in game:
+        // explore down / explore_caves from spawn failed at once with "protected tile at (4191,553)").
+        if (stop.Kind == DigStopKind.Protected && _dir == ExploreDirection.Down && _leftProtected < 2
+            && Safety.Protection.IsProtectedArea(stop.At.X, stop.At.Y) && OutsideProtected(ctx, here) is { } outside)
+        {
+            _leftProtected++;
+            return StartLeg(outside, Along(here - _origin!.Value));
+        }
         _lastDigStop = stop.Describe(power);
         if (hasTarget && _stalls < MaxStalls - 1) return StartLeg(target, Along(here - _origin!.Value)); // walking may still help
         return Fail(_lastDigStop);
+    }
+
+    private int _leftProtected;
+
+    /// <summary>Nearest visible standable spot (within 60 tiles sideways, ±10 rows) whose shaft below isn't in a
+    /// protected area.</summary>
+    private static TilePoint? OutsideProtected(GameCtx ctx, TilePoint here)
+    {
+        for (int d = 1; d <= 60; d++)
+            foreach (int sx in new[] { here.X + d, here.X - d })
+                for (int dy = -10; dy <= 10; dy++)
+                {
+                    var c = new TilePoint(sx, here.Y + dy);
+                    if (!Pathfinder.CanStand(ctx.Grid, c)) continue;
+                    if (Safety.Protection.IsProtectedArea(c.X, c.Y + 1) || Safety.Protection.IsProtectedArea(c.X + 1, c.Y + 1)) continue;
+                    if (Safety.Protection.IsProtectedArea(c.X, c.Y + 4)) continue;
+                    return c;
+                }
+        return null;
     }
 
     private DigPlan Plan(GameCtx ctx, TilePoint here, int power)
