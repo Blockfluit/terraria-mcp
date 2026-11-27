@@ -4,7 +4,7 @@ using LlmPlayer.Core.Nav;
 namespace LlmPlayer.Core.Tests.Sim;
 
 /// <summary>What the player holds while UseItem is pressed (the task picks it from the follower's current step).</summary>
-public enum SimTool { None, Pickaxe, Platform }
+public enum SimTool { None, Pickaxe, Platform, Block }
 
 /// <summary>
 /// A small deterministic stand-in for vanilla player movement, written independently of the follower and of
@@ -26,6 +26,8 @@ public enum SimTool { None, Pickaxe, Platform }
 /// <item>Tools: reach is vanilla's tileRangeX/Y = 5/4 box with the item's tileBoost (pickaxe -1 here, like early picks; platforms 0).
 /// Pickaxe on a tile with enough power breaks it after <see cref="DigTicks"/> ticks of use; platforms are placed into
 /// an empty tile orthogonally next to a tile (or with a background wall), every <see cref="PlatformUseTime"/> ticks, inside the hitbox allowed.
+/// Blocks (<see cref="Blocks"/>, SimTool.Block) are placed the same way but become solid tiles, and never where the tile
+/// would intersect the hitbox (vanilla refuses solid tiles over a player).
 /// Using the wrong tool on a tile (e.g. a platform on a solid block, which vanilla would swap) counts as misuse.</item>
 /// <item>Doors (Interact, within the 5/4 interaction box): a closed door's whole column of door tiles becomes air
 /// (WorldGen.OpenDoor; the swing column isn't modelled: an open door is passable anyway); interacting with an open
@@ -62,7 +64,7 @@ public sealed class MiniPhysics
 
     /// <summary>Hitbox top-left (px) and velocity (px/tick).</summary>
     public float X, Y, VX, VY;
-    public int PickPower = 35, DigTicks = 30, Platforms = 100, PlatformUseTime = 10, TileBoost = -1;
+    public int PickPower = 35, DigTicks = 30, Platforms = 100, Blocks = 0, PlatformUseTime = 10, TileBoost = -1;
     /// <summary>Wood Platforms have no tileBoost (reach 3 rows below the feet); <see cref="TileBoost"/> is the pickaxe's.</summary>
     public int PlatformTileBoost = 0;
     public int Ticks { get; private set; }
@@ -434,7 +436,7 @@ public sealed class MiniPhysics
     private void UseItem(ControlIntent c, SimTool tool)
     {
         if (_itemTime > 0) _itemTime--;
-        if (!c.UseItem || c.CursorTile is not { } t || !InReach(t, tool == SimTool.Platform ? PlatformTileBoost : TileBoost)) return;
+        if (!c.UseItem || c.CursorTile is not { } t || !InReach(t, tool is SimTool.Platform or SimTool.Block ? PlatformTileBoost : TileBoost)) return;
         var info = _g.Get(t);
         switch (tool)
         {
@@ -457,6 +459,20 @@ public sealed class MiniPhysics
                 if (_itemTime > 0 || Platforms <= 0 || info.Kind is TileKind.Lava || !HasAnchor(t)) return;
                 _g.Set(t.X, t.Y, new TileInfo(TileKind.Platform));
                 Platforms--;
+                Placed.Add(t);
+                _itemTime = PlatformUseTime;
+                return;
+            case SimTool.Block:
+                if (info.Kind is TileKind.Solid or TileKind.Platform)
+                {
+                    Misuse++;
+                    return;
+                }
+                if (_itemTime > 0 || Blocks <= 0 || info.Kind is TileKind.Lava || !HasAnchor(t)) return;
+                // Rectangle.Intersects (strict): touching edges is fine.
+                if (t.X * 16 < X + W && X < t.X * 16 + 16 && t.Y * 16 < Y + H && Y < t.Y * 16 + 16) return;
+                _g.Set(t.X, t.Y, new TileInfo(TileKind.Solid));
+                Blocks--;
                 Placed.Add(t);
                 _itemTime = PlatformUseTime;
                 return;

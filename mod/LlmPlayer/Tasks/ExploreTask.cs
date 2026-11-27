@@ -25,6 +25,9 @@ public enum ExploreDirection { Left, Right, Down, Up }
 /// <item><b>Light</b>: a dig target that's Unknown because it's dark gets a torch placed near it (<see cref="PlaceTask"/>)
 /// and is planned again; no torch → "too dark: no torches". With <c>torches</c>, also places one whenever the body is
 /// dark underground (or while digging) and no torch is within <see cref="TorchPlanner.SpacingTiles"/>.</item>
+/// <item><b>Surface mode</b> (<c>surface</c>, left/right): legs go to the farthest visible point of the ground's surface
+/// (<see cref="ExploreTargets.Surface"/>: up hills, down valleys) and never tunnel; when the stretch ahead is Unknown the
+/// leg ends at the farthest known surface point and the next one looks again.</item>
 /// <item>Fails after <see cref="MaxStalls"/> sub-tasks in a row without progress (3 when it can't dig).</item>
 /// <item><b>Water walking</b> (potion / boots): a lake's surface is floor (<see cref="Pathfinder.CanStand(ITileGrid, TilePoint, MovementProfile)"/>:
 /// with gear legs may end on it; with the potion's limited buff only the far shore is a target, legs reach
@@ -43,7 +46,9 @@ public sealed class ExploreTask : IGameTask<GameCtx>
 
     private readonly ExploreDirection _dir;
     private readonly int _distance;
-    private readonly bool _allowDig, _torches;
+    private readonly bool _allowDig, _torches, _surface;
+    /// <summary>Surface mode: follow the ground's surface (left/right only), never tunnel.</summary>
+    private bool Surface => _surface && _dir is ExploreDirection.Left or ExploreDirection.Right;
     private TilePoint? _origin;
     private int _bestAlong, _stallBest, _stalls, _covered;
 
@@ -69,8 +74,9 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     public string? Progress { get; private set; }
     public object? Result => new ExploreResult(_covered, _dug, _torchesPlaced, _stopped);
 
-    public ExploreTask(ExploreDirection dir, int distance, bool allowDig = true, bool torches = true)
+    public ExploreTask(ExploreDirection dir, int distance, bool allowDig = true, bool torches = true, bool surface = false)
     {
+        _surface = surface;
         _dir = dir;
         _distance = Math.Clamp(distance, 1, 500);
         _allowDig = allowDig;
@@ -122,15 +128,16 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     {
         bool hasTarget = PickTarget(ctx, here, out var target);
         int power = HeldItemLease.PickPower(ctx.Player);
-        bool canDig = _allowDig && power > 0 && _dir != ExploreDirection.Up;
+        bool canDig = _allowDig && power > 0 && _dir != ExploreDirection.Up && !Surface;
 
         if (hasTarget && (!_digNext || !canDig)) return StartLeg(target, Along(here - _origin!.Value));
         if (!canDig)
         {
-            string why = _dir == ExploreDirection.Up ? "; digging upward isn't supported (move_to a spot above builds platforms)"
+            string why = Surface ? " (surface mode follows the visible ground and doesn't tunnel; without surface it digs a tunnel)"
+                : _dir == ExploreDirection.Up ? "; digging upward isn't supported (move_to a spot above builds platforms)"
                 : !_allowDig ? " (allow_dig is off)"
                 : " and no pickaxe to dig with";
-            return Fail($"no visible ground further {DirName} (covered {_covered}/{_distance} tiles){why}");
+            return Fail($"no visible {(Surface ? "surface" : "ground")} further {DirName} (covered {_covered}/{_distance} tiles){why}");
         }
 
         var plan = Plan(ctx, here, power);
@@ -505,36 +512,20 @@ public sealed class ExploreTask : IGameTask<GameCtx>
         _ => -d.Y,
     };
 
-    /// <summary>The visible standable cell ahead with the most progress (ties: closest to the line of travel),
-    /// not beyond the remaining distance.</summary>
+    /// <summary>The next leg's target (<see cref="ExploreTargets"/>): the visible standable cell ahead with the most
+    /// progress, or in surface mode the farthest known point of the ground's surface; not beyond the remaining distance.</summary>
     private bool PickTarget(GameCtx ctx, TilePoint here, out TilePoint best)
     {
-        best = default;
         int remaining = _distance - Along(here - _origin!.Value);
         var ww = ProfileBuilder.WaterWalkState(ctx.Player);
         var stand = new MovementProfile(WaterWalk: ww.Water, LavaWalk: ww.Lava, WaterWalkTicks: ww.Ticks);
         int reach = Math.Min(ww.Water ? WaterWalkLegReach : LegReach, Math.Max(1, remaining));
         bool horizontal = _dir is ExploreDirection.Left or ExploreDirection.Right;
         int sign = _dir is ExploreDirection.Left or ExploreDirection.Up ? -1 : 1;
-        int bestScore = int.MinValue;
-        for (int a = reach; a >= 2; a--)
-            for (int l = -LateralReach; l <= LateralReach; l++)
-            {
-                var p = horizontal ? new TilePoint(here.X + sign * a, here.Y + l) : new TilePoint(here.X + l, here.Y + sign * a);
-                int score = a * 100 - Math.Abs(l);
-                if (score <= bestScore || !Pathfinder.CanStand(ctx.Grid, p, stand) || HasUnknown(ctx.Grid, p)) continue;
-                if (_failedTargets.Any(f => Math.Abs(f.X - p.X) <= 2 && Math.Abs(f.Y - p.Y) <= 2)) continue;
-                bestScore = score;
-                best = p;
-            }
-        return bestScore != int.MinValue;
-    }
-
-    private static bool HasUnknown(ITileGrid g, TilePoint p)
-    {
-        for (int y = p.Y - 2; y <= p.Y + 1; y++)
-            for (int x = p.X; x <= p.X + 1; x++)
-                if (g.Get(x, y).Kind == TileKind.Unknown) return true;
-        return false;
+        var t = Surface
+            ? ExploreTargets.Surface(ctx.Grid, here, sign, reach, stand, _failedTargets)
+            : ExploreTargets.Ahead(ctx.Grid, here, sign, horizontal, reach, LateralReach, stand, _failedTargets);
+        best = t ?? default;
+        return t != null;
     }
 }

@@ -644,7 +644,7 @@ public static class Pathfinder
             StepUp(ni, x, y, builds, -1);
             StepUp(ni, x, y, builds, +1);
             Jumps(ni, x, y, builds);
-            DropThrough(ni, x, y, builds, built);
+            DropThrough(ni, x, y, builds, built && _p.BuildIsPlatform(builds)); // a placed block can't be dropped through
             if (!built) DigDown(ni, x, y, builds);
             BuildUp(ni, x, y, builds);
             BuildDown(ni, x, y, builds, built);
@@ -1001,9 +1001,10 @@ public static class Pathfinder
         private void BuildDown(int ni, int x, int y, int builds, bool built)
         {
             if (!_canBuild || builds >= _buildCap) return;
-            // Straight down: through a platform underfoot (one from the grid, or the one this path placed: built).
+            // Straight down: through a platform underfoot (one from the grid, or the one this path placed: built, unless
+            // that was a block). The new tile may be a block: it is only landed on.
             ushort a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
-            bool platformOnly = built || (((a | b) & TileCache.Block) == 0 && ((a | b) & TileCache.Plat) != 0);
+            bool platformOnly = (built && _p.BuildIsPlatform(builds)) || (!built && ((a | b) & TileCache.Block) == 0 && ((a | b) & TileCache.Plat) != 0);
             _digs.Clear();
             if (platformOnly && Passable(x, y + 1) && Passable(x + 1, y + 1) && !SafeFall(x, y + 1, y))
                 Descend(ni, y, x, builds);

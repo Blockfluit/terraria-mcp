@@ -12,11 +12,11 @@ namespace LlmPlayer.Core.Tests.Sim;
 /// </summary>
 public class FollowerIntegrationTests(ITestOutputHelper output)
 {
-    private static MovementProfile Real(int pick = 0, int builds = 0) =>
-        JumpModel.Apply(new MovementProfile(PickPower: pick, BuildItemCount: builds), PlayerPhysics.Vanilla);
+    private static MovementProfile Real(int pick = 0, int builds = 0, int platforms = int.MaxValue) =>
+        JumpModel.Apply(new MovementProfile(PickPower: pick, BuildItemCount: builds, BuildPlatformCount: platforms), PlayerPhysics.Vanilla);
 
     internal sealed record Scenario(string Name, GridBuilder Grid, MovementProfile Profile, PathOptions Options, int MaxTicks,
-        int PickPower = 35, int Platforms = 100);
+        int PickPower = 35, int Platforms = 100, int Blocks = 0);
 
     private static readonly Dictionary<string, Scenario> Scenarios = new Scenario[]
     {
@@ -62,6 +62,20 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
         new("bridge_gap",
             new GridBuilder(26, 40).Fill(0, 10, 5, 10, '#').Fill(16, 10, 25, 10, '#').Put(1, 9, 'S').Put(19, 9, 'G'),
             Real(builds: 50), new(AllowDig: false), 1500, PickPower: 0),
+        // Blocks only (dirt, stone; 0 platforms): seen in game, "stuck at BuildPlatform (repeatedly)" climbing a hill.
+        new("climb_shaft_by_building_blocks",
+            new GridBuilder(14, 18).Fill(0, 5, 13, 17, '#').Fill(5, 5, 6, 14, '.').Put(5, 14, 'S').Put(9, 4, 'G'),
+            Real(builds: 20, platforms: 0), new(AllowDig: false), 1500, PickPower: 0, Platforms: 0, Blocks: 20),
+        new("bridge_gap_blocks",
+            new GridBuilder(26, 40).Fill(0, 10, 5, 10, '#').Fill(16, 10, 25, 10, '#').Put(1, 9, 'S').Put(19, 9, 'G'),
+            Real(builds: 50, platforms: 0), new(AllowDig: false), 1500, PickPower: 0, Platforms: 0, Blocks: 50),
+        new("hill_cliff_blocks",
+            new GridBuilder(30, 20).Fill(0, 15, 29, 19, '#').Fill(10, 14, 29, 14, '#').Fill(12, 13, 29, 13, '#')
+                .Fill(14, 7, 29, 12, '#').Put(2, 14, 'S').Put(20, 6, 'G'),
+            Real(builds: 30, platforms: 0), new(AllowDig: false), 2500, PickPower: 0, Platforms: 0, Blocks: 30),
+        new("wall_climb_blocks_then_platforms",
+            new GridBuilder(14, 18).Fill(0, 5, 13, 17, '#').Fill(5, 5, 6, 14, '.').Put(5, 14, 'S').Put(9, 4, 'G'),
+            Real(builds: 20, platforms: 3), new(AllowDig: false), 1500, PickPower: 0, Platforms: 3, Blocks: 17),
         new("swim_across",
             new GridBuilder(20, 16).Fill(0, 6, 19, 15, '#').Fill(9, 0, 10, 5, '#').Fill(6, 6, 13, 10, '~')
                 .Put(2, 5, 'S').Put(16, 5, 'G'),
@@ -330,7 +344,7 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
         }
         NotePlan(plan);
 
-        var sim = new MiniPhysics(g, start) { PickPower = sc.PickPower, Platforms = sc.Platforms };
+        var sim = new MiniPhysics(g, start) { PickPower = sc.PickPower, Platforms = sc.Platforms, Blocks = sc.Blocks };
         var follower = new PathFollower(plan.Steps, start: start);
         var trace = new Queue<string>();
         FollowerOutput o = default;
@@ -353,7 +367,8 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             var tool = o.Current?.Kind switch
             {
                 MoveKind.Dig => SimTool.Pickaxe,
-                MoveKind.BuildPlatform or MoveKind.BuildDown => SimTool.Platform,
+                // BuildReserve.Pick without a reserve: platforms first, then blocks.
+                MoveKind.BuildPlatform or MoveKind.BuildDown => sim.Platforms > 0 || sim.Blocks <= 0 ? SimTool.Platform : SimTool.Block,
                 _ => SimTool.None,
             };
             sim.Step(o.Intent, tool);
