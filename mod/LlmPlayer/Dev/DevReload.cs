@@ -55,6 +55,7 @@ public static class DevCommands
                 for (int x = x1; x <= x2; x++)
                 {
                     var t = grid.Get(x, y);
+                    if (Main.tile[x, y].HasTile && Main.tile[x, y].TileType == Terraria.ID.TileID.Heart) { sb.Append('H'); continue; }
                     sb.Append(t.Kind switch
                     {
                         LlmPlayer.Core.Grid.TileKind.Solid when t.IsClosedDoor => '|',
