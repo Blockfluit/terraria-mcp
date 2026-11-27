@@ -583,7 +583,11 @@ public static class Pathfinder
             }
             if (HasSupport(tx, y))
             {
-                Add(ni, tx, y, builds, false, WalkCost + DigPerTile * _digs.Count, MoveKind.Walk, withDigs: true);
+                // Feet sunk on a half block / a slope's low side are below the top of a platform beside them, and
+                // vanilla never lifts the body onto a platform from below (seen in game: "stuck at Walk", repeatedly,
+                // walking off a slope's low side onto a pillar's platform). A jump does it.
+                if (!PlatformOnlySupport(tx, y) || !SunkBelowStep(x, y, dx))
+                    Add(ni, tx, y, builds, false, WalkCost + DigPerTile * _digs.Count, MoveKind.Walk, withDigs: true);
                 return;
             }
             if (_digs.Count > 0) return;
@@ -946,6 +950,14 @@ public static class Pathfinder
             if ((f & TileCache.LowTop) == 0) return false;
             if ((f & (TileCache.RisesRight | TileCache.RisesLeft)) == 0) return true; // half block
             return (f & (dx > 0 ? TileCache.RisesLeft : TileCache.RisesRight)) != 0;
+        }
+
+        /// <summary>Everything holding the body at (x, y) is a platform (no block under either column).</summary>
+        private bool PlatformOnlySupport(int x, int y)
+        {
+            for (int c = x; c <= x + 1; c++)
+                if (Holds(c, y + 1) && (Held(c, y + 1) & TileCache.Plat) == 0) return false;
+            return true;
         }
 
         /// <summary>A half block or floor slope in the support row of the body at (x, y).</summary>

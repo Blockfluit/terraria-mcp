@@ -43,6 +43,40 @@ public class RealTerrainRegressionTests(ITestOutputHelper output)
         Assert.Equal(0, move.FailedPlans);
     }
 
+    /// <summary>Seen in game (west caves, 3910,926): standing inside the bottom platform of a pillar, the plan walked onto
+    /// the low side of a floor slope, then "walked" back onto the platform one row up. Feet on the slope's low side are
+    /// below the platform's top, and vanilla never lifts the body onto a platform from inside it: "stuck at Walk"
+    /// (repeatedly). Origin of the crop: world (3895,900).</summary>
+    [Fact]
+    public void PlatformAboveSunkFeet_IsNotAWalk()
+    {
+        string[] rows =
+        {
+            "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+            "......##==...........#############..",
+            "...............=....#####...........",
+            "...............=....######..........",
+            "..............===...#######.........",
+            "...............=....######..........",
+            "...............=.../######\\.........",
+            "...............=./##########........",
+            "..........###################.......",
+            "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+        };
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var r = Pathfinder.FindPath(g, new(15, 7), new(15, 6), RealTerrainFuzzTests.Profile(), new PathOptions(GoalTolerance: 0));
+        Assert.True(r.Success, r.FailureReason);
+        var from = new TilePoint(15, 7);
+        foreach (var st in r.Steps)
+        {
+            output.WriteLine($"{st.Kind} {st.Pos}");
+            // Feet on the slope's low side (16,6 / 17,7 region) can't walk onto the platform at (15,7).
+            Assert.False(st.Kind == MoveKind.Walk && st.Pos == new TilePoint(15, 6) && from == new TilePoint(16, 6),
+                "walked from the slope's low side onto the platform");
+            from = st.Pos;
+        }
+    }
+
     /// <summary>Feet on a half block, a full block one row up beside it: 1.5 tiles, more than vanilla's auto step-up.
     /// The planner used a StepUp and the player stood against the step until Stuck, five times over; now it jumps.</summary>
     [Fact]
