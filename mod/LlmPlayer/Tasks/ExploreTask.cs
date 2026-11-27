@@ -207,8 +207,14 @@ public sealed class ExploreTask : IGameTask<GameCtx>
         return GameTaskStatus.Running;
     }
 
+    /// <summary>Leg targets that a walk failed to reach: not picked again (seen in game: explore kept choosing the same
+    /// unreachable spot across a gap and gave up with "no floor to walk on", while move_to crossed it).</summary>
+    private readonly HashSet<TilePoint> _failedTargets = new();
+    private TilePoint _legTarget;
+
     private GameTaskStatus StartLeg(TilePoint target, int along)
     {
+        _legTarget = target;
         _stallBest = Math.Max(_stallBest, _bestAlong);
         _leg = new MoveToTask(target, allowDig: _allowDig, name: "explore");
         _mode = "walking";
@@ -235,6 +241,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
         var st = _leg!.Tick(ctx);
         if (st == GameTaskStatus.Running) return GameTaskStatus.Running;
         string? legReason = _leg.Reason;
+        if (st == GameTaskStatus.Failed) _failedTargets.Add(_legTarget);
         _leg = null;
         bool progressed = _bestAlong > _stallBest;
         if (!progressed) _digNext = true;
@@ -508,6 +515,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
                 var p = horizontal ? new TilePoint(here.X + sign * a, here.Y + l) : new TilePoint(here.X + l, here.Y + sign * a);
                 int score = a * 100 - Math.Abs(l);
                 if (score <= bestScore || !Pathfinder.CanStand(ctx.Grid, p) || HasUnknown(ctx.Grid, p)) continue;
+                if (_failedTargets.Any(f => Math.Abs(f.X - p.X) <= 2 && Math.Abs(f.Y - p.Y) <= 2)) continue;
                 bestScore = score;
                 best = p;
             }
