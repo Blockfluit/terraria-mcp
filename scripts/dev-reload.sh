@@ -65,6 +65,8 @@ bridge_call() {
     exit 1' "$HOST" "$PORT" "$1" "$2" 2>/dev/null
 }
 
+TML_DIR="${TML_DIR:-/mnt/c/Program Files (x86)/Steam/steamapps/common/tModLoader}"
+
 tml_running() { # the game process (dotnet tModLoader.dll), not tModLoader's own build/server runs.
   # If the process list can't be read, assume it is running (never build or launch over a live game).
   local n
@@ -143,6 +145,14 @@ fi
 # --- (c) launch -----------------------------------------------------------------------------------
 log "launching tModLoader through Steam"
 (cd /mnt/c && cmd.exe /c start "" "steam://rungameid/1281930" >/dev/null 2>&1) || die "could not start tModLoader through Steam"
+# Seen in play: after a clean exit the Steam launch sometimes started nothing (no process, no log line) and the
+# reload timed out twice. If no game process shows up within 60 s, start tModLoader's own launcher instead.
+for _ in $(seq 1 12); do tml_running && break; sleep 5; done
+if ! tml_running; then
+  log "Steam didn't start the game within 60 s: starting start-tModLoader.bat"
+  (cd "$TML_DIR" && cmd.exe /c start "" start-tModLoader.bat >/dev/null 2>&1 &) \
+    || die "could not start start-tModLoader.bat"
+fi
 
 if [[ ! -f "$AUTOLOAD" ]]; then
   log "no autoload file: load a world manually (or rerun with --player NAME --world NAME)."
