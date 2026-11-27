@@ -41,6 +41,8 @@ public static class StateReader
             ["Layer"] = DepthLayer.Classify((int)(p.Center.Y / 16f), Main.worldSurface, Main.rockLayer, Main.UnderworldLayer),
             ["Spawn"] = new { X = bedSpawn ? p.SpawnX : Main.spawnTileX, Y = bedSpawn ? p.SpawnY : Main.spawnTileY },
         };
+        // Vanilla shows the breath bubbles only while breath is below max: same here.
+        if (p.breath < p.breathMax) state["Breath"] = new { Now = Math.Max(0, p.breath), Max = p.breathMax };
         var threats = Threats.Summarize(EntityReader.ReadAll(p, Threats.Radius)
             .Where(e => e.Kind == EntityKind.Hostile).Select(e => e.Distance));
         if (threats != null) state["NearbyHostiles"] = threats;

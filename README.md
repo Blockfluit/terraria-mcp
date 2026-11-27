@@ -100,7 +100,9 @@ mod/LlmPlayer tModLoader mod inside Terraria
   when the AI is done (`close_chest`), starts another task, walks away, or hands control back.
   `use_bed` sets your spawn point at a bed, with the game's housing rules and failure messages.
 - **Survive while thinking.** Reflexes auto-attack nearby hostiles and quick-heal while the LLM
-  thinks. You can optionally pause the world while the AI is idle.
+  thinks. Under water they surface for air when breath drops below 45% (even mid-attack) and
+  resume the task once breath is back; routes never stay under water for more than ~11 tiles in
+  a row (no limit with gills), and `get_state` shows `breath` while it isn't full. You can optionally pause the world while the AI is idle.
 - **Keep playing unfocused.** While the AI drives, the game keeps running when the Terraria window
   isn't focused, so you can type in your terminal.
 

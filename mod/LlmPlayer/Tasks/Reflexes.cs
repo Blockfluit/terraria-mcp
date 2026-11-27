@@ -11,9 +11,14 @@ using Terraria.ID;
 namespace LlmPlayer.Tasks;
 
 /// <summary>
-/// Auto-defend and quick-heal, ticked by <see cref="TaskHost"/> every update while the AI drives, before the task.
-/// Decisions (and the precedence between reflexes and the task) come from Core's <see cref="ReflexArbiter"/>:
+/// Surfacing, auto-defend and quick-heal, ticked by <see cref="TaskHost"/> every update while the AI drives, before the
+/// task. Decisions (and the precedence between reflexes and the task) come from Core's <see cref="ReflexArbiter"/>:
 /// <list type="number">
+/// <item>Surfacing, above everything (attack too): the head is in liquid (vanilla <c>Collision.DrownCollision</c>), no
+/// gills/merfolk, and breath below 45 % of breathMax. Reflexes then swim/jump to the nearest known air
+/// (<see cref="Surfacer"/> over the fair-vision grid, sideways when rock is overhead) and keep the controls until
+/// breath is back to 90 %; the paused task then resumes. Emits <c>reflex {kind: "surface"}</c> /
+/// <c>"surface_end"</c>.</item>
 /// <item>Quick-heal: any time, no controls involved — calls <see cref="Player.QuickHeal"/> (the quick-heal hotkey's
 /// action, same potion/sickness rules) below <c>QuickHealThreshold</c>, or below a running attack's higher
 /// <c>heal_below</c> (<see cref="SetHealOverride"/>). Also during attack: quick-heal never needs the controls.</item>
@@ -41,6 +46,8 @@ public static class Reflexes
     private static int _targetId = -1;
     private static bool _lastUse;
 
+    private static readonly Surfacer Surfacer = new();
+
     private static object? _healOwner;
     private static float _healOverride;
 
@@ -66,6 +73,9 @@ public static class Reflexes
     /// <summary>True while auto-defend owns the controls.</summary>
     public static bool Defending => Arbiter.Defending;
 
+    /// <summary>True while the surfacing reflex owns the controls.</summary>
+    public static bool Surfacing => Arbiter.Surfacing;
+
     /// <summary>Which tasks auto-defend may pause: Core's <see cref="TaskPhases"/> (by task name).</summary>
     public static TaskPhase PhaseOf(IGameTask<GameCtx>? task) => TaskPhases.Of(task);
 
@@ -88,12 +98,16 @@ public static class Reflexes
 
         float healAt = HealThreshold;
         bool low = p.statLife > 0 && p.statLife < healAt * p.statLifeMax2;
+        bool headWet = HeadInLiquid(p);
         var d = Arbiter.Tick(new ReflexInputs(phase, cfg.AutoDefend, threat != null, p.statLife, p.statLifeMax2,
             healAt, p.HasBuff(BuffID.PotionSickness) || p.potionDelay > 0,
-            low && p.QuickHeal_GetItemToUse() != null, UsingItem: p.itemAnimation > 0 || p.itemTime > 0));
+            low && p.QuickHeal_GetItemToUse() != null, UsingItem: p.itemAnimation > 0 || p.itemTime > 0,
+            HeadInLiquid: headWet, Breath: p.breath, BreathMax: p.breathMax, WaterBreathing: CanBreatheInLiquid(p)));
 
         if (d.QuickHeal) QuickHeal(p);
         if (d.DefendEnded) EndDefense(p);
+        if (d.SurfaceEnded) EndSurfacing(p);
+        if (d.Surface) return Surface(p, task, d.SurfaceStarted);
         if (!d.Defend) return false;
 
         if (threat != null && (d.DefendStarted || threat.whoAmI != _targetId))
@@ -114,10 +128,50 @@ public static class Reflexes
         return true;
     }
 
+    /// <summary>Vanilla's drown check: the head is in water/honey (the player's own body; fair).</summary>
+    public static bool HeadInLiquid(Player p) => Collision.DrownCollision(p.position, p.width, p.height, p.gravDir);
+
+    /// <summary>Gills (potion, Neptune's Shell / merfolk form) stop vanilla's breath loss.</summary>
+    public static bool CanBreatheInLiquid(Player p) => p.gills || p.merman;
+
+    /// <summary>Swim/jump to the nearest known air (fair-vision grid); the task is paused.</summary>
+    private static bool Surface(Player p, IGameTask<GameCtx>? task, bool started)
+    {
+        var grid = new Observe.GameTileGrid(p);
+        var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
+        if (started)
+        {
+            Surfacer.Reset();
+            ControlState.Pending = default;
+        }
+        var intent = Surfacer.Tick(grid, k);
+        if (started)
+        {
+            var c = Surfacer.Choice;
+            Report(new
+            {
+                Kind = "surface", Breath = p.breath, BreathMax = p.breathMax, Paused = task?.Name,
+                Air = c?.Air is { } a ? new { a.X, a.Y } : null,
+            }, $"reflex: surfacing for air (breath {p.breath}/{p.breathMax})" + (task != null ? $" (paused {task.Name})" : "")
+               + (c?.Found == false ? " - no known air nearby, jumping up" : ""));
+        }
+        ControlState.Pending = intent;
+        return true;
+    }
+
+    private static void EndSurfacing(Player p)
+    {
+        Surfacer.Reset();
+        ControlState.Pending = default;
+        BridgeSystem.Emit(EventNames.Reflex, new { Kind = "surface_end", Breath = p.breath, BreathMax = p.breathMax,
+            Resumed = TaskHost.Runner.Current?.Name });
+    }
+
     /// <summary>Forget all reflex state (driver change, world unload) and put the held item back.</summary>
     public static void Reset(Player? p)
     {
         Arbiter.Reset();
+        Surfacer.Reset();
         _healOwner = null;
         if (p != null) _lease.Restore(p);
         _lease = new HeldItemLease();

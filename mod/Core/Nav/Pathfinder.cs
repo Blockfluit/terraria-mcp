@@ -18,7 +18,9 @@ namespace LlmPlayer.Core.Nav;
 /// <item>Fall: walk sideways off an edge (or, at a mid-air start, just fall) and land at Pos.</item>
 /// <item>DropThrough: hold down on the platform under the feet and land at Pos.</item>
 /// <item>Swim: Pos is adjacent (8-neighbourhood) to the previous position; the body is in or
-/// leaving water/honey.</item>
+/// leaving water/honey. Steps with the head in liquid (submerged: either cell of the head row) cost extra and a path
+/// never has more than <see cref="MovementProfile.MaxSubmergedSteps"/> of them in a row (breath), unless
+/// <see cref="MovementProfile.WaterBreathing"/>.</item>
 /// <item>Dig: stand still at Pos (= the previous position) and mine WorkTile. A run of Dig steps
 /// is always followed by the move whose body needs those tiles cleared.</item>
 /// <item>BuildPlatform: place a platform at WorkTile, which ends up directly under Pos. Either
@@ -36,6 +38,9 @@ public static class Pathfinder
     private const float WalkCost = 1f, StepUpCost = 1.5f, JumpBase = 2f, DropCost = 1.5f;
     private const float FallBase = 1f, FallPerTile = 0.2f, DigPerTile = 3f, BuildCost = 4f;
     private const float SwimCost = 2f, SwimDiagCost = 2.5f, UnknownPenalty = 2f, DoorCost = 2f;
+    /// <summary>Extra cost of a step that ends with the head in liquid (drowning risk; a dry detour of a few tiles
+    /// is preferred).</summary>
+    private const float SubmergedPenalty = 4f;
     /// <summary>A CloseDoor step is only added while the door is at most this many tiles from the body.</summary>
     private const int CloseDoorReach = 3;
     /// <summary>A goal the body can't occupy snaps to the nearest standable cell within this many tiles.</summary>
@@ -79,6 +84,8 @@ public static class Pathfinder
     private struct Node
     {
         public int X, Y, Parent, Builds, DigStart, DigCount, WX, WY;
+        /// <summary>Consecutive steps up to here that ended with the head in liquid (0 = head dry).</summary>
+        public int Sub;
         public float G;
         public bool Built, Closed, HasWork, Door;
         public MoveKind Kind;
@@ -92,13 +99,15 @@ public static class Pathfinder
         private readonly MovementProfile _p;
         private readonly PathOptions _o;
         private readonly bool _canDig, _canBuild;
-        private readonly int _buildCap, _maxFallScan;
+        private readonly int _buildCap, _maxFallScan, _maxSub;
+        private readonly bool _trackBreath;
 
         private Node[] _nodes = new Node[1024];
         private int _count;
         private readonly int[] _flatIndex;   // window-indexed node index + 1
         private readonly int[] _fallMemo;    // window-indexed fall result (see FallScan)
         private readonly Dictionary<long, int> _dict = new(); // states outside the window
+        private readonly Dictionary<(int X, int Y, int Sub), int> _wetDict = new(); // submerged states (see Slot)
         private readonly PriorityQueue<int, float> _open = new();
         private readonly List<TilePoint> _digPool = new();
         private readonly List<TilePoint> _digs = new();
@@ -122,6 +131,8 @@ public static class Pathfinder
             _p = p;
             _o = o;
             _maxFallScan = p.NoFallDamage ? 1024 : p.SafeFallTiles + 64;
+            _trackBreath = !p.WaterBreathing;
+            _maxSub = Math.Max(0, p.MaxSubmergedSteps);
         }
 
         public void Dispose()
@@ -143,8 +154,11 @@ public static class Pathfinder
 
             BodyHas(_start.X, _start.Y, 0xFF); // classify the start body (seeds TileCache.Seen)
             _count = 1;
-            _nodes[0] = new Node { X = _start.X, Y = _start.Y, Parent = -1 };
-            Slot(_start.X, _start.Y) = 1;
+            // Already under water: the start counts as the first submerged step (never rejected: the path should
+            // still lead out; the surfacing reflex covers the breath).
+            int startSub = _trackBreath && HeadWet(_start.X, _start.Y) ? 1 : 0;
+            _nodes[0] = new Node { X = _start.X, Y = _start.Y, Parent = -1, Sub = startSub };
+            Slot(_start.X, _start.Y, startSub) = 1;
             _open.Enqueue(0, H(_start.X, _start.Y));
 
             int expanded = 0, fallback = -1, fallbackDeadline = 0, closest = 0;
@@ -269,9 +283,13 @@ public static class Pathfinder
         /// space by the build cap and made budget-exhausting searches ~4x slower. "Built" needs no
         /// key either: an unsupported, dry position is only ever reachable by building under it.
         /// Trade-off: a cheaper route using more platforms can shadow a dearer one using fewer.
+        /// Submerged positions (head in liquid) are the exception: they are keyed with their run length of submerged
+        /// steps (≤ MaxSubmergedSteps, so at most that many states per wet cell), so a cheap route that has been
+        /// under water for long can't shadow one with air left. A cell is wet or dry for the whole search.
         /// </summary>
-        private ref int Slot(int x, int y)
+        private ref int Slot(int x, int y, int sub)
         {
+            if (sub > 0) return ref CollectionsMarshal.GetValueRefOrAddDefault(_wetDict, (x, y, sub), out _);
             if (_t.TryIndex(x, y, out int i)) return ref _flatIndex[i];
             long key = ((long)x << 32) | (uint)y;
             return ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out _);
@@ -282,7 +300,14 @@ public static class Pathfinder
         {
             float g = _nodes[parent].G + cost;
             if (BodyHas(x, y, TileCache.Unknown)) g += UnknownPenalty;
-            ref int slot = ref Slot(x, y);
+            int sub = 0;
+            if (_trackBreath && HeadWet(x, y))
+            {
+                sub = _nodes[parent].Sub + 1;
+                if (sub > _maxSub) return; // out of breath
+                g += SubmergedPenalty;
+            }
+            ref int slot = ref Slot(x, y, sub);
             int idx = slot - 1;
             if (idx >= 0)
             {
@@ -304,7 +329,7 @@ public static class Pathfinder
             }
             _nodes[idx] = new Node
             {
-                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind,
+                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub,
                 DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy, Door = door,
             };
             _open.Enqueue(idx, g + H(x, y));
@@ -317,6 +342,9 @@ public static class Pathfinder
         /// <summary>Body may occupy this tile (not solid, not lava/hazard).</summary>
         private bool Passable(int x, int y) =>
             InSource(x, y) || (_t.F(x, y) & (TileCache.Block | TileCache.Deadly)) == 0;
+
+        /// <summary>The head (top body row, either column) is in water/honey: the player can't breathe.</summary>
+        private bool HeadWet(int x, int y) => ((_t.F(x, y - 2) | _t.F(x + 1, y - 2)) & TileCache.Liquid) != 0;
 
         private bool HasSupport(int x, int y) => ((_t.F(x, y + 1) | _t.F(x + 1, y + 1)) & TileCache.Stand) != 0;
 

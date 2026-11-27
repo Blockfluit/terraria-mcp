@@ -64,7 +64,7 @@ describe("registerTools", () => {
     const client = await setup(new FakeConn());
     const tools = (await client.listTools()).tools;
     const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
-    for (const word of ["nearbyHostiles", "boss", "worldEvents"]) expect(desc("get_state")).toContain(word);
+    for (const word of ["nearbyHostiles", "boss", "worldEvents", "breath"]) expect(desc("get_state")).toContain(word);
     for (const word of ["projectile", "boss: true", "vx/vy", "damage", "defense"]) expect(desc("get_entities")).toContain(word);
     for (const word of ["weapon", "damage", "heal", "ammo", "consumable", "placeable", "pick/axe/hammer"])
       expect(desc("get_inventory")).toContain(word);

@@ -7,6 +7,10 @@ namespace LlmPlayer.Core.Nav;
 /// landing dy rows lower (negative = higher), given the ceiling (how many tiles the body can rise, 1..MaxJumpUp+1,
 /// the last also covering anything higher) and the launch level (how high the feet must get before nothing blocks
 /// sideways motion, 0..MaxJumpUp+1). Indexed by <see cref="ReachIndex"/>. Null → MaxJumpGap everywhere (box model).</param>
+/// <param name="MaxSubmergedSteps">Most consecutive path steps with the head in water/honey (<see cref="BreathMath"/>;
+/// default: vanilla's 200 breath). Ignored with <paramref name="WaterBreathing"/>.</param>
+/// <param name="WaterBreathing">The player can't drown (gills, merfolk): submerged steps are neither capped nor
+/// penalised.</param>
 public sealed record MovementProfile(
     int MaxJumpUp = 5,
     int MaxJumpGap = 6,
@@ -14,7 +18,9 @@ public sealed record MovementProfile(
     bool NoFallDamage = false,
     int PickPower = 0,
     int BuildItemCount = 0,
-    IReadOnlyList<int>? JumpReach = null)
+    IReadOnlyList<int>? JumpReach = null,
+    int MaxSubmergedSteps = BreathMath.VanillaMaxSubmergedSteps,
+    bool WaterBreathing = false)
 {
     /// <summary>Largest |dx| for a jump landing dy rows lower (negative dy = higher), with the body able to rise at
     /// most <paramref name="ceiling"/> tiles and sideways motion blocked until the feet are <paramref name="launch"/>
