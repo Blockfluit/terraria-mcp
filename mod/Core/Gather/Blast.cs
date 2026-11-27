@@ -135,6 +135,7 @@ public static class ThrowModel
                 float nx = x + vx;
                 if (Blocked(grid, nx - half, y - half, nx + half, y + half, false, 0f, ref unknown))
                 {
+                    if (unknown && _wet && SinksStraight(spec, vx, vy)) return Sink(grid, x, y, half, t);
                     if (unknown) return new ThrowResult(x, y, true, false, t);
                     x = vx > 0 ? MathF.Floor(nx + half) - half - Eps : MathF.Floor(nx - half) + 1f + half + Eps;
                     if (spec.Sticky) return new ThrowResult(x, y, false, true, t);
@@ -150,6 +151,7 @@ public static class ThrowModel
                 float ny = y + vy;
                 if (Blocked(grid, x - half, ny - half, x + half, ny + half, vy > 0, y + half, ref unknown))
                 {
+                    if (unknown && _wet && SinksStraight(spec, vx, vy)) return Sink(grid, x, y, half, t);
                     if (unknown) return new ThrowResult(x, y, true, false, t);
                     if (vy > 0)
                     {
@@ -175,10 +177,38 @@ public static class ThrowModel
         return new ThrowResult(x, y, false, false, detonate);
     }
 
+    /// <summary>A sticky explosive entering water/honey while falling mostly downward: water drag kills the sideways
+    /// speed and it sinks onto the first block below, where it sticks (seen in game: a pool flowed into the blast
+    /// crater above a Shadow Orb and every throw into it was refused as unpredictable).</summary>
+    private static bool SinksStraight(ExplosiveSpec spec, float vx, float vy) => spec.Sticky && vy > 0f && vy >= MathF.Abs(vx);
+
+    /// <summary>Sink straight down from (x, y) through liquid and air onto the highest block under the box's columns.
+    /// Unknown tiles, lava or hazards on the way (or nothing within 30 rows) make it unpredictable.</summary>
+    private static ThrowResult Sink(ITileGrid g, float x, float y, float half, int t)
+    {
+        int x0 = (int)MathF.Floor(x - half), x1 = (int)MathF.Floor(x + half - Eps);
+        int startRow = (int)MathF.Floor(y + half - Eps);
+        for (int ty = startRow; ty <= startRow + 30; ty++)
+        {
+            for (int tx = x0; tx <= x1; tx++)
+            {
+                var k = g.Get(tx, ty).Kind;
+                if (k is TileKind.Unknown or TileKind.Lava or TileKind.Hazard) return new ThrowResult(x, y, true, false, t);
+                if (k is TileKind.Solid or TileKind.Platform && ty > startRow)
+                    return new ThrowResult(x, ty - half - Eps, false, true, t + 4 * (ty - startRow));
+            }
+        }
+        return new ThrowResult(x, y, true, false, t);
+    }
+
     /// <summary>Does the box overlap a block? Unknown tiles and liquid set <paramref name="unknown"/> (unpredictable
     /// flight). Platforms block only a downward move whose previous bottom was at or above their top.</summary>
+    /// <summary>Set by <see cref="Blocked"/> when the "unknown" it reported was water or honey (not lava/unknown).</summary>
+    [ThreadStatic] private static bool _wet;
+
     private static bool Blocked(ITileGrid g, float l, float t, float r, float b, bool down, float prevBottom, ref bool unknown)
     {
+        _wet = false;
         int x0 = (int)MathF.Floor(l), x1 = (int)MathF.Floor(r - Eps), y0 = (int)MathF.Floor(t), y1 = (int)MathF.Floor(b - Eps);
         for (int ty = y0; ty <= y1; ty++)
             for (int tx = x0; tx <= x1; tx++)
@@ -186,10 +216,13 @@ public static class ThrowModel
                 var info = g.Get(tx, ty);
                 switch (info.Kind)
                 {
-                    case TileKind.Unknown:
                     case TileKind.Water:
-                    case TileKind.Lava:
                     case TileKind.Honey:
+                        _wet = true;
+                        unknown = true;
+                        return true;
+                    case TileKind.Unknown:
+                    case TileKind.Lava:
                         unknown = true;
                         return true;
                     case TileKind.Solid:

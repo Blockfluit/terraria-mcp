@@ -107,6 +107,37 @@ public class ThrowModelTests
         var r = ThrowModel.Simulate(ArrayTileGrid.Parse(rows).Grid, 5f, 7.7f, new TilePoint(8, 12), Explosives.Spec(ExplosiveKind.Bomb));
         Assert.True(r.Unpredictable);
     }
+
+    /// <summary>A water-filled crater (seen in game above a Shadow Orb): a sticky bomb thrown down into it sinks and
+    /// sticks to the crater floor instead of being refused.</summary>
+    [Fact]
+    public void StickyBomb_SinksThroughWaterOntoTheFloor()
+    {
+        string[] rows =
+        {
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "..............................",
+            "##########~~~~################",
+            "##########~~~~################",
+            "##########~~~~################",
+            "##############################",
+        };
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var r = ThrowModel.Simulate(g, 11.5f, 5f, 0f, 0.3f, Explosives.Spec(ExplosiveKind.StickyBomb));
+        Assert.False(r.Unpredictable);
+        Assert.True(r.Stuck);
+        Assert.InRange(r.Y, 11f, 12f); // resting on the floor (row 12 top), centre half a bomb above it
+        Assert.InRange(r.X, 11f, 12f);
+        // A plain bomb rolls about under water: still refused.
+        Assert.True(ThrowModel.Simulate(g, 11.5f, 5f, 0f, 0.3f, Explosives.Spec(ExplosiveKind.Bomb)).Unpredictable);
+    }
 }
 
 public class BlastPlannerTests
