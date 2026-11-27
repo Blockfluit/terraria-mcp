@@ -861,6 +861,18 @@ public static class Pathfinder
         {
             if (!_canBuild || builds >= _buildCap) return;
             int maxK = Math.Min(MaxBuildUp, _p.MaxJumpUp);
+            // Standing on the bottom of shallow liquid (head dry): vanilla jumps off the bottom (the water part is slow,
+            // then leaving the water cuts the jump to jumpHeight / 5, like the puddle case in Jumps) and places the
+            // platform into the liquid cell (it displaces the liquid). From 1-2 rows of water the feet still rise ~5
+            // tiles (MiniPhysics), more than the 3 a climb needs; one row less than dry keeps a weaker profile honest.
+            // Seen in game: a non-swimmer on rock at the bottom of a flooded Ebonstone pit, water in the feet rows, no
+            // ledge within reach: "unreachable" because the climb platform had to go into plain air.
+            bool wet = BodyHas(x, y, TileCache.Liquid);
+            if (wet)
+            {
+                if (HeadWet(x, y)) return;
+                maxK = Math.Min(maxK, _p.MaxJumpUp - 1);
+            }
             // A platform above (or in) the body would be risen through and land the player on it instead: the
             // jump's apex must stay below it, yet get the feet above the new platform (follower: ApexAbove).
             for (int r = y - 1; r >= y - maxK - 1; r--)
@@ -881,13 +893,25 @@ public static class Pathfinder
                     return;
                 }
                 int ty = y - k, wy = ty + 1;
-                if (!PlainAir(x, wy)) continue; // must place into plain air
-                // Vanilla places a platform only next to a tile on one of its 4 sides or in front of a background wall.
-                if (!AnchoredFrom(ni, x, wy)) continue;
+                // The landing body must be dry: wet positions are never Built (the wet branch of Expand ignores it).
                 if (HasSupport(x, ty) || BodyHas(x, ty, TileCache.Liquid)) continue;
-                Add(ni, x, ty, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: x, wy: wy, hasWork: true);
+                // Into plain air, or (from a wet stand, see above) into a liquid cell with no tile in it. Under either
+                // body column: vanilla places a platform only next to a tile on one of its 4 sides or in front of a
+                // background wall, and in a pit only one side may have a wall (the other: deeper water).
+                for (int wx = x; wx <= (wet ? x + 1 : x); wx++)
+                {
+                    if (!(wet ? PlainAirOrLiquid(wx, wy) : PlainAir(wx, wy))) continue;
+                    if (!AnchoredFrom(ni, wx, wy)) continue;
+                    Add(ni, x, ty, builds + 1, true, wet ? BuildCost + WetBuildPenalty : BuildCost, MoveKind.BuildPlatform,
+                        wx: wx, wy: wy, hasWork: true);
+                    break;
+                }
             }
         }
+
+        /// <summary>Extra cost of a climb that starts standing in liquid: a last resort (the jump off the bottom is the
+        /// least certain part of a climb), so routes that only wade on keep their old shape.</summary>
+        private const float WetBuildPenalty = 12f;
 
         /// <summary>BuildUp by one row after digging the head-room row <paramref name="r"/> (see BuildUp).</summary>
         private void ClimbDigging(int ni, int x, int y, int builds, int r)
@@ -1001,6 +1025,17 @@ public static class Pathfinder
             for (int c = x; c <= x + 1; c++)
                 if (Holds(c, y + 1) && (Held(c, y + 1) & TileCache.Plat) == 0) return false;
             return true;
+        }
+
+        /// <summary>A full block or platform in the support row of the body at (x, y) (it holds the feet at the row top).</summary>
+        private bool FlatUnder(int x, int y)
+        {
+            for (int c = x; c <= x + 1; c++)
+            {
+                ushort f = _t.F(c, y + 1);
+                if ((f & TileCache.Stand) != 0 && (f & TileCache.LowTop) == 0) return true;
+            }
+            return false;
         }
 
         /// <summary>A half block or floor slope in the support row of the body at (x, y).</summary>
@@ -1128,7 +1163,10 @@ public static class Pathfinder
         /// </summary>
         private void Wade(int ni, int x, int y, int builds, int rise)
         {
-            if (HasSupport(x, y)) rise = 0;
+            // A water jump off a half block / floor slope starts with the feet sunk up to half a tile: one tile less of
+            // the jump (seen in the real-terrain fuzz: an 8-row rise from a slope in a flooded cave fell short, "stuck
+            // at Swim" over and over).
+            if (HasSupport(x, y)) rise = LowTopUnder(x, y) && !FlatUnder(x, y) ? 1 : 0;
             for (int dy = -1; dy <= 1; dy++)
                 for (int dx = -1; dx <= 1; dx++)
                 {
