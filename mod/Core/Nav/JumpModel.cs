@@ -27,6 +27,38 @@ public static class JumpModel
     public const float LedgeOverlapPx = 4f;
     private const int MaxUpModelled = 29, MaxGapModelled = 32, MaxTicks = 900;
 
+    /// <summary>Vanilla in water (not honey): jumpSpeed 6.01 held for jumpHeight 30 ticks, gravity 0.2, max fall 5,
+    /// and the position moves by only half the velocity each tick (same constants as the MiniPhysics sim).</summary>
+    public const float WaterJumpSpeed = 6.01f, WaterGravity = 0.2f, WaterMaxFall = 5f, WaterMoveFactor = 0.5f;
+    public const int WaterJumpHeight = 30;
+
+    /// <summary><see cref="WaterJumpUp"/> for vanilla (8: ~131 px).</summary>
+    public const int VanillaWaterJumpUp = 8;
+
+    /// <summary>Whole tiles the feet rise in one held jump off the bottom of water (no Flippers: the only way up),
+    /// while the body is still in the water the whole time.</summary>
+    public static int WaterJumpUp() => (int)MathF.Floor(WaterJumpRisePx() / PlayerPhysics.TilePx);
+
+    /// <summary>Apex height in pixels of a held jump off the bottom of water (vanilla update order: jump, gravity,
+    /// half-speed move).</summary>
+    public static float WaterJumpRisePx()
+    {
+        float vy = -WaterJumpSpeed, rise = 0;
+        int jump = WaterJumpHeight;
+        for (int tick = 0; tick < MaxTicks; tick++)
+        {
+            if (tick > 0 && jump > 0)
+            {
+                vy = -WaterJumpSpeed;
+                jump--;
+            }
+            vy = Math.Min(vy + WaterGravity, WaterMaxFall);
+            if (vy >= 0) break;
+            rise -= vy * WaterMoveFactor;
+        }
+        return rise;
+    }
+
     /// <summary>Copy of <paramref name="baseProfile"/> with MaxJumpUp, MaxJumpGap and JumpReach from physics.</summary>
     public static MovementProfile Apply(MovementProfile baseProfile, PlayerPhysics phys)
     {
@@ -50,7 +82,10 @@ public static class JumpModel
                     reach[MovementProfile.ReachIndex(maxUp, c, h0, dy)] = Math.Clamp(k, 0, MaxGapModelled);
                 }
         }
-        return baseProfile with { MaxJumpUp = maxUp, MaxJumpGap = reach.Max(), JumpReach = reach };
+        return baseProfile with
+        {
+            MaxJumpUp = maxUp, MaxJumpGap = reach.Max(), JumpReach = reach, MaxWaterJumpUp = WaterJumpUp(),
+        };
     }
 
     private readonly record struct Sample(float Rise, float Vy);

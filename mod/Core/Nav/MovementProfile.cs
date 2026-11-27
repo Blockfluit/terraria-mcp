@@ -11,6 +11,12 @@ namespace LlmPlayer.Core.Nav;
 /// default: vanilla's 200 breath). Ignored with <paramref name="WaterBreathing"/>.</param>
 /// <param name="WaterBreathing">The player can't drown (gills, merfolk): submerged steps are neither capped nor
 /// penalised.</param>
+/// <param name="CanSwim">The player can swim up through water/honey (Flippers, Diving Gear, Flipper Potion, Neptune's
+/// Shell form, a swimming mount, or wings / rocket boots, which also work under water). Without it vanilla lets the
+/// player only sink and jump off the bottom (wiki "Swimming"): the pathfinder then walks along the bottom, rises only
+/// with a water jump from it (<paramref name="MaxWaterJumpUp"/>) and sinks everywhere else.</param>
+/// <param name="MaxWaterJumpUp">How many tiles the feet rise in one jump off the bottom of liquid
+/// (<see cref="JumpModel.WaterJumpUp"/>; vanilla 8).</param>
 public sealed record MovementProfile(
     int MaxJumpUp = 5,
     int MaxJumpGap = 6,
@@ -20,7 +26,9 @@ public sealed record MovementProfile(
     int BuildItemCount = 0,
     IReadOnlyList<int>? JumpReach = null,
     int MaxSubmergedSteps = BreathMath.VanillaMaxSubmergedSteps,
-    bool WaterBreathing = false)
+    bool WaterBreathing = false,
+    bool CanSwim = false,
+    int MaxWaterJumpUp = JumpModel.VanillaWaterJumpUp)
 {
     /// <summary>Largest |dx| for a jump landing dy rows lower (negative dy = higher), with the body able to rise at
     /// most <paramref name="ceiling"/> tiles and sideways motion blocked until the feet are <paramref name="launch"/>

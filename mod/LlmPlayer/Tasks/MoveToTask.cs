@@ -186,7 +186,8 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         }
         _partial = job.IsPartial;
         _resolvedGoal = r.ResolvedGoal;
-        _follower = new PathFollower(r.Steps, start: job.Start, physics: ProfileBuilder.Physics(ctx.Player));
+        _follower = new PathFollower(r.Steps, start: job.Start, physics: ProfileBuilder.Physics(ctx.Player),
+            canSwim: ProfileBuilder.CanSwim(ctx.Player));
         _stepsAtPlan = _follower.RemainingSteps;
         _pathCrossesUnknown = CrossesUnknown(ctx.Grid, r.Steps);
         _ticksSincePlan = 0;

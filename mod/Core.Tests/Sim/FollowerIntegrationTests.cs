@@ -86,6 +86,15 @@ public class FollowerIntegrationTests(ITestOutputHelper output)
             new GridBuilder(14, 10).Fill(0, 0, 0, 9, 'X').Fill(0, 8, 13, 9, '#').Fill(7, 3, 13, 7, '#')
                 .Fill(1, 3, 6, 7, '~').Put(2, 7, 'S').Put(10, 2, 'G'),
             Real(), new(AllowDig: false, AllowBuild: false), 1200),
+        // No Flippers: walk in, sink to the bottom of a 3-deep pool (too wide to jump, pillar over the middle), walk
+        // along it and jump off the bottom onto the far shore.
+        new("pool_3_deep_no_flippers",
+            new GridBuilder(24, 12).Fill(0, 6, 23, 11, '#').Fill(7, 6, 16, 8, '~').Fill(11, 0, 12, 4, '#')
+                .Put(2, 5, 'S').Put(20, 5, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 1500),
+        new("puddle_2_deep_wade",
+            new GridBuilder(30, 12).Fill(0, 6, 29, 11, '#').Fill(10, 6, 17, 7, '~').Put(3, 5, 'S').Put(25, 5, 'G'),
+            Real(), new(AllowDig: false, AllowBuild: false), 1200),
         new("door_in_wall",
             new GridBuilder(30, 10).Fill(0, 8, 29, 9, '#').Fill(14, 0, 14, 4, 'X').Fill(14, 5, 14, 7, '|')
                 .Put(2, 7, 'S').Put(24, 7, 'G'),

@@ -1,6 +1,7 @@
 using LlmPlayer.Core.Nav;
 using LlmPlayer.Tasks;
 using Terraria;
+using Terraria.ID;
 
 namespace LlmPlayer.Nav;
 
@@ -18,6 +19,8 @@ namespace LlmPlayer.Nav;
 /// equipped (vanilla skips fall damage for both).</item>
 /// <item>Breath: MaxSubmergedSteps from breathMax × breathCDMax (<see cref="BreathMath"/>; Breathing Reed / Diving
 /// Gear raise breathCDMax); WaterBreathing = gills or merfolk (no breath loss at all).</item>
+/// <item>CanSwim (<see cref="CanSwim"/>): without it the pathfinder treats water like vanilla does for a player
+/// without Flippers (sink, walk along the bottom, jump off it).</item>
 /// </list>
 /// </summary>
 public static class ProfileBuilder
@@ -63,6 +66,18 @@ public static class ProfileBuilder
             BuildItemCount = allowBuild ? HeldItemLease.BuildItemCount(p) : 0,
             MaxSubmergedSteps = BreathMath.MaxSubmergedSteps(p.breathMax, p.breathCDMax),
             WaterBreathing = Tasks.Reflexes.CanBreatheInLiquid(p),
+            CanSwim = CanSwim(p),
         };
     }
+
+    /// <summary>
+    /// The player can swim up through liquid (wiki "Swimming"): Flippers and their upgrades, Diving Gear / Arctic
+    /// Diving Gear and the Flipper Potion all set <c>accFlipper</c>; Neptune's Shell's merfolk form; the Inner Tube;
+    /// the Hardy Saddle's turtle mount. Wings and rocket boots work under water too. Everything else only sinks
+    /// and jumps off the bottom.
+    /// </summary>
+    public static bool CanSwim(Player p) =>
+        p.accFlipper || p.HasBuff(BuffID.Flipper) || p.merman || p.hasFloatingTube
+        || (p.mount.Active && p.mount.Type == MountID.Turtle)
+        || p.equippedWings != null || p.wingTimeMax > 0 || p.rocketBoots > 0;
 }

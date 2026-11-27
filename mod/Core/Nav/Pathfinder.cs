@@ -20,7 +20,13 @@ namespace LlmPlayer.Core.Nav;
 /// <item>Swim: Pos is adjacent (8-neighbourhood) to the previous position; the body is in or
 /// leaving water/honey. Steps with the head in liquid (submerged: either cell of the head row) cost extra and a path
 /// never has more than <see cref="MovementProfile.MaxSubmergedSteps"/> of them in a row (breath), unless
-/// <see cref="MovementProfile.WaterBreathing"/>.</item>
+/// <see cref="MovementProfile.WaterBreathing"/>. Without <see cref="MovementProfile.CanSwim"/> (vanilla: no
+/// swimming without Flippers; the player sinks and can only jump off the bottom) a body in liquid that nothing
+/// holds is either rising in a water jump that started on ground (at most
+/// <see cref="MovementProfile.MaxWaterJumpUp"/> tiles above it: up, diagonally up, or sideways at the top) or
+/// sinking (down, diagonally down, or sideways onto ground). Entering liquid from above (walking off a shore, falling,
+/// dropping) sinks. So a non-swimmer crosses water only along its bottom, and a lake deeper than breath and the water
+/// jump allow is impassable except over a platform bridge (platforms may be placed into liquid).</item>
 /// <item>Dig: stand still at Pos (= the previous position) and mine WorkTile. A run of Dig steps
 /// is always followed by the move whose body needs those tiles cleared.</item>
 /// <item>BuildPlatform: place a platform at WorkTile, which ends up directly under Pos. Either
@@ -112,10 +118,15 @@ public static class Pathfinder
         public int X, Y, Parent, Builds, DigStart, DigCount, WX, WY;
         /// <summary>Consecutive steps up to here that ended with the head in liquid (0 = head dry).</summary>
         public int Sub;
+        /// <summary>Non-swimmers in liquid with nothing under the feet: tiles risen in the current water jump
+        /// (1..MaxWaterJumpUp) or <see cref="Sinking"/>. 0 everywhere else (ground, dry, swimmers).</summary>
+        public int Rise;
         public float G;
         public bool Built, Closed, HasWork, Door;
         public MoveKind Kind;
     }
+
+    private const int Sinking = -1;
 
     private sealed class Search : IDisposable
     {
@@ -126,14 +137,15 @@ public static class Pathfinder
         private readonly PathOptions _o;
         private readonly bool _canDig, _canBuild;
         private readonly int _buildCap, _maxFallScan, _maxSub;
-        private readonly bool _trackBreath;
+        private readonly bool _trackBreath, _swim;
+        private readonly int _waterRise;
 
         private Node[] _nodes = new Node[1024];
         private int _count;
         private readonly int[] _flatIndex;   // window-indexed node index + 1
         private readonly int[] _fallMemo;    // window-indexed fall result (see FallScan)
         private readonly Dictionary<long, int> _dict = new(); // states outside the window
-        private readonly Dictionary<(int X, int Y, int Sub), int> _wetDict = new(); // submerged states (see Slot)
+        private readonly Dictionary<(int X, int Y, int Sub, int Rise), int> _wetDict = new(); // see Slot
         private readonly PriorityQueue<int, float> _open = new();
         private readonly List<TilePoint> _digPool = new();
         private readonly List<TilePoint> _digs = new();
@@ -159,6 +171,8 @@ public static class Pathfinder
             _maxFallScan = p.NoFallDamage ? 1024 : p.SafeFallTiles + 64;
             _trackBreath = !p.WaterBreathing;
             _maxSub = Math.Max(0, p.MaxSubmergedSteps);
+            _swim = p.CanSwim;
+            _waterRise = Math.Clamp(p.MaxWaterJumpUp, 0, 64);
         }
 
         public void Dispose()
@@ -183,8 +197,10 @@ public static class Pathfinder
             // Already under water: the start counts as the first submerged step (never rejected: the path should
             // still lead out; the surfacing reflex covers the breath).
             int startSub = _trackBreath && HeadWet(_start.X, _start.Y) ? 1 : 0;
-            _nodes[0] = new Node { X = _start.X, Y = _start.Y, Parent = -1, Sub = startSub };
-            Slot(_start.X, _start.Y, startSub) = 1;
+            // A non-swimmer starting in liquid with nothing underfoot is assumed to be sinking (conservative).
+            int startRise = Afloat(_start.X, _start.Y) ? Sinking : 0;
+            _nodes[0] = new Node { X = _start.X, Y = _start.Y, Parent = -1, Sub = startSub, Rise = startRise };
+            Slot(_start.X, _start.Y, startSub, startRise) = 1;
             _open.Enqueue(0, H(_start.X, _start.Y));
 
             int expanded = 0, fallback = -1, fallbackDeadline = 0, closest = 0;
@@ -194,14 +210,14 @@ public static class Pathfinder
                 ref var n = ref _nodes[ni];
                 if (n.Closed) continue;
                 n.Closed = true;
-                if (_o.BestEffort && !n.Built && H(n.X, n.Y) < closestH)
+                if (_o.BestEffort && !n.Built && CanEnd(n) && H(n.X, n.Y) < closestH)
                 {
                     closestH = H(n.X, n.Y);
                     closest = ni;
                 }
 
                 if (n.X == _goal.X && n.Y == _goal.Y) return Success(ni, expanded);
-                if (fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance)
+                if (fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance && CanEnd(n))
                 {
                     // Prefer the exact goal, but don't spend much more effort looking for it.
                     fallback = ni;
@@ -222,6 +238,14 @@ public static class Pathfinder
             return new PathResult(false, Array.Empty<PathStep>(), $"unreachable: searched {expanded} nodes", expanded);
         }
 
+        /// <summary>A path may end here: a non-swimmer can't stay in liquid with nothing underfoot (it sinks) and,
+        /// unless it breathes water, mustn't be left with the head under (only swimmers can come up anywhere).</summary>
+        private bool CanEnd(in Node n) =>
+            _swim || n.Rise == 0 && (!_trackBreath || !HeadWet(n.X, n.Y)) || n.Built;
+
+        /// <summary>A non-swimmer's body is in liquid with no ground under it: it rises in a water jump or sinks.</summary>
+        private bool Afloat(int x, int y) => !_swim && BodyHas(x, y, TileCache.Liquid) && !HasSupport(x, y);
+
         /// <summary>Keep the goal if the body can be there; otherwise the nearest such cell within 3.</summary>
         private bool ResolveGoal(out TilePoint goal)
         {
@@ -241,11 +265,17 @@ public static class Pathfinder
 
         /// <summary>The body fits and something holds it: ground, liquid, or — when building is allowed — a plain,
         /// anchored air tile under the left foot where a platform can go (mid-shaft spots the search reaches by
-        /// climbing with platforms; e.g. a stand to mine ore beside a shaft).</summary>
-        private bool GoalOk(int x, int y) =>
-            (BodyClear(x, y) || (_o.DigToGoal && _canDig && BodyDiggable(x, y)))
-            && (HasSupport(x, y) || BodyHas(x, y, TileCache.Liquid)
-                                || (_canBuild && _buildCap > 0 && PlainAir(x, y + 1) && Anchored(x, y + 1)));
+        /// climbing with platforms; e.g. a stand to mine ore beside a shaft).
+        /// Without <see cref="MovementProfile.CanSwim"/> liquid holds nobody, and a goal with the head under water is
+        /// refused (the player would be left there to drown) unless it breathes water.</summary>
+        private bool GoalOk(int x, int y)
+        {
+            if (!(BodyClear(x, y) || (_o.DigToGoal && _canDig && BodyDiggable(x, y)))) return false;
+            bool wet = BodyHas(x, y, TileCache.Liquid);
+            if (!_swim && wet && _trackBreath && HeadWet(x, y)) return false;
+            return HasSupport(x, y) || (wet && _swim)
+                   || (_canBuild && _buildCap > 0 && PlainAir(x, y + 1) && Anchored(x, y + 1));
+        }
 
         private PathResult Success(int ni, int expanded)
         {
@@ -312,18 +342,25 @@ public static class Pathfinder
         /// Submerged positions (head in liquid) are the exception: they are keyed with their run length of submerged
         /// steps (≤ MaxSubmergedSteps, so at most that many states per wet cell), so a cheap route that has been
         /// under water for long can't shadow one with air left. A cell is wet or dry for the whole search.
+        /// Likewise a non-swimmer afloat is keyed with its water-jump state (rise so far, or sinking), so a cheap
+        /// sinking arrival can't shadow a rising one that still gets out.
         /// </summary>
-        private ref int Slot(int x, int y, int sub)
+        private ref int Slot(int x, int y, int sub, int rise)
         {
-            if (sub > 0) return ref CollectionsMarshal.GetValueRefOrAddDefault(_wetDict, (x, y, sub), out _);
+            if (sub > 0 || rise != 0)
+                return ref CollectionsMarshal.GetValueRefOrAddDefault(_wetDict, (x, y, sub, rise), out _);
             if (_t.TryIndex(x, y, out int i)) return ref _flatIndex[i];
             long key = ((long)x << 32) | (uint)y;
             return ref CollectionsMarshal.GetValueRefOrAddDefault(_dict, key, out _);
         }
 
+        /// <param name="rise">For a non-swimmer ending afloat (in liquid, nothing underfoot): tiles risen in the
+        /// current water jump, or <see cref="Sinking"/> (the default: falling or walking into liquid sinks).
+        /// Ignored (0) anywhere else.</param>
         private void Add(int parent, int x, int y, int builds, bool built, float cost, MoveKind kind,
-            bool withDigs = false, int wx = 0, int wy = 0, bool hasWork = false, bool door = false)
+            bool withDigs = false, int wx = 0, int wy = 0, bool hasWork = false, bool door = false, int rise = Sinking)
         {
+            if (built || !Afloat(x, y)) rise = 0;
             float g = _nodes[parent].G + cost;
             if (BodyHas(x, y, TileCache.Unknown)) g += UnknownPenalty;
             int sub = 0;
@@ -333,7 +370,7 @@ public static class Pathfinder
                 if (sub > _maxSub) return; // out of breath
                 g += SubmergedPenalty;
             }
-            ref int slot = ref Slot(x, y, sub);
+            ref int slot = ref Slot(x, y, sub, rise);
             int idx = slot - 1;
             if (idx >= 0)
             {
@@ -355,7 +392,7 @@ public static class Pathfinder
             }
             _nodes[idx] = new Node
             {
-                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub,
+                X = x, Y = y, G = g, Parent = parent, Builds = builds, Built = built, Kind = kind, Sub = sub, Rise = rise,
                 DigStart = digStart, DigCount = digCount, HasWork = hasWork, WX = wx, WY = wy, Door = door,
             };
             _open.Enqueue(idx, g + H(x, y));
@@ -429,8 +466,17 @@ public static class Pathfinder
 
             if (BodyHas(x, y, TileCache.Liquid))
             {
-                Swim(ni, x, y, builds);
-                Jumps(ni, x, y, builds);
+                if (_swim)
+                {
+                    Swim(ni, x, y, builds);
+                    Jumps(ni, x, y, builds);
+                }
+                else
+                {
+                    Wade(ni, x, y, builds, n.Rise);
+                    // Jumping needs the bottom under the feet (vanilla: velocity.Y == 0).
+                    if (HasSupport(x, y)) Jumps(ni, x, y, builds);
+                }
                 // Standing on the bottom of shallow liquid (e.g. one body column in a pool's edge): the feet have real
                 // ground, so every land move works as well. Without this a wet start whose only way on is walking off
                 // an edge, stepping up, digging or building had no moves at all ("unreachable: searched 2 nodes").
@@ -507,7 +553,7 @@ public static class Pathfinder
             if (_canBuild && builds < _buildCap)
             {
                 int wx = dx > 0 ? x + 1 : x, wy = y + 1;
-                if (PlainAir(wx, wy) && AnchoredFrom(ni, wx, wy))
+                if (PlainAirOrLiquid(wx, wy) && AnchoredFrom(ni, wx, wy))
                     Add(ni, tx, y, builds + 1, true, BuildCost, MoveKind.BuildPlatform, wx: wx, wy: wy, hasWork: true);
             }
         }
@@ -724,6 +770,10 @@ public static class Pathfinder
         /// <summary>Known empty air (a background wall behind it is fine).</summary>
         private bool PlainAir(int x, int y) => (_t.F(x, y) & ~TileCache.Wall) == TileCache.Computed;
 
+        /// <summary><see cref="PlainAir"/> or water/honey with no tile in it: vanilla places platforms into liquid
+        /// (a bridge over a lake's surface row).</summary>
+        private bool PlainAirOrLiquid(int x, int y) => (_t.F(x, y) & ~(TileCache.Wall | TileCache.Liquid)) == TileCache.Computed;
+
         private void Swim(int ni, int x, int y, int builds)
         {
             for (int dy = -1; dy <= 1; dy++)
@@ -736,6 +786,36 @@ public static class Pathfinder
                     if (dx != 0 && dy != 0 && !BodyClear(tx, y) && !BodyClear(x, ty)) continue;
                     if (!BodyHas(tx, ty, TileCache.Liquid) && !HasSupport(tx, ty)) continue;
                     Add(ni, tx, ty, builds, false, dx != 0 && dy != 0 ? SwimDiagCost : SwimCost, MoveKind.Swim);
+                }
+        }
+
+        /// <summary>
+        /// Non-swimmer moves in liquid (vanilla without Flippers: the player sinks, and a jump needs the bottom). On
+        /// ground: every direction (up starts a water jump). Rising (<paramref name="rise"/> tiles into a water jump):
+        /// up and diagonally up while the jump lasts, sideways (it then sinks unless ground holds it), down. Sinking:
+        /// down and diagonally down, sideways only onto ground. Targets must be in liquid or have ground under them
+        /// (the shore). Breath is capped by <see cref="Add"/> as for any submerged step.
+        /// </summary>
+        private void Wade(int ni, int x, int y, int builds, int rise)
+        {
+            if (HasSupport(x, y)) rise = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dy == 0) continue;
+                    int nr = Sinking;
+                    if (dy < 0)
+                    {
+                        if (rise < 0 || rise >= _waterRise) continue;
+                        nr = rise + 1;
+                    }
+                    int tx = x + dx, ty = y + dy;
+                    if (!BodyClear(tx, ty)) continue;
+                    if (dx != 0 && dy != 0 && !BodyClear(tx, y) && !BodyClear(x, ty)) continue;
+                    bool supported = HasSupport(tx, ty);
+                    if (!BodyHas(tx, ty, TileCache.Liquid) && !supported) continue;
+                    if (dy == 0 && rise < 0 && !supported) continue; // no drifting sideways while sinking
+                    Add(ni, tx, ty, builds, false, dx != 0 && dy != 0 ? SwimDiagCost : SwimCost, MoveKind.Swim, rise: nr);
                 }
         }
 
