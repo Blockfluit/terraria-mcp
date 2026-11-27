@@ -195,12 +195,13 @@ public static class Housing
             int type = t.TileType;
             if (TileClass.IsTree(type)) return new SiteCell(SiteTile.Tree, wall);
             if (Main.tileCut[type]) return Liquidish(t, wall);
-            if (TileID.Sets.Platforms[type]) return new SiteCell(SiteTile.Platform, wall);
+            // A player mines a platform out of the way unless it's protected or holds something protected up.
+            if (TileID.Sets.Platforms[type]) return new SiteCell(SiteTile.Platform, wall, Removable: !Protection.IsProtected(x, y));
             if (Valuables.IsNaturalDecor(type, t.TileFrameX) && !Protection.IsProtectedArea(x, y)) return new SiteCell(SiteTile.Decor, wall);
             if (Main.tileFrameImportant[type] || TileClass.IsProtectedType(type)) return new SiteCell(SiteTile.Object, wall);
             if (Main.tileSolid[type])
                 return Main.tileSolidTop[type]
-                    ? new SiteCell(SiteTile.Platform, wall)
+                    ? new SiteCell(SiteTile.Platform, wall, Removable: !Protection.IsProtected(x, y))
                     : new SiteCell(SiteTile.Solid, wall, IsNaturalGround(type) && !Protection.IsProtectedArea(x, y),
                         t.IsHalfBlock || t.Slope != SlopeType.Solid);
             return new SiteCell(SiteTile.Object, wall);
@@ -252,6 +253,7 @@ public static class HouseItems
     public static bool IsTorch(Item it) => !it.IsAir && it.createTile == TileID.Torches;
     /// <summary>3×2 tables (preferred) and 2×1 work benches: the flat surfaces the layout has room for.</summary>
     public static bool IsTable(Item it) => !it.IsAir && it.createTile is TileID.Tables or TileID.Tables2 or TileID.WorkBenches;
+    public static bool IsWorkBench(Item it) => !it.IsAir && it.createTile == TileID.WorkBenches;
 
     /// <summary>Slot of the hammer with the highest hammer power, or -1.</summary>
     public static int BestHammer(Player p)
@@ -292,6 +294,8 @@ public static class HouseItems
             }
             case HousePart.Flatten:
                 return BestHammer(p);
+            case HousePart.Bench:
+                return First(p, IsWorkBench);
             case HousePart.Table:
                 for (int i = 0; i < 58; i++)
                     if (IsTable(p.inventory[i]) && p.inventory[i].createTile != TileID.WorkBenches) return i;
@@ -329,13 +333,14 @@ public static class HouseItems
         var list = blocks.OrderBy(kv => kv.Value.Rank).ThenByDescending(kv => kv.Value.Count)
             .Select(kv => new BlockStock(kv.Key, kv.Value.Name, kv.Value.Count, kv.Key switch
             {
-                ItemID.Wood => WallSource.Wood,
+                // Every wood with a furniture family (Ebonwood Door, Boreal Wood Chair…), by its item name.
+                _ when kv.Value.Rank <= 1 && HouseMaterials.FamilyOf(kv.Value.Name) != null => WallSource.Wood,
                 ItemID.DirtBlock => WallSource.Dirt,
                 ItemID.StoneBlock => WallSource.Stone,
                 _ => WallSource.None,
             })).ToList();
         p.AdjTiles();
         return new HouseStock(Count(p, IsDoor), Count(p, IsTable), Count(p, IsChair), Count(p, IsTorch), Count(p, IsHouseWall), list,
-            Count(p, it => !it.IsAir && it.type == ItemID.Gel), p.adjTile[TileID.WorkBenches]);
+            Count(p, it => !it.IsAir && it.type == ItemID.Gel), p.adjTile[TileID.WorkBenches], Count(p, IsWorkBench));
     }
 }

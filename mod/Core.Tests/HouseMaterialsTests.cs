@@ -66,11 +66,68 @@ public class HouseMaterialsTests
         Assert.True(bill.Ok, bill.MissingText());
         Assert.Equal(new[] { new CraftOrder("Work Bench", 1) }, bill.Crafts);
 
+        // Door, chair and walls need a bench: build_house places one (crafted now), then crafts the rest at it.
         var noBench = HouseMaterials.Plan(Frame, Walls, Stock(new[] { Wood(100) }, bench: false, torches: 1));
-        var m = Assert.Single(noBench.Missing);
-        Assert.Equal("Work Bench nearby", m.Item);
-        Assert.Contains("Wooden Door", m.Hint);
-        Assert.Contains("background walls", m.Hint);
+        Assert.True(noBench.Ok, noBench.MissingText());
+        Assert.True(noBench.PlaceBench);
+        Assert.Equal(new[] { new CraftOrder("Work Bench", 1) }, noBench.Crafts);
+        Assert.Equal(new[] { new CraftOrder("Wood Wall", 8), new("Wooden Door", 1), new("Wooden Chair", 1), new("Wooden Table", 1) },
+            noBench.BenchCrafts);
+        Assert.Equal(new[] { ("Wood", 15) }, noBench.FrameUse); // 100 - 10 bench - 18 furniture - 8 walls = 64 left
+    }
+
+    private static BlockStock Ebon(int n) => new(619, "Ebonwood", n, WallSource.Wood);
+
+    [Fact]
+    public void Ebonwood_MakesEbonwoodFurnitureAndWalls_WhenThereIsNoPlainWood()
+    {
+        // Seen in play: 81 Ebonwood, no Wood → "Missing: Wood x18". Every wood has the same recipes.
+        var bill = HouseMaterials.Plan(Frame, Walls, Stock(new[] { Ebon(81) }, torches: 1));
+        Assert.True(bill.Ok, bill.MissingText());
+        Assert.Equal(new[] { new CraftOrder("Ebonwood Wall", 8), new("Ebonwood Door", 1), new("Ebonwood Chair", 1), new("Ebonwood Table", 1) }, bill.Crafts);
+        Assert.Equal(new[] { ("Ebonwood", 15) }, bill.FrameUse);
+    }
+
+    [Fact]
+    public void MixedWoods_EachItemFromTheBiggestStackThatCoversIt()
+    {
+        var bill = HouseMaterials.Plan(Frame, 0, Stock(new[] { Wood(5), Ebon(40) }, tables: 1, torches: 1));
+        Assert.True(bill.Ok, bill.MissingText());
+        Assert.Equal(new[] { new CraftOrder("Ebonwood Door", 1), new("Ebonwood Chair", 1) }, bill.Crafts);
+        Assert.Equal(new[] { ("Wood", 5), ("Ebonwood", 10) }, bill.FrameUse);
+        Assert.Equal("Rich Mahogany Work Bench", HouseMaterials.FamilyOf("Rich Mahogany")!.WorkBench);
+        Assert.Equal("Boreal Wood Door", HouseMaterials.FamilyOf("Boreal Wood")!.Door);
+        Assert.Null(HouseMaterials.FamilyOf("Stone Block"));
+    }
+
+    [Fact]
+    public void NoBenchNear_EbonwoodWorkBenchIsCraftedToPlace_TorchCraftedRightAway()
+    {
+        var bill = HouseMaterials.Plan(Frame, Walls, Stock(new[] { Ebon(81) }, bench: false, gel: 1));
+        Assert.True(bill.Ok, bill.MissingText());
+        Assert.True(bill.PlaceBench);
+        Assert.Equal(new[] { new CraftOrder("Ebonwood Work Bench", 1), new("Torch", 1) }, bill.Crafts);
+        Assert.Contains(new CraftOrder("Ebonwood Table", 1), bill.BenchCrafts);
+    }
+
+    [Fact]
+    public void NoBenchNear_AWorkBenchInTheInventoryIsPlaced_AndATableIsCrafted()
+    {
+        var bill = HouseMaterials.Plan(Frame, 0, new HouseStock(0, 1, 1, 1, 0, new[] { Wood(40) }, 0, false, WorkBenchItems: 1));
+        Assert.True(bill.Ok, bill.MissingText());
+        Assert.True(bill.PlaceBench);
+        Assert.Empty(bill.Crafts);
+        Assert.Equal(new[] { new CraftOrder("Wooden Door", 1), new("Wooden Table", 1) }, bill.BenchCrafts);
+    }
+
+    [Fact]
+    public void ShortOfWood_HintNamesAnyWood()
+    {
+        var bill = HouseMaterials.Plan(Frame, 0, Stock(new[] { Ebon(10), Stone(15) }, torches: 1));
+        var m = Assert.Single(bill.Missing);
+        Assert.Equal("Wood", m.Item);
+        Assert.Equal(8, m.Count); // table 8 fits, door 6 + chair 4 don't: 10 short, 2 left over
+        Assert.Contains("Ebonwood", m.Hint);
     }
 
     [Fact]

@@ -66,13 +66,14 @@ public static class HousingCommands
             }
             else
             {
-                var found = HouseSite.FindWithCheck(new TilePoint(px, py), width, height, Housing.Cell, SearchRadius)
+                var report = new SiteSearchReport();
+                var found = HouseSite.FindWithCheck(new TilePoint(px, py), width, height, Housing.Cell, SearchRadius, report)
                          ?? throw new CommandError(ErrorCodes.BadParams,
                              $"no clear, visible spot for a {width}x{height} house within {SearchRadius} tiles " +
                              $"(needs ground under at least {HouseSite.MinGround(width)} of the {width} floor tiles, gaps at most {HouseSite.MaxDipDepth} deep " +
                              $"(filled with blocks), {height - 1} tiles of open air above the floor apart from natural bumps at most {HouseSite.MaxBumpHeight} tall " +
-                             "(mined first), no trees, no natural background walls, room to stand outside the door); " +
-                             "explore or give x,y (bottom-left floor tile)");
+                             "and unprotected platforms (mined first; platforms in the frame are replaced by blocks), no trees, no natural background walls, " +
+                             $"room to stand outside the door). {report.Top(3)}. Explore or give x,y (bottom-left floor tile)");
                 (layout, site) = found;
                 if (doorParam != null)
                 {
@@ -85,27 +86,38 @@ public static class HousingCommands
             // Tiles to mine first (bumps, decoration) don't anchor anything: they'll be gone.
             var mineFirst = site.MineFirst();
             var mineSet = new HashSet<TilePoint>(mineFirst);
-            if (site.Bumps is { Count: > 0 } && HeldItemLease.BestPickaxe(pl) < 0)
-                throw new CommandError(ErrorCodes.MissingItem, $"a {layout} needs {site.Bumps.Count} ground bump(s) mined out of the way (first {site.Bumps.First()}) and you have no pickaxe");
+            if (site.PickaxeTiles > 0 && HeldItemLease.BestPickaxe(pl) < 0)
+                throw new CommandError(ErrorCodes.MissingItem,
+                    $"a {layout} needs {site.PickaxeTiles} tile(s) mined out of the way first (ground bumps, platforms in the plot; first {mineFirst.First()}) and you have no pickaxe");
             if (site.Flatten is { Count: > 0 } && HouseItems.BestHammer(pl) < 0)
                 throw new CommandError(ErrorCodes.MissingItem,
                     $"{site.Flatten.Count} frame block(s) are half blocks or slopes (first {site.Flatten.First()}): furniture and doors can't stand on them and you have no hammer to flatten them");
-
-            // Anchors: existing blocks/platforms (and walls) where the frame attaches.
-            var steps = HousePlan.Steps(layout, site.FrameToPlace, site.WallsToPlace,
-                t => Housing.Cell(t.X, t.Y) is var c && ((c.IsBlock && !mineSet.Contains(t)) || c.Wall != WallState.None),
-                t => Housing.Cell(t.X, t.Y) is var c && ((c.Tile != SiteTile.Air && !mineSet.Contains(t)) || c.Wall != WallState.None),
-                out var planProblem, site.Flatten);
-            if (planProblem != null) throw new CommandError(ErrorCodes.BadParams, $"can't build a {layout}: {planProblem}");
 
             // Bill of materials, up front: fail with exact counts rather than run out half-way.
             var bill = HouseMaterials.Plan(site.FrameToPlace.Count, site.WallsToPlace.Count, HouseItems.Stock(pl));
             if (!bill.Ok)
                 throw new CommandError(ErrorCodes.MissingItem,
                     $"a {layout} needs {site.FrameToPlace.Count} frame blocks, {site.WallsToPlace.Count} background walls, a door, a table, a chair and a torch. " +
-                    $"Missing: {bill.MissingText()}{NearestBench(pl, bill)}");
+                    $"Missing: {bill.MissingText()}");
 
-            // Crafting (instant, real recipes and stations) before walking off.
+            // No Work Bench in range: place one beside the house first, then craft the rest at it.
+            TilePoint? benchAt = null;
+            if (bill.PlaceBench)
+            {
+                benchAt = HouseSite.BenchSpot(layout, Housing.Cell)
+                    ?? throw new CommandError(ErrorCodes.MissingItem,
+                        $"{string.Join(", ", bill.BenchCrafts.Select(c => c.Item))} must be crafted at a Work Bench: none is in range and there's no flat, " +
+                        $"visible 2-wide spot beside the house to place one{NearestBench(pl)}");
+            }
+
+            // Anchors: existing blocks/platforms (and walls) where the frame attaches.
+            var steps = HousePlan.Steps(layout, site.FrameToPlace, site.WallsToPlace,
+                t => Housing.Cell(t.X, t.Y) is var c && ((c.IsBlock && !mineSet.Contains(t)) || c.Wall != WallState.None),
+                t => Housing.Cell(t.X, t.Y) is var c && ((c.Tile != SiteTile.Air && !mineSet.Contains(t)) || c.Wall != WallState.None),
+                out var planProblem, site.Flatten, benchAt);
+            if (planProblem != null) throw new CommandError(ErrorCodes.BadParams, $"can't build a {layout}: {planProblem}");
+
+            // Crafting (instant, real recipes and stations) before walking off; bench crafts once the bench stands.
             var crafted = new List<string>();
             foreach (var order in bill.Crafts)
             {
@@ -115,11 +127,12 @@ public static class HousingCommands
                     throw new CommandError(ErrorCodes.MissingItem, $"crafting {order.Item} x{order.Times} stopped: {r.Reason} (crafted so far: {Describe(crafted)})");
             }
             var after = HouseMaterials.Plan(site.FrameToPlace.Count, site.WallsToPlace.Count, HouseItems.Stock(pl));
-            if (after.Crafts.Count > 0 || !after.Ok)
+            if (!after.Ok || (!bill.PlaceBench && after.Crafts.Count > 0))
                 throw new CommandError(ErrorCodes.MissingItem, $"still short after crafting ({Describe(crafted)}): " +
                     (after.Ok ? string.Join(", ", after.Crafts.Select(c => $"{c.Item} x{c.Times}")) : after.MissingText()));
 
-            var task = new BuildHouseTask(layout, steps, site.CanExit, mineFirst);
+            var task = new BuildHouseTask(layout, steps, site.CanExit, mineFirst,
+                bill.PlaceBench ? new BenchCrafting(bill.BenchCrafts, site.FrameToPlace.Count, site.WallsToPlace.Count) : null);
             TaskHost.Start(task);
             return new
             {
@@ -136,6 +149,9 @@ public static class HousingCommands
                 FrameBlocks = site.FrameToPlace.Count,
                 FloorGapsToFill = site.FrameToPlace.Count(t => t.Y == layout.FloorY),
                 MineFirst = mineFirst.Count > 0 ? mineFirst.Count : (int?)null,
+                PlatformsReplaced = site.Replace is { Count: > 0 } rp ? rp.Count : (int?)null,
+                WorkBenchAt = benchAt is { } ba ? new { ba.X, ba.Y } : null,
+                CraftAtBench = bill.PlaceBench ? bill.BenchCrafts.Select(c => $"{c.Item} x{c.Times}") : null,
                 Flatten = site.Flatten is { Count: > 0 } fl ? fl.Count : (int?)null,
                 BackgroundWalls = site.WallsToPlace.Count,
                 FrameUses = after.FrameUse.Select(f => new { Item = f.Name, f.Count }),
@@ -148,9 +164,8 @@ public static class HousingCommands
 
     private static string Describe(List<string> crafted) => crafted.Count == 0 ? "nothing" : string.Join(", ", crafted);
 
-    private static string NearestBench(Player p, HouseBill bill)
+    private static string NearestBench(Player p)
     {
-        if (!bill.Missing.Any(m => m.Item == "Work Bench nearby")) return "";
         try
         {
             var near = Finder.Find(p, "station", "Work Bench", 60);
