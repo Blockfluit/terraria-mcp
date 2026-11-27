@@ -131,7 +131,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_inventory",
     description:
-      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game).",
+      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game). For choosing attack's weapon and ammo: weapons also carry useTime (ticks per use, 60 = 1 s; lower = faster), ammoType (the ammo class they fire, e.g. \"arrow\", \"bullet\") and mana (cost per use); ammo stacks carry damage (added to the weapon's per shot) and ammoType. Each hit loses about half the target's defense (get_entities shows defense), so against armored enemies fewer, harder hits win.",
     readOnly: true,
   },
   {
@@ -356,7 +356,8 @@ const TOOLS: ToolDef[] = [
   {
     name: "attack",
     description:
-      'Fight hostile enemies: picks the best weapon, closes in for melee or keeps 8-15 tiles for ranged/magic, and does not trade hits — when an enemy is about to touch you (from its hitbox and velocity) it backs off or jumps, never into a hole or lava, still swinging/shooting (melee becomes hit-and-run). target: an entity id from get_entities, "nearest", "boss" (the nearest boss in sight) or "all" = every visible hostile within radius, nearest first, until none remain (one call clears a group). Below retreat_below of max life with no healing potion available (quick-heal reflex handles the rest) it stops attacking, runs away for up to 3 s and fails with reason "low life". When it finishes, wait_for_task\'s report.result is {killed, kills: [names], damageTaken, durationS, dodges, retreated, potionsUsed, ammoLeft?}. Never targets town NPCs or critters.' +
+      "YOU choose the weapon, ammo and strategy (get_inventory shows damage, useTime, ammoType; get_entities shows the enemy's defense): pass weapon (item name or slot), optionally ammo and strategy. The mod then only does what must happen within a second: aiming, dodging, stepping. Omitting weapon/strategy is a convenience (auto: highest damage-per-second after the target's defense, by weapon style), not a plan; in a real boss fight auto once switched to a useless Wand of Sparking. If the chosen weapon becomes unusable (gone, out of ammo/mana) it falls back to the best alternative and reports it (a weapon_switch event, a recent event and result.switches) and switches back once it works again; fallback: false stops the task with the reason instead. The chosen ammo is moved to the front of the ammo slots (vanilla fires the first matching stack in ammo slots 54-57, then the inventory) and put back when the task ends; when it runs out the next matching ammo fires (reported), or with fallback: false the task stops. strategy: auto (melee closes in, ranged keeps 8-15 tiles), kite (ranged: keep keep_distance tiles, default 12, and keep running along the ground/arena), hit_and_run (melee: step in, swing, back off), hold (stand your ground; only dodging moves you), flee_and_shoot (ranged: keep moving away, shooting backwards). Dodging predicted contact is always on. " +
+      'Fight hostile enemies: closes in for melee or keeps its distance for ranged/magic (per strategy), and does not trade hits — when an enemy is about to touch you (from its hitbox and velocity) it backs off or jumps, never into a hole or lava, still swinging/shooting (melee becomes hit-and-run). target: an entity id from get_entities, "nearest", "boss" (the nearest boss in sight) or "all" = every visible hostile within radius, nearest first, until none remain (one call clears a group). Below retreat_below of max life with no healing potion available (quick-heal reflex handles the rest) it stops attacking, runs away for up to 3 s and fails with reason "low life". When it finishes, wait_for_task\'s report.result is {killed, kills: [names], damageTaken, durationS, dodges, retreated, potionsUsed, ammoLeft?, weapon, ammo?, strategy, switches?: [messages]}; progress shows the weapon + ammo in use (marked auto or fallback) and the strategy. Never targets town NPCs or critters.' +
       " BOSS FIGHTS (the target is a boss, e.g. target \"boss\"): it never pathfinds and never leaves the arena; with a ranged weapon it kites back and forth across the arena (turning near the ends) shooting with lead aim, and dodges dashes sideways, by jumping, or by dropping through the platform underfoot; minions about to reach you are shot first (kill_minions, default true), then back to the boss. A boss that leaves the screen stays the target: you don't see where it is, so it keeps kiting by the last sighting (carried along its last motion) and shoots again once it is back in view. Ends with killed, or fails with \"boss fled\" when it despawns alive (e.g. the Eye of Cthulhu at dawn). Boss results add {boss, bossKilled, bossLifeLeftPct (when not killed)}; progress shows boss life %, ammo, potions and dodges. Before a boss: build an arena first (build_platforms: 2-3 rows of platforms 60-100 tiles long, spacing ~5 so you can jump between rows), stand on it, carry a bow + plenty of arrows and healing potions, then attack with heal_below ~0.5 and retreat_below 0 (running away from a flying boss doesn't help). Use wait_for_task with a long timeout (fights take minutes) and check get_state between waits. get_boss_info has summon/strategy facts." +
       STARTS_TASK,
     shape: {
@@ -381,17 +382,40 @@ const TOOLS: ToolDef[] = [
         .optional()
         .describe("Boss fights: the tile columns to stay within (6-400 wide). Default: the walkable ground/platform span around you, up to 50 tiles each way"),
       kill_minions: z.boolean().optional().describe("Boss fights: shoot minions about to reach you first (default true)"),
+      weapon: z
+        .union([z.string().min(1), int().min(0).max(57)])
+        .optional()
+        .describe('The weapon to fight with: item name or inventory slot 0-57 (get_inventory). Used exactly; omitted or "auto" = the mod picks (convenience only)'),
+      ammo: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Ammo item name to fire first (must fit the weapon's ammoType, e.g. Flaming Arrow for a bow); omitted = vanilla's ammo slot order"),
+      strategy: z
+        .enum(["auto", "kite", "hit_and_run", "hold", "flee_and_shoot"])
+        .optional()
+        .describe("How to move: auto (default), kite and flee_and_shoot need a ranged/magic weapon, hit_and_run a melee one, hold any"),
+      keep_distance: z.number().min(3).max(30).optional().describe("kite / flee_and_shoot: distance to keep in tiles, default 12"),
+      fallback: z
+        .boolean()
+        .optional()
+        .describe("Default true: if the chosen weapon/ammo becomes unusable, use the best alternative (reported). false = stop the task instead"),
     },
   },
   {
     name: "set_reflexes",
     description:
-      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think). Omitted fields keep their value; returns the current settings." +
+      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think), weapon / ammo (what auto-defend fights with; \"auto\" = the best weapon by damage per second and vanilla's ammo order, the default; a chosen weapon that becomes unusable falls back to the best other one, with a weapon_switch event, and comes back once usable). Omitted fields keep their value; returns the current settings." +
       INSTANT_ACTION,
     shape: {
       auto_defend: z.boolean().optional(),
       quick_heal_threshold: z.number().min(0).max(1).optional().describe("Life fraction 0..1, e.g. 0.35"),
       pause_when_idle: z.boolean().optional(),
+      weapon: z
+        .union([z.string().min(1), int().min(0).max(57)])
+        .optional()
+        .describe('Auto-defend weapon: item name or inventory slot 0-57, or "auto"'),
+      ammo: z.string().min(1).optional().describe('Auto-defend ammo item name (must fit the weapon), or "auto"'),
     },
   },
   {

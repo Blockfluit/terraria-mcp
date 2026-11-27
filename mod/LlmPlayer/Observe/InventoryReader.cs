@@ -16,7 +16,10 @@ public sealed record SlotInfo(int Slot, string Name, int Stack,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Placeable = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Pick = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Axe = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Hammer = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Hammer = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AmmoType = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? UseTime = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Mana = null);
 
 public sealed record CoinInfo(int Copper, int Silver, int Gold, int Platinum);
 
@@ -28,7 +31,9 @@ public sealed record InventoryInfo(
 /// get_inventory. Slot numbers: hotbar/inventory/ammo use the <c>p.inventory</c> index (hotbar 0-9, main 10-49,
 /// ammo 54-57); armor (0-2) and accessories (3-9) use the <c>p.armor</c> index. Coins are summed over all
 /// inventory slots, and coin items are left out of the slot lists. Empty slots are omitted. Hotbar, inventory and
-/// ammo slots carry item tags (weapon+damage, heal, ammo, consumable, placeable, pick/axe/hammer power).
+/// ammo slots carry item tags (weapon+damage, heal, ammo, consumable, placeable, pick/axe/hammer power). For choosing
+/// attack's weapon/ammo: weapons add useTime (ticks per use, 60 = 1 s), ammoType (the ammo class they fire, e.g.
+/// "arrow") and mana (cost per use); ammo stacks add damage (added to the weapon's) and ammoType.
 /// </summary>
 public static class InventoryReader
 {
@@ -67,7 +72,11 @@ public static class InventoryReader
             Pick: it.pick,
             Axe: it.axe,
             Hammer: it.hammer));
-        return new SlotInfo(slot, it.Name, it.stack, t.Weapon, t.Damage, t.Heal, t.Ammo, t.Consumable, t.Placeable, t.Pick, t.Axe, t.Hammer);
+        bool ammo = it.ammo > 0;
+        int? damage = t.Damage ?? (ammo && it.damage > 0 ? it.damage : null);
+        string? ammoType = weapon && it.useAmmo > 0 ? CombatKit.AmmoClassName(it.useAmmo) : ammo ? CombatKit.AmmoClassName(it.ammo) : null;
+        return new SlotInfo(slot, it.Name, it.stack, t.Weapon, damage, t.Heal, t.Ammo, t.Consumable, t.Placeable, t.Pick, t.Axe, t.Hammer,
+            ammoType, weapon ? it.useTime : null, weapon && it.mana > 0 ? it.mana : null);
     }
 
     private static bool IsCoin(int type) => type is ItemID.CopperCoin or ItemID.SilverCoin or ItemID.GoldCoin or ItemID.PlatinumCoin;

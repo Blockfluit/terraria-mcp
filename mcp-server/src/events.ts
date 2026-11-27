@@ -6,7 +6,7 @@ export const MAX_EVENTS = 25;
 export const DAMAGE_DETAIL_LIMIT = 3;
 
 /** Events that change what the LLM should do next: never folded or dropped by the cap. */
-const MUST_KEEP = new Set(["control_changed", "task_finished", "player_died", "died", "respawned"]);
+const MUST_KEEP = new Set(["control_changed", "task_finished", "player_died", "died", "respawned", "weapon_switch"]);
 
 const isAutoDefend = (e: ModEvent) =>
   e.event === "reflex" && (e.kind === "auto_defend" || e.kind === "auto_defend_end");

@@ -24,4 +24,5 @@ public static class EventNames
     public const string ControlChanged = "control_changed";
     public const string TookDamage = "took_damage";
     public const string Reflex = "reflex";
+    public const string WeaponSwitch = "weapon_switch";
 }

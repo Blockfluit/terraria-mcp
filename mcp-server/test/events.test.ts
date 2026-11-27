@@ -53,6 +53,13 @@ describe("compactEvents", () => {
     expect(out[out.length - 2]).toEqual({ event: "picked_up", item: "thing59" }); // newest kept
   });
 
+  it("never drops weapon_switch events (the LLM chose that weapon)", () => {
+    const sw = { event: "weapon_switch", by: "attack", from: "Wooden Bow", to: "Copper Shortsword", message: "attack: Wooden Bow unusable (out of ammo), switched to Copper Shortsword" };
+    const evs: ModEvent[] = [sw];
+    for (let i = 0; i < 60; i++) evs.push({ event: "picked_up", item: `thing${i}` });
+    expect(compactEvents(evs)).toContainEqual(sw);
+  });
+
   it("drops the result payload from task_finished (the report carries it)", () => {
     const evs = [{ event: "task_finished", name: "talk_to_npc", status: "succeeded", result: { chat: "hi" } }];
     expect(compactEvents(evs)).toEqual([{ event: "task_finished", name: "talk_to_npc", status: "succeeded" }]);

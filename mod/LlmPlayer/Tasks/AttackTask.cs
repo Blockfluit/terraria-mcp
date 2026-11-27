@@ -15,10 +15,15 @@ namespace LlmPlayer.Tasks;
 /// until none remain. The command validates the first target (never town NPCs or critters); the task re-checks
 /// every target every tick.
 /// <list type="bullet">
-/// <item>Weapon: highest expected DPS usable now (<see cref="CombatKit.BestWeapon"/>), re-chosen every second or when
-/// it runs out of ammo/mana. Held through a <see cref="HeldItemLease"/>; the previous item comes back at the end.</item>
-/// <item>Position (<see cref="CombatStance"/>): melee holds within reach, walks straight at a close level target and
-/// otherwise pathfinds (<see cref="MoveToTask"/> following the entity, no dig/build). Ranged/magic keeps 8–15 tiles.</item>
+/// <item>Weapon and ammo (<see cref="WeaponLoadout"/>): the LLM's choice, used exactly; a fallback (with an event) only
+/// when it becomes unusable, or a stop when fallback is off. Without a choice, the highest expected DPS usable now
+/// (<see cref="CombatKit.BestWeapon"/>), re-chosen every second. Held through a <see cref="HeldItemLease"/>; the
+/// previous item comes back at the end, and moved ammo stacks go back too.</item>
+/// <item>Position (<see cref="Strategies"/>, the LLM's <c>strategy</c>): auto = melee holds within reach, walks
+/// straight at a close level target and otherwise pathfinds (<see cref="MoveToTask"/> following the entity, no
+/// dig/build), ranged/magic keeps 8–15 tiles; kite keeps keep_distance and keeps running (<see cref="Kiter"/>);
+/// hit_and_run backs off after each swing (<see cref="HitAndRunRhythm"/>); hold never moves except to dodge;
+/// flee_and_shoot runs away while shooting.</item>
 /// <item>No trading hits (<see cref="Evasion"/>): when the planned movement would touch the target within a fraction
 /// of a second (its hitbox and velocity, plus gravity), it backs off or jumps instead, never into an unsafe column,
 /// and keeps swinging/shooting meanwhile. Melee therefore closes in, swings and backs off as the enemy steps in.</item>
@@ -38,7 +43,7 @@ namespace LlmPlayer.Tasks;
 /// </summary>
 public sealed class AttackTask : IGameTask<GameCtx>
 {
-    public const int LostSightTicks = 300, AllLostSightTicks = 60, WeaponRecheckTicks = 60, MaxMoveFailures = 3;
+    public const int LostSightTicks = 300, AllLostSightTicks = 60, MaxMoveFailures = 3;
     public const int RetreatMaxTicks = 180;
     public const float RetreatClearTiles = 15f, NpcGravityPx = 0.3f;
     private const int RangedPathTolerance = 10;
@@ -58,7 +63,12 @@ public sealed class AttackTask : IGameTask<GameCtx>
     private MoveToTask? _move;
     private int _moveFailures;
     private Weapon? _weapon;
-    private int _weaponAge;
+    private readonly WeaponLoadout _loadout;
+    private readonly float _keep;
+    private readonly Kiter _kiter = new();
+    private readonly HitAndRunRhythm _rhythm = new();
+    private int _lastAnim;
+    private float _lastBossDist = float.MaxValue;
     private bool _lastUse, _lastJump;
     private int _retreatTicks = -1;
 
@@ -81,9 +91,14 @@ public sealed class AttackTask : IGameTask<GameCtx>
     /// <param name="arena">Boss fights: the columns to stay within (default: the walkable span around the player).</param>
     /// <param name="killMinions">Boss fights: shoot minions that are about to reach the player first.</param>
     /// <param name="healBelow">Quick-heal below this life fraction while the task runs (if above the config's).</param>
+    /// <param name="loadout">Weapon/ammo/strategy the LLM chose (default: auto weapon, vanilla ammo order, auto).</param>
+    /// <param name="keepDistance">kite / flee_and_shoot distance in tiles (default 12).</param>
     public AttackTask(NPC target, bool all = false, float radius = 25f, float retreatBelow = 0.3f,
-        ArenaBounds? arena = null, bool killMinions = true, float? healBelow = null)
+        ArenaBounds? arena = null, bool killMinions = true, float? healBelow = null, WeaponLoadout? loadout = null,
+        float? keepDistance = null)
     {
+        _loadout = loadout ?? new WeaponLoadout(null, null, true, AttackStrategy.Auto);
+        _keep = Strategies.Keep(keepDistance);
         _all = all;
         _radius = radius;
         _retreatBelow = retreatBelow;
@@ -146,28 +161,32 @@ public sealed class AttackTask : IGameTask<GameCtx>
         }
         _lastSeen = Main.GameUpdateCount;
 
-        if (_weapon == null || --_weaponAge <= 0 || !CombatKit.StillUsable(p, _weapon))
-        {
-            _weapon = CombatKit.BestWeapon(p, npc.defense);
-            _weaponAge = WeaponRecheckTicks;
-        }
-        if (_weapon is not { } w) return Finish(ctx, GameTaskStatus.Failed, "no usable weapon (out of ammo or mana?)");
+        _weapon = _loadout.Tick(p, npc.defense);
+        if (_weapon is not { } w) return Finish(ctx, GameTaskStatus.Failed, _loadout.StopReason ?? "no usable weapon (out of ammo or mana?)");
+        var strategy = Strategies.Effective(_loadout.Strategy, w.Style);
+        UpdateStats(p, w, strategy);
 
         var off = CombatKit.Offset(p, npc);
         float dist = off.Length();
         bool los = CombatKit.LineOfSight(p, npc);
-        var stance = CombatStance.Decide(w.Style, off.X, off.Y, w.Reach, los);
-        bool fire = CombatStance.ShouldFire(w.Style, dist, w.Reach, los);
+        bool backOff = SwingRhythm(p, strategy, dist, w.Reach);
+        var stance = Strategies.Decide(strategy, w.Style, off.X, off.Y, w.Reach, los, _keep, backOff);
+        bool fire = Strategies.ShouldFire(strategy, w.Style, dist, w.Reach, los, _keep);
 
         // Evasion: would the planned movement touch the target soon? Then back off / jump instead.
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
         var (sx, sy) = StateReader.StandingTile(p);
         var stand = new TilePoint(sx, sy);
-        var dodge = _evasion.Tick(new EvasionInputs(k, Motion(npc), w.Style, Evasion.PlanDir(stance, off.X, p.direction), false,
-            ContactPredictor.FloorBelow(ctx.Grid, k), StepSafety.IsSafe(ctx.Grid, stand, -1), StepSafety.IsSafe(ctx.Grid, stand, 1)));
+        bool safeL = StepSafety.IsSafe(ctx.Grid, stand, -1), safeR = StepSafety.IsSafe(ctx.Grid, stand, 1);
+        int planDir = Evasion.PlanDir(stance, off.X, p.direction);
+        // Kite: inside the band keep running along the ground (turning at walls, drops and the arena's ends).
+        bool kiting = stance == StanceMove.Hold && Strategies.KeepsMoving(strategy);
+        if (kiting) planDir = _kiter.Plan(sx, _arena, off.X, safeL && (_arena?.Allows(sx, -1) ?? true), safeR && (_arena?.Allows(sx, 1) ?? true));
+        var dodge = _evasion.Tick(new EvasionInputs(k, Motion(npc), w.Style, planDir, false,
+            ContactPredictor.FloorBelow(ctx.Grid, k), safeL, safeR));
         if (dodge.Started) _stats.AddDodge();
 
-        Progress = $"{_targetName} {npc.life}/{npc.lifeMax} life, {dist:0} tiles, {w.Item.Name}"
+        Progress = $"{_targetName} {npc.life}/{npc.lifeMax} life, {dist:0} tiles, {_loadout.Label(p)}, {Strategies.Name(strategy)}"
             + (dodge.Evading ? ", dodging" : "")
             + (_all ? $"; killed {_stats.Kills.Count}" : "") + $", dodges {_stats.Dodges}";
 
@@ -210,6 +229,8 @@ public sealed class AttackTask : IGameTask<GameCtx>
                 intent = CombatKit.Step(intent, p, ctx.Grid, toward, wantUp: off.Y < -1.5f, ref _lastJump);
             else if (stance == StanceMove.StepAway)
                 intent = CombatKit.Step(intent, p, ctx.Grid, toward != 0 ? -toward : -p.direction, wantUp: false, ref _lastJump);
+            else if (kiting && planDir != 0)
+                intent = CombatKit.Step(intent, p, ctx.Grid, planDir, wantUp: false, ref _lastJump);
             else _lastJump = false;
         }
 
@@ -233,8 +254,11 @@ public sealed class AttackTask : IGameTask<GameCtx>
     /// (<see cref="LastSeen"/>); shooting waits until it's visible again. Its life (the vanilla boss bar) and whether it
     /// died or fled (the game announces both) stay known. Succeeds when it dies; fails with "boss fled" when it
     /// despawns without dying (dawn, or the player went too far).</item>
-    /// <item>Ammo: vanilla picks the next matching stack by itself; with no ammo left the weapon is re-chosen
-    /// (another bow, or a melee weapon).</item>
+    /// <item>Strategy: auto/kite/flee_and_shoot kite across the arena (kite also runs away inside keep_distance,
+    /// flee_and_shoot always runs away when it can), hit_and_run steps in and backs off after each swing, hold stays put
+    /// (and doesn't climb); <see cref="Strategies.BossPlan"/>. Evasion overrides every plan.</item>
+    /// <item>Ammo: the chosen ammo goes first (<see cref="WeaponLoadout"/>); otherwise vanilla picks the next matching
+    /// stack by itself. A weapon that becomes unusable falls back (with an event) or stops (fallback off).</item>
     /// </list>
     /// </summary>
     private EnemyMotion? _bossSeen;
@@ -269,16 +293,10 @@ public sealed class AttackTask : IGameTask<GameCtx>
             : LastSeen.Extrapolate(seenMotion, Main.GameUpdateCount - _lastSeen);
         TrackMinionKill();
 
-        bool unusable = _weapon != null && !CombatKit.StillUsable(p, _weapon);
-        if (_weapon == null || --_weaponAge <= 0 || unusable)
-        {
-            string? old = _weapon?.Item.Name;
-            _weapon = CombatKit.BestWeapon(p, npc.defense);
-            _weaponAge = WeaponRecheckTicks;
-            if (unusable && old != null)
-                RecentEvents.Add($"attack: {old} is out of ammo/mana" + (_weapon != null ? $", switched to {_weapon.Item.Name}" : ""));
-        }
-        if (_weapon is not { } w) return Finish(ctx, GameTaskStatus.Failed, "no usable weapon (out of ammo or mana?)");
+        _weapon = _loadout.Tick(p, npc.defense);
+        if (_weapon is not { } w) return Finish(ctx, GameTaskStatus.Failed, _loadout.StopReason ?? "no usable weapon (out of ammo or mana?)");
+        var strategy = Strategies.Effective(_loadout.Strategy, w.Style);
+        UpdateStats(p, w, strategy);
 
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
         if (_arena == null && k.OnGround)
@@ -303,7 +321,11 @@ public sealed class AttackTask : IGameTask<GameCtx>
         int? minionId = _killMinions ? _focus.Tick(contenders) : null;
 
         bool los = CombatKit.LineOfSight(p, npc);
-        var d = _bossMove.Tick(new BossMoveInputs(k, ctx.Grid, _arena, bossMotion, others, w.Style, w.Reach, visible, los));
+        // hit_and_run's rhythm goes by last tick's distance (from the fair boss motion, not its hidden position).
+        bool backOff = SwingRhythm(p, strategy, _lastBossDist, w.Reach);
+        var d = _bossMove.Tick(new BossMoveInputs(k, ctx.Grid, _arena, bossMotion, others, w.Style, w.Reach, visible, los,
+            strategy, _keep, backOff));
+        _lastBossDist = d.DistTiles;
         if (d.DodgeStarted) _stats.AddDodge();
 
         ControlIntent intent = default;
@@ -342,7 +364,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
         bool sick = p.HasBuff(BuffID.PotionSickness);
         Progress = $"{_targetName} {_stats.BossLifeLeftPct}% ({npc.life}/{npc.lifeMax}), {d.DistTiles:0} tiles"
             + (visible ? "" : $" (out of sight {(Main.GameUpdateCount - _lastSeen) / 60} s, going by its last sighting)")
-            + $", {w.Item.Name}" + (ammo is { } a ? $" ({a} ammo)" : "")
+            + $", {_loadout.Label(p)}" + (ammo is { } a ? $" ({a} ammo)" : "") + $", {Strategies.Name(strategy)}"
             + (aimAt != npc ? $", shooting {aimAt.GivenOrTypeName} first" : "")
             + (d.Evading ? ", dodging" : "")
             + $"; life {p.statLife}/{p.statLifeMax2}" + (sick ? " (potion sickness)" : "")
@@ -351,6 +373,29 @@ public sealed class AttackTask : IGameTask<GameCtx>
     }
 
     private const int MaxOthers = 8, DropHoldTicks = 3;
+
+    /// <summary>hit_and_run: did a swing just start in reach? Then back off for a moment (<see cref="HitAndRunRhythm"/>).</summary>
+    private bool SwingRhythm(Player p, AttackStrategy strategy, float dist, float reach)
+    {
+        bool started = p.itemAnimation > 0 && _lastAnim == 0;
+        _lastAnim = p.itemAnimation;
+        if (strategy != AttackStrategy.HitAndRun)
+        {
+            _rhythm.Reset();
+            return false;
+        }
+        return _rhythm.Tick(started, dist, reach);
+    }
+
+    /// <summary>What the result reports: weapon, ammo and strategy in use, and every switch so far.</summary>
+    private void UpdateStats(Player p, Weapon w, AttackStrategy strategy)
+    {
+        _stats.Weapon = w.Item.Name;
+        _stats.Ammo = _loadout.AmmoInUse(p);
+        _stats.Strategy = Strategies.Name(strategy);
+        while (_stats.Switches.Count < _loadout.Switches.Count) _stats.AddSwitch(_loadout.Switches[_stats.Switches.Count]);
+        Result = _stats.Result(Main.GameUpdateCount);
+    }
 
     /// <summary>Count a focused minion that died since it was picked.</summary>
     private void TrackMinionKill()
@@ -409,6 +454,9 @@ public sealed class AttackTask : IGameTask<GameCtx>
         _targetSince = _lastSeen = Main.GameUpdateCount;
         _moveFailures = 0;
         _evasion.Reset();
+        _kiter.Reset();
+        _rhythm.Reset();
+        _lastBossDist = float.MaxValue;
         _boss = EntityReader.IsBoss(npc);
         if (_boss)
         {
@@ -463,7 +511,9 @@ public sealed class AttackTask : IGameTask<GameCtx>
         Reflexes.ClearHealOverride(this);
         StopMove(ctx);
         ControlState.Pending = default;
+        _loadout.Restore(ctx.Player); // ammo swaps are newer than the lease's swap: undo them first
         _lease.Restore(ctx.Player);
+        while (_stats.Switches.Count < _loadout.Switches.Count) _stats.AddSwitch(_loadout.Switches[_stats.Switches.Count]);
         Result = _stats.Result(Main.GameUpdateCount);
     }
 }

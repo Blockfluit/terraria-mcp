@@ -232,10 +232,13 @@ public sealed class MinionFocus
 }
 
 /// <summary>Inputs for one <see cref="BossMovement"/> tick. <see cref="Boss"/> is the boss's hitbox and motion (even
-/// off-screen: its position is public, like the vanilla boss bar); <see cref="CanSeeBoss"/> gates firing.</summary>
+/// off-screen: its position is public, like the vanilla boss bar); <see cref="CanSeeBoss"/> gates firing.
+/// <see cref="Strategy"/> (already <see cref="Strategies.Effective"/> for the weapon), <see cref="KeepTiles"/> and
+/// <see cref="BackOff"/> (hit_and_run's rhythm) shape the plan (<see cref="Strategies.BossPlan"/>).</summary>
 public readonly record struct BossMoveInputs(
     PlayerKinematics Me, ITileGrid Grid, ArenaBounds? Arena, EnemyMotion Boss, IReadOnlyList<EnemyMotion>? Others,
-    WeaponStyle Style, float ReachTiles, bool CanSeeBoss, bool LineOfSight);
+    WeaponStyle Style, float ReachTiles, bool CanSeeBoss, bool LineOfSight,
+    AttackStrategy Strategy = AttackStrategy.Auto, float KeepTiles = Strategies.DefaultKeepTiles, bool BackOff = false);
 
 /// <param name="Drop">Hold Down this tick to drop through the platform underfoot.</param>
 /// <param name="Fire">Worth shooting/swinging at the boss now.</param>
@@ -286,18 +289,17 @@ public sealed class BossMovement
         float nx = Math.Clamp(pcx, b.CX - b.HalfW, b.CX + b.HalfW), ny = Math.Clamp(pcy, b.CY - b.HalfH, b.CY + b.HalfH);
         float dx = nx - pcx, dy = ny - pcy, dist = MathF.Sqrt(dx * dx + dy * dy);
 
-        int plan;
-        if (i.Style == WeaponStyle.Ranged)
-            plan = _kiter.Plan(stand.X, i.Arena, b.CX - pcx, leftOk && safeL, rightOk && safeR);
-        else
-        {
-            plan = MathF.Abs(dx) > i.ReachTiles * 0.5f ? Math.Sign(dx) : 0;
-            if (plan < 0 && !(leftOk && safeL) || plan > 0 && !(rightOk && safeR)) plan = 0;
-        }
+        bool canL = leftOk && safeL, canR = rightOk && safeR;
+        bool kites = i.Strategy is AttackStrategy.Kite or AttackStrategy.FleeAndShoot
+                     || (i.Strategy == AttackStrategy.Auto && i.Style == WeaponStyle.Ranged);
+        int kiterDir = kites ? _kiter.Plan(stand.X, i.Arena, b.CX - pcx, canL, canR) : 0;
+        int plan = Strategies.BossPlan(i.Strategy, i.Style, dx, dist, i.ReachTiles, i.KeepTiles, i.BackOff, kiterDir, canL, canR);
 
         // Climb to a platform row above when nothing threatens: up there, dropping through is one more way out.
+        // Hold stands its ground (no climbing).
         float dropFloor = DropThrough.FloorBelow(i.Grid, me);
-        bool climb = me.OnGround && !float.IsFinite(dropFloor) && PlatformAbove(i.Grid, me) && !DashDetector.IsDash(me, b);
+        bool climb = i.Strategy != AttackStrategy.Hold && me.OnGround && !float.IsFinite(dropFloor)
+                     && PlatformAbove(i.Grid, me) && !DashDetector.IsDash(me, b);
 
         var d = _evasion.Tick(new EvasionInputs(me, b, i.Style, plan, climb, ContactPredictor.FloorBelow(i.Grid, me),
             safeL, safeR, dropFloor, i.Others, leftOk, rightOk));
