@@ -34,7 +34,8 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 /// <item>BuildPlatform bridging: stop at the source, place, walk on. Climbing: stand centred, jump, place WorkTile
 /// once the feet are above it, land on it.</item>
 /// <item>DropThrough / straight-down Fall: centre first, then hold Down for a tick (or wait for the dig).</item>
-/// <item>Swim (vanilla has no swimming without Flippers): jump off the bottom, holding while rising.</item>
+/// <item>Swim (vanilla has no swimming without Flippers): jump off the bottom, holding while rising. With
+/// <c>canSwim</c> (Flippers etc.) jump is also pressed again in mid-water whenever the player stops rising.</item>
 /// <item>OpenDoor: asks for the door (Interact) already while walking up to it (within
 /// <see cref="DoorLookahead"/> steps), so an opened door doesn't break the run; otherwise stops and interacts.
 /// CloseDoor: stands still and interacts; given up after <see cref="CloseDoorPatience"/> ticks (someone in the
@@ -70,11 +71,15 @@ public sealed class PathFollower
     private bool _jumpHeld;
     private int _closeTicks;
     private ITileGrid? _grid;
+    private readonly bool _canSwim;
 
     /// <param name="start">Where the path starts (the planner's start); defaults to the standing tile on the first tick.</param>
     /// <param name="physics">Run constants; braking distances are planned with RunSlowdown.</param>
-    public PathFollower(IReadOnlyList<PathStep> steps, int stuckTicks = 90, TilePoint? start = null, PlayerPhysics? physics = null)
+    /// <param name="canSwim">The player can swim up in mid-water (<see cref="MovementProfile.CanSwim"/>).</param>
+    public PathFollower(IReadOnlyList<PathStep> steps, int stuckTicks = 90, TilePoint? start = null, PlayerPhysics? physics = null,
+        bool canSwim = false)
     {
+        _canSwim = canSwim;
         _steps = steps;
         _stuckTicks = stuckTicks;
         _prev = start;
@@ -266,7 +271,9 @@ public sealed class PathFollower
             case MoveKind.Swim:
                 Steer(Tx(step.Pos), k, ref intent);
                 if (step.Pos.Y < k.Y - 0.3f)
-                    intent.Jump = k.OnGround ? !_jumpHeld : _jumpHeld && k.VelY < 0;
+                    intent.Jump = k.OnGround ? !_jumpHeld
+                        : k.VelY < 0 ? _jumpHeld
+                        : _canSwim && !_jumpHeld; // a swimmer strokes again; a non-swimmer waits for the bottom
                 return null;
         }
         return null;

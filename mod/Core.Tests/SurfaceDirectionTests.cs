@@ -100,6 +100,35 @@ public class SurfaceDirectionTests(ITestOutputHelper output)
         Assert.Null(sim.Hurt);
     }
 
+    /// <summary>
+    /// No Flippers, on the bottom of a lake 11 deep (a jump off it can't get the head out) 20 tiles from the shore
+    /// slope: the surfacer walks along the bottom toward the shallow end and gets the head out well within the breath
+    /// the reflex starts with (45 % of 200 breath at 7 ticks each: 630 ticks).
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Sim_NonSwimmerWalksTheBottomToTheShallowEnd(bool mirrored)
+    {
+        var (g, m) = PathfinderSwimTests.SlopedLake(deepWidth: 20, mirrored);
+        var start = m['S'];
+        var sim = new MiniPhysics(g, start);
+        var s = new Surfacer(canSwim: false);
+        float minY = sim.Y;
+        int t = 0;
+        for (; t < 630; t++)
+        {
+            if (HeadDry(g, sim)) break;
+            sim.Step(s.Tick(g, sim.Kinematics));
+            minY = Math.Min(minY, sim.Y);
+        }
+        output.WriteLine($"t={t} {sim}");
+        Assert.True(HeadDry(g, sim), $"still under water after {t} ticks: {sim}");
+        Assert.Null(sim.Hurt);
+        int moved = Math.Abs(sim.StandingTile.X - start.X);
+        Assert.True(moved >= 18, $"only {moved} tiles toward the shore");
+    }
+
     /// <summary>Vanilla's drown box: 10 px wide, centred, from 2 px above the hitbox top, 12 px tall (no liquid in it).</summary>
     private static bool HeadDry(ArrayTileGrid g, MiniPhysics sim)
     {

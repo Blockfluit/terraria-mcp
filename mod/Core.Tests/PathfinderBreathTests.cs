@@ -38,12 +38,14 @@ public class PathfinderBreathTests(ITestOutputHelper output)
 
     /// <summary>
     /// Upper corridor (S) and lower corridor (G) joined by a short flooded shaft at x=3..4 and a dry shaft at the
-    /// far end (walk right, drop, walk back).
+    /// far end (walk right, drop, walk back). The upper corridor is 4 tall so the flooded shaft's top can be jumped
+    /// over: a non-swimmer can't float across it (it was 3 tall while the planner let everyone swim; now any way
+    /// past the shaft in a 3-tall corridor would mean sinking in and jumping out, a dive in itself).
     /// </summary>
     private static (ArrayTileGrid, Dictionary<char, TilePoint>) TwoWays() =>
         new GridBuilder(16, 14).Fill(0, 0, 15, 13, 'X')
-            .Fill(1, 1, 14, 3, '.').Fill(1, 9, 14, 11, '.').Fill(13, 4, 14, 8, '.').Fill(3, 4, 4, 8, '~')
-            .Put(1, 3, 'S').Put(1, 11, 'G').Parse();
+            .Fill(1, 1, 14, 4, '.').Fill(1, 9, 14, 11, '.').Fill(13, 5, 14, 8, '.').Fill(3, 5, 4, 8, '~')
+            .Put(1, 4, 'S').Put(1, 11, 'G').Parse();
 
     [Fact]
     public void PrefersTheDryDetour_OverDiving()
@@ -52,7 +54,7 @@ public class PathfinderBreathTests(ITestOutputHelper output)
         var r = Pathfinder.FindPath(g, m['S'], m['G'], new(), NoWork);
         Log(r);
         Assert.True(r.Success, r.FailureReason);
-        Assert.Equal(0, MaxSubmergedRun(g, m['S'], r)); // may splash through the shaft's top, never dives
+        Assert.Equal(0, MaxSubmergedRun(g, m['S'], r)); // jumps over the shaft's top, never dives
         Assert.Contains(r.Steps, s => s.Pos.X >= 12 && s.Pos.Y == 11); // down the dry shaft
     }
 

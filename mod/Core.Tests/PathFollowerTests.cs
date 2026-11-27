@@ -299,6 +299,26 @@ public class PathFollowerTests
     }
 
     [Fact]
+    public void Swim_WithFlippers_StrokesAgainInMidWater()
+    {
+        var (g, _) = ArrayTileGrid.Parse(
+            "~~~~~~~~~~~~",
+            "~~~~~~~~~~~~",
+            "~~~~~~~~~~~~",
+            "~~~~~~~~~~~~",
+            "~~~~~~~~~~~~",
+            "############");
+        var f = new PathFollower(new[] { new PathStep(new TilePoint(2, 1), MoveKind.Swim) }, start: new TilePoint(2, 4),
+            canSwim: true);
+        var o = f.Tick(At(2.375f, 3, onGround: false, vy: 0.1f), g);
+        Assert.True(o.Intent.Jump); // sinking mid-water: press
+        o = f.Tick(At(2.375f, 3, onGround: false, vy: 0.1f), g);
+        Assert.False(o.Intent.Jump); // release so the next press counts
+        o = f.Tick(At(2.375f, 3, onGround: false, vy: 0.1f), g);
+        Assert.True(o.Intent.Jump);
+    }
+
+    [Fact]
     public void NoProgress90Ticks_ReportsStuck()
     {
         var f = new PathFollower(WalkTo(1, 6, 4));

@@ -16,7 +16,8 @@ namespace LlmPlayer.Tasks;
 /// <list type="number">
 /// <item>Surfacing, above everything (attack too): the head is in liquid (vanilla <c>Collision.DrownCollision</c>), no
 /// gills/merfolk, and breath below 45 % of breathMax. Reflexes then swim/jump to the nearest known air
-/// (<see cref="Surfacer"/> over the fair-vision grid, sideways when rock is overhead) and keep the controls until
+/// (<see cref="Surfacer"/> over the fair-vision grid, sideways when rock is overhead; without swimming gear along the
+/// bottom to where a jump off it reaches air, e.g. a lake's shore slope) and keep the controls until
 /// breath is back to 90 %; the paused task then resumes. Emits <c>reflex {kind: "surface"}</c> /
 /// <c>"surface_end"</c>.</item>
 /// <item>Quick-heal: any time, no controls involved — calls <see cref="Player.QuickHeal"/> (the quick-heal hotkey's
@@ -46,7 +47,7 @@ public static class Reflexes
     private static int _targetId = -1;
     private static bool _lastUse;
 
-    private static readonly Surfacer Surfacer = new();
+    private static Surfacer Surfacer = new();
 
     private static object? _healOwner;
     private static float _healOverride;
@@ -139,9 +140,10 @@ public static class Reflexes
     {
         var grid = new Observe.GameTileGrid(p);
         var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-        if (started)
+        bool canSwim = Nav.ProfileBuilder.CanSwim(p);
+        if (started || Surfacer.CanSwim != canSwim)
         {
-            Surfacer.Reset();
+            Surfacer = new Surfacer(canSwim);
             ControlState.Pending = default;
         }
         var intent = Surfacer.Tick(grid, k);
