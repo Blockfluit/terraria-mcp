@@ -112,11 +112,12 @@ const TOOLS: ToolDef[] = [
   {
     name: "drop_item",
     description:
-      "Throw items out of the inventory onto the ground at your feet, like the vanilla throw key: {item (name or inventory slot), count? (default the whole stack)}. Use it to free slots when the inventory is full (crafted items otherwise drop at your feet). Favorited items are refused." +
+      "Throw items out of the inventory onto the ground at your feet, like the vanilla throw key: {item (name or inventory slot), count? (default the whole stack)}. Use it to free slots when the inventory is full (crafted items otherwise drop at your feet); trash: true deletes junk for good (thrown items get picked back up when walked over). pick_up_items ignores items you threw away. Favorited items are refused." +
       INSTANT_ACTION,
     shape: {
       item: z.string().min(1).describe("Item name (case-insensitive) or inventory slot number"),
       count: int().min(1).optional().describe("How many, default the whole stack"),
+      trash: z.boolean().optional().describe("Put it in the trash slot instead (gone for good; thrown items get picked up again when you walk over them)"),
     },
   },
   {

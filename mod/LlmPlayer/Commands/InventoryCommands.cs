@@ -67,6 +67,17 @@ public static class InventoryCommands
                 throw new CommandError(ErrorCodes.BadParams, $"{it.Name} is being used right now");
             int count = Params.Has(p, "count") ? Math.Clamp(Params.Int(p, "count"), 1, it.stack) : it.stack;
             string name = it.Name;
+            // trash: vanilla's trash slot (the item goes there and is gone once something else is trashed). Thrown items
+            // get picked straight back up when walking over them (seen in game), trash doesn't.
+            if (Params.Has(p, "trash") && Params.Bool(p, "trash"))
+            {
+                var trashed = it.Clone();
+                trashed.stack = count;
+                pl.trashItem = trashed;
+                it.stack -= count;
+                if (it.stack <= 0) it.TurnToAir();
+                return new { Trashed = name, Count = count, Slot = slot };
+            }
             var dropped = it.Clone();
             dropped.stack = count;
             int idx = Item.NewItem(pl.GetSource_DropAsItem(), pl.getRect(), dropped);
@@ -74,6 +85,7 @@ public static class InventoryCommands
             {
                 Main.item[idx].noGrabDelay = 100; // like a thrown item: not picked straight back up
                 Main.item[idx].velocity.X = pl.direction * 3f;
+                LlmPlayer.Tasks.PickUpTask.Ignore(idx); // pick_up_items leaves things the AI threw away
             }
             it.stack -= count;
             if (it.stack <= 0) it.TurnToAir();

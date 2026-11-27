@@ -19,6 +19,18 @@ namespace LlmPlayer.Tasks;
 /// </summary>
 public sealed class PickUpTask : IGameTask<GameCtx>
 {
+    /// <summary>Dropped-item slots the AI threw away on purpose (drop_item): skipped by pick_up_items. A slot reused
+    /// by another item type is no longer ignored.</summary>
+    private static readonly Dictionary<int, int> Ignored = new();
+
+    public static void Ignore(int itemIndex)
+    {
+        if (itemIndex >= 0 && itemIndex < Main.maxItems) Ignored[itemIndex] = Main.item[itemIndex].type;
+    }
+
+    public static bool IsIgnored(int itemIndex) =>
+        Ignored.TryGetValue(itemIndex, out int type) && Main.item[itemIndex].active && Main.item[itemIndex].type == type;
+
     public const int DefaultTimeoutTicks = 20 * 60;
     private const int GrabWaitTicks = 90;
 
@@ -106,7 +118,7 @@ public sealed class PickUpTask : IGameTask<GameCtx>
         for (int i = 0; i < Main.maxItems; i++)
         {
             var it = Main.item[i];
-            if (!it.active || it.IsAir || _skipped.Contains(i)) continue;
+            if (!it.active || it.IsAir || _skipped.Contains(i) || IsIgnored(i)) continue;
             if (_filter != null && !_filter(i)) continue;
             if (it.playerIndexTheItemIsReservedFor != p.whoAmI) continue;
             if (!p.CanAcceptItemIntoInventory(it) || !p.CanPullItem(it, p.ItemSpace(it))) continue;
