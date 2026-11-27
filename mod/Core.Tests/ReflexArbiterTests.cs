@@ -284,6 +284,7 @@ public class TaskPhasesTests
     [InlineData("explore_caves", TaskPhase.Defendable)]
     [InlineData("collect", TaskPhase.Defendable)]
     [InlineData("loot_chest", TaskPhase.Defendable)]
+    [InlineData("blast", TaskPhase.Defendable)]
     [InlineData("Chop_Tree", TaskPhase.Defendable)]
     public void ByName(string? name, TaskPhase expected) => Assert.Equal(expected, TaskPhases.Of(name));
 

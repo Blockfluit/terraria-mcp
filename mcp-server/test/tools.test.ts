@@ -53,7 +53,7 @@ describe("registerTools", () => {
         "list_recipes", "attack", "set_reflexes", "wait", "talk_to_npc", "wait_for_task",
         "build_platforms", "unequip", "buy", "mine_vein",
         "open_chest", "chest_deposit", "chest_withdraw", "close_chest", "use_bed",
-        "collect", "loot_chest", "explore_caves",
+        "collect", "loot_chest", "explore_caves", "blast",
         "get_boss_info", "inspect", "door", "drop_item", "swap_slots",
         "build_house", "check_housing",
       ].sort(),
@@ -439,6 +439,24 @@ describe("registerTools", () => {
       expect((await call(client, "collect", { x: 3, y: 400 })).isError).toBeFalsy();
       expect((await call(client, "collect", { x: 3 })).isError).toBe(true);
       expect(conn.calls).toEqual([{ method: "collect", params: { x: 3, y: 400 } }]);
+    });
+
+    it("blast needs x and y, forwards item and the orb flags, and explains when to use it", async () => {
+      const conn = new FakeConn(() => ({ started: true, task: "blast" }));
+      const client = await setup(conn);
+      expect((await call(client, "blast", { x: 5377, y: 693, item: "Sticky Bomb", allow_orb: true })).isError).toBeFalsy();
+      expect((await call(client, "blast", { x: 5377 })).isError).toBe(true);
+      expect((await call(client, "blast", { x: 1, y: 2, item: "" })).isError).toBe(true);
+      expect(conn.calls).toEqual([{ method: "blast", params: { x: 5377, y: 693, item: "Sticky Bomb", allow_orb: true } }]);
+      const desc = (await client.listTools()).tools.find((t) => t.name === "blast")?.description ?? "";
+      for (const s of ["Ebonstone", "Crimstone", "Shadow Orb", "allow_orb", "allow_boss_summon", "hurt", "furniture", "radius", "protected_tile", "expectedDestroyed"])
+        expect(desc).toContain(s);
+    });
+
+    it("use_item's description doesn't offer explosives", async () => {
+      const client = await setup(new FakeConn());
+      const desc = (await client.listTools()).tools.find((t) => t.name === "use_item")?.description ?? "";
+      expect(desc).toContain("blast");
     });
 
     it("loot_chest forwards x,y or nothing, rejects a lone coordinate", async () => {

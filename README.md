@@ -57,6 +57,18 @@ mod/LlmPlayer tModLoader mod inside Terraria
   ("Life Crystal", "Pot", "Locked Gold Chest", "Demon Altar", "Shadow Orb (don't break)"…). `collect` breaks a pot,
   life crystal, life fruit or the sword in stone with your pickaxe and picks up what drops. `loot_chest` opens a
   chest, presses *Loot All* and closes it again.
+- **Blast what a pickaxe can't break.** `blast` throws a Sticky Bomb, Bomb, Sticky Dynamite or Dynamite (default:
+  the smallest blast, sticky first) at a block, e.g. the Ebonstone / Crimstone around a Shadow Orb. It is the only
+  path that uses explosives: `use_item`, `attack` and auto-defend still refuse them. Before throwing it checks every
+  real tile within the blast radius (vanilla: 4 tiles for bombs, 7 for dynamite) plus a 2-tile margin around the
+  target and the predicted landing spot, and refuses if that holds furniture, a chest, door, bed or crafting station,
+  an NPC house or the spawn area, loot (Life Crystals, pots: collect them first) or an orb (only with `allow_orb`;
+  the third orb also needs `allow_boss_summon`). Altars and other explosion-proof blocks are fine. The reply lists
+  the blocks it expects to destroy. It picks a stand outside the explosion's damage area plus a margin and a throw
+  predicted with the real throw speed and gravity (only through tiles the player can see), walks there, throws with
+  real controls, stays clear (backing off if the bomb rolls close) until the fuse runs out, retries once if the
+  target survived, and picks up the drops. Auto-defend can't interrupt it from the throw to the explosion. A target
+  buried in rock is refused with the closest reachable spot, so the LLM blasts its way in layer by layer.
 - **The LLM decides the fight; the mod reacts.** The LLM picks the weapon (`weapon`: name or slot), the ammo
   (`ammo`) and the strategy (`strategy`: `kite` keeps `keep_distance` tiles and keeps running, `hit_and_run` steps
   in, swings and backs off, `hold` stands its ground, `flee_and_shoot` keeps moving away while it shoots). The mod

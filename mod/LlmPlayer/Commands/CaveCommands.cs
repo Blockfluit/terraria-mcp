@@ -28,6 +28,30 @@ public static class CaveCommands
             return new { Started = true, Task = task.Name, Target = new { target.At.X, target.At.Y, target.Name } };
         }, isAction: true);
 
+        // The only path that may use explosives: safety-checked and planned in Core (BlastSafety, BlastPlanner).
+        CommandRouter.Register("blast", p =>
+        {
+            var s = BlastTask.Resolve(Main.LocalPlayer, Params.Int(p, "x"), Params.Int(p, "y"), Params.StringOrNull(p, "item"),
+                allowOrb: Params.Has(p, "allow_orb") && Params.Bool(p, "allow_orb"),
+                allowBossSummon: Params.Has(p, "allow_boss_summon") && Params.Bool(p, "allow_boss_summon"));
+            var task = new BlastTask(s);
+            TaskHost.Start(task);
+            var r = s.Report;
+            return new
+            {
+                Started = true, Task = task.Name, Item = s.Spec.Name, Target = new { s.Target.X, s.Target.Y, Name = s.TargetName },
+                Stand = new { s.Plan.Stand.X, s.Plan.Stand.Y },
+                PredictedExplosion = new { s.Plan.DetTile.X, s.Plan.DetTile.Y, Miss = MathF.Round(s.Plan.Miss, 1) },
+                Radius = s.Spec.TileRadius, FuseSeconds = MathF.Round(s.Spec.FuseTicks / 60f, 1),
+                ExpectedDestroyed = new
+                {
+                    Count = r.Destroys.Count, ByName = r.DestroysByName,
+                    Tiles = r.Destroys.Take(40).Select(t => new { t.X, t.Y }).ToList(),
+                    Unseen = r.UnseenInRadius, WallsInRadius = r.Walls, r.Orbs,
+                },
+            };
+        }, isAction: true);
+
         CommandRouter.Register("loot_chest", p =>
         {
             var pl = Main.LocalPlayer;
