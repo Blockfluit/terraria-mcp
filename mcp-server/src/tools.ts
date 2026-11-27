@@ -103,6 +103,13 @@ const TOOLS: ToolDef[] = [
     shape: { x: tileX(), y: tileY(), action: z.enum(["open", "close"]).optional() },
   },
   {
+    name: "swap_slots",
+    description:
+      "Swap two inventory slots (like dragging an item onto another): slots 0-9 hotbar, 10-49 inventory, 50-53 coins, 54-57 ammo. Ammo is used from the ammo slots left to right, so put the arrows/bullets you want fired first in slot 54." +
+      INSTANT_ACTION,
+    shape: { a: int().min(0).max(57), b: int().min(0).max(57) },
+  },
+  {
     name: "drop_item",
     description:
       "Throw items out of the inventory onto the ground at your feet, like the vanilla throw key: {item (name or inventory slot), count? (default the whole stack)}. Use it to free slots when the inventory is full (crafted items otherwise drop at your feet). Favorited items are refused." +

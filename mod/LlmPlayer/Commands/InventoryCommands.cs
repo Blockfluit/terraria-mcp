@@ -38,6 +38,25 @@ public static class InventoryCommands
 
         // Throw items out of the inventory, like the vanilla "throw" key (the stack lands at the player's feet as a
         // normal dropped item). Frees slots when the inventory is full (seen in game: a crafted bow fell on the floor).
+        // Swap two inventory slots (0-49 inventory incl. hotbar 0-9, 50-53 coins, 54-57 ammo), like dragging an item
+        // onto another slot. Ammo is used from the ammo slots left to right, so this picks which arrows fire first.
+        CommandRouter.Register("swap_slots", p =>
+        {
+            var pl = Main.LocalPlayer;
+            int a = Params.Int(p, "a"), b = Params.Int(p, "b");
+            if (a < 0 || a > 57 || b < 0 || b > 57 || a == b) throw new CommandError(ErrorCodes.BadParams, "a and b must be different slots 0..57");
+            if (pl.itemAnimation > 0 && (a == pl.selectedItem || b == pl.selectedItem))
+                throw new CommandError(ErrorCodes.BadParams, "the held item is in use right now");
+            bool coinOk(int s, Item it) => s is < 50 or > 53 || it.IsAir || it.IsACoin;
+            bool ammoOk(int s, Item it) => s < 54 || it.IsAir || it.ammo > 0;
+            var ia = pl.inventory[a]; var ib = pl.inventory[b];
+            if (!coinOk(b, ia) || !coinOk(a, ib)) throw new CommandError(ErrorCodes.BadParams, "coin slots (50-53) only take coins");
+            if (!ammoOk(b, ia) || !ammoOk(a, ib)) throw new CommandError(ErrorCodes.BadParams, "ammo slots (54-57) only take ammo");
+            (pl.inventory[a], pl.inventory[b]) = (ib, ia);
+            return new { Swapped = new[] { new { Slot = a, Item = pl.inventory[a].IsAir ? null : pl.inventory[a].Name },
+                                           new { Slot = b, Item = pl.inventory[b].IsAir ? null : pl.inventory[b].Name } } };
+        }, isAction: true);
+
         CommandRouter.Register("drop_item", p =>
         {
             var pl = Main.LocalPlayer;
