@@ -322,55 +322,96 @@ public static class BlastPlanner
         return best;
     }
 
+    /// <summary>Most stands <see cref="Plan"/> asks its reachability check about before giving up.</summary>
+    public const int MaxReachChecks = 4;
+
+    /// <summary>Stands within this many tiles (Chebyshev) of one found unreachable are skipped too: the same ledge.</summary>
+    public const int UnreachableRadius = 2;
+
     /// <summary>
     /// Choose a stand and an aim. Candidates: standable spots (<see cref="Pathfinder.CanStand"/>, body known and dry)
     /// within <see cref="SearchRadius"/> of the target whose hitbox is safe from an explosion at the target, nearest
     /// to the player first (at most <see cref="MaxCandidates"/>). Each needs a throw (<see cref="BestThrow"/>) whose
     /// predicted explosion is also safe for that hitbox. Cost = walking distance (Manhattan) + 4 × miss.
+    /// <paramref name="excluded"/> drops stands up front (e.g. <see cref="BlastStandMemory.Blocked"/>: walks there failed
+    /// recently). <paramref name="reachable"/> is asked about the best stand before it is chosen (e.g. a bounded
+    /// pathfinder search); a "no" drops it and its neighbours within <see cref="UnreachableRadius"/> and the next best
+    /// is tried, up to <see cref="MaxReachChecks"/> stands; <paramref name="unreachable"/> lists the dropped ones.
     /// Null with <paramref name="why"/> when nothing works.
     /// </summary>
     public static BlastPlan? Plan(ITileGrid grid, TilePoint player, TilePoint target, ExplosiveSpec spec, out string? why,
-        float margin = PlayerMargin)
+        float margin = PlayerMargin, Func<TilePoint, bool>? excluded = null, Func<TilePoint, bool>? reachable = null,
+        List<TilePoint>? unreachable = null)
     {
         why = null;
         float tx = target.X + 0.5f, ty = target.Y + 0.5f;
         var candidates = new List<TilePoint>();
+        int skipped = 0;
         for (int y = target.Y - SearchRadius; y <= target.Y + SearchRadius; y++)
             for (int x = target.X - SearchRadius; x <= target.X + SearchRadius; x++)
             {
                 var s = new TilePoint(x, y);
                 if (!Pathfinder.CanStand(grid, s) || !BodyKnownAndDry(grid, s) || !FloorUnder(grid, s)) continue;
                 if (!HitboxSafe(Hitbox(s), tx, ty, spec, margin)) continue;
+                if (excluded != null && excluded(s))
+                {
+                    skipped++;
+                    continue;
+                }
                 candidates.Add(s);
             }
+        string skippedNote = skipped > 0 ? $" ({skipped} spots skipped: walking to them failed recently)" : "";
         if (candidates.Count == 0)
         {
             why = $"no known dry spot to stand on within {SearchRadius} tiles of {target} that is more than " +
-                  $"{DangerHalf(spec, margin):0.#} tiles from the blast (the {spec.Name}'s damage area plus a safety margin)";
+                  $"{DangerHalf(spec, margin):0.#} tiles from the blast (the {spec.Name}'s damage area plus a safety margin)" + skippedNote;
             return null;
         }
         candidates.Sort((a, b) => Manhattan(a, player).CompareTo(Manhattan(b, player)));
 
-        BlastPlan? best = null;
-        float bestCost = float.MaxValue;
+        // Throws are simulated once per stand; reachability rounds only re-pick among them.
+        var throws = new Dictionary<TilePoint, (TilePoint Cursor, ThrowResult Result, float Miss)?>();
+        var whole = new Dictionary<TilePoint, bool>();
+        var dropped = unreachable ?? new List<TilePoint>();
         (ThrowResult Result, float Miss)? nearest = null;
         int tooCloseTotal = 0;
-        foreach (var s in candidates.Take(MaxCandidates))
+        BlastPlan? best = null;
+        while (true)
         {
-            var (ox, oy) = Origin(s);
-            var t = BestThrow(grid, ox, oy, target, spec, out var closest, out int tooClose, Hitbox(s), margin);
-            tooCloseTotal += tooClose;
-            if (closest is { } c && (nearest is not { } n || c.Miss < n.Miss)) nearest = c;
-            if (t is not { } th) continue;
-            float cost = Manhattan(s, player) + 4f * th.Miss;
-            if (cost >= bestCost) continue;
-            if (!ThrowsFromWholeTile(grid, s, target, spec, margin)) continue;
-            bestCost = cost;
-            best = new BlastPlan(s, th.Cursor, th.Result.X, th.Result.Y, th.Miss, th.Result.Ticks);
+            best = null;
+            float bestCost = float.MaxValue;
+            foreach (var s in candidates.Where(c => !Near(dropped, c)).Take(MaxCandidates))
+            {
+                if (!throws.TryGetValue(s, out var t))
+                {
+                    var (ox, oy) = Origin(s);
+                    t = BestThrow(grid, ox, oy, target, spec, out var closest, out int tooClose, Hitbox(s), margin);
+                    throws[s] = t;
+                    tooCloseTotal += tooClose;
+                    if (closest is { } c && (nearest is not { } n || c.Miss < n.Miss)) nearest = c;
+                }
+                if (t is not { } th) continue;
+                float cost = Manhattan(s, player) + 4f * th.Miss;
+                if (cost >= bestCost) continue;
+                if (!whole.TryGetValue(s, out bool ok)) whole[s] = ok = ThrowsFromWholeTile(grid, s, target, spec, margin);
+                if (!ok) continue;
+                bestCost = cost;
+                best = new BlastPlan(s, th.Cursor, th.Result.X, th.Result.Y, th.Miss, th.Result.Ticks);
+            }
+            if (best == null || reachable == null || reachable(best.Stand)) break;
+            dropped.Add(best.Stand);
+            if (dropped.Count >= MaxReachChecks)
+            {
+                best = null;
+                break;
+            }
         }
         if (best == null)
         {
-            why = tooCloseTotal > 0 && (nearest is not { } n0 || n0.Miss > spec.MaxMiss)
+            why = dropped.Count > 0
+                ? $"no reachable throwing spot: the pathfinder can't get to {string.Join(", ", dropped)} (and the other " +
+                  "safe spots near them); clear a way there (dig, build, or blast exposed rock nearer to you) or approach from another side"
+                : tooCloseTotal > 0 && (nearest is not { } n0 || n0.Miss > spec.MaxMiss)
                 ? $"the {spec.Name} can't be thrown far enough: every throw that reaches {target} explodes within " +
                   $"{DangerHalf(spec, margin):0.#} tiles of where you'd stand (its damage area plus a safety margin). Use a smaller " +
                   "explosive (Sticky Bomb / Bomb) or blast from higher up"
@@ -379,8 +420,27 @@ public static class BlastPlanner
                   $"({(int)MathF.Floor(nn.Result.X)},{(int)MathF.Floor(nn.Result.Y)}), {nn.Miss:0.#} tiles away. Blast exposed rock nearer to you first " +
                   "(a tile next to open space you can see), then work inward"
                 : $"no predictable throw path toward {target} (unknown tiles or liquid in the way): light/explore the area first";
+            why += skippedNote;
         }
         return best;
+    }
+
+    /// <summary>Node budget of the bounded reachability search the glue runs per candidate stand.</summary>
+    public const int ReachNodes = 4000;
+
+    /// <summary>Does this bounded search (<see cref="PathOptions.MaxNodes"/> = <paramref name="maxNodes"/>) prove the
+    /// stand unreachable? Only an exhausted search does ("unreachable" before the budget ran out: every spot the player
+    /// can get to was tried); a search cut off by the budget, or any other failure, proves nothing and the walk
+    /// gets its chance.</summary>
+    public static bool ProvedUnreachable(PathResult r, int maxNodes = ReachNodes) =>
+        !r.Success && r.FailureReason != null && r.FailureReason.StartsWith("unreachable", StringComparison.Ordinal)
+        && r.NodesExpanded < maxNodes;
+
+    private static bool Near(List<TilePoint> pts, TilePoint s)
+    {
+        foreach (var p in pts)
+            if (Math.Max(Math.Abs(p.X - s.X), Math.Abs(p.Y - s.Y)) <= UnreachableRadius) return true;
+        return false;
     }
 
     /// <summary>Standing at tile s, the real hitbox can be up to half a tile left or right of <see cref="Hitbox"/>

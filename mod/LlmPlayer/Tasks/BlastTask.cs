@@ -8,6 +8,7 @@ using LlmPlayer.Core.Interact;
 using LlmPlayer.Core.Nav;
 using LlmPlayer.Core.Observe;
 using LlmPlayer.Core.Tasks;
+using LlmPlayer.Nav;
 using LlmPlayer.Observe;
 using LlmPlayer.Safety;
 using Terraria;
@@ -28,7 +29,10 @@ public sealed record BlastResult(string Item, int X, int Y, string Target, bool 
 /// refuse them). Real controls and vanilla behaviour only:
 /// <list type="number">
 /// <item>Walk (<see cref="MoveToTask"/>, exact) to the stand <see cref="BlastPlanner"/> chose: out of the blast's damage
-/// square + margin, with a predicted throw (through known tiles only) that explodes at the target.</item>
+/// square + margin, with a predicted throw (through known tiles only) that explodes at the target, and not proved
+/// unreachable by a bounded pathfinder search (<see cref="PlanFor"/>). A failed walk is remembered
+/// (<see cref="Memory"/>, across calls for a few minutes) and the next best stand is tried, up to
+/// <see cref="MaxWalkRetries"/> more.</item>
 /// <item>Settle, then re-aim from the real hitbox centre (<see cref="BlastPlanner.BestThrow"/>) and re-run the safety
 /// check (<see cref="BlastSafety"/>, real tiles, orb count) against the new prediction; refused → fail.</item>
 /// <item>Hold the explosive (<see cref="HeldItemLease"/>), aim the cursor at the planned tile and press "use" until the
@@ -42,9 +46,15 @@ public sealed record BlastResult(string Item, int X, int Y, string Target, bool 
 /// </summary>
 public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
 {
-    public const int MaxBlasts = 2, MaxReplans = 3, ThrowTimeoutTicks = 60, SettleMaxTicks = 90, CollectRadius = 12, CollectTicks = 6 * 60;
+    public const int MaxBlasts = 2, MaxReplans = 3, MaxWalkRetries = 4, ThrowTimeoutTicks = 60, SettleMaxTicks = 90, CollectRadius = 12, CollectTicks = 6 * 60;
 
     private enum Phase { Walk, Settle, Throw, Fuse, Aftermath, Collect }
+
+    /// <summary>Throwing spots whose walk failed, across calls (seen in game: eight calls in a row picked the same
+    /// unreachable spot).</summary>
+    public static readonly BlastStandMemory Memory = new();
+
+    private static long Now => Main.GameUpdateCount;
 
     private readonly BlastSetup _s;
     private readonly HeldItemLease _lease = new();
@@ -58,7 +68,7 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
     private PickUpTask? _collect;
     private HashSet<TilePoint> _expected = new();
     private Dictionary<TilePoint, ushort> _before = new();
-    private int _ticks, _blasts, _replans, _projIndex = -1, _projIdentity, _stillTicks, _retreatStuck, _alignTicks;
+    private int _ticks, _blasts, _replans, _walkFails, _projIndex = -1, _projIdentity, _stillTicks, _retreatStuck, _alignTicks;
     private const float AlignPx = 2f;
     private const int MaxAlignTicks = 90;
     private bool _started, _targetGone;
@@ -115,7 +125,19 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
         if (st == GameTaskStatus.Running) return st;
         string? why = _move.Reason;
         _move = null;
-        if (st == GameTaskStatus.Failed) return Finish(ctx, GameTaskStatus.Failed, $"can't reach the throwing spot {_plan.Stand}: {why}");
+        if (st == GameTaskStatus.Failed)
+        {
+            // Never pick this spot (or its neighbours) again for a while; try the next best one from here.
+            var failed = _plan.Stand;
+            Memory.WalkFailed(failed, Now);
+            if (++_walkFails > MaxWalkRetries)
+                return Done(ctx, GameTaskStatus.Failed, $"can't reach the throwing spot {failed}: {why}; gave up after {_walkFails} throwing spots");
+            var next = PlanFrom(ctx, out var reason);
+            if (next == null)
+                return Done(ctx, GameTaskStatus.Failed, $"can't reach the throwing spot {failed}: {why}; no other throwing spot: {reason}");
+            _plan = next;
+            return Enter(Phase.Walk, ctx);
+        }
         return Enter(Phase.Settle, ctx);
     }
 
@@ -248,11 +270,36 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
     {
         var p = ctx.Player;
         if (++_replans > MaxReplans) return Done(ctx, GameTaskStatus.Failed, $"{why}; gave up after {MaxReplans} replans");
-        var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
-        var plan = BlastPlanner.Plan(Snapshot(ctx.Grid, _s.Target), NavMath.StandingTile(k, ctx.Grid), _s.Target, _s.Spec, out var reason);
+        var plan = PlanFrom(ctx, out var reason);
         if (plan == null) return Done(ctx, GameTaskStatus.Failed, $"{why}: {reason}");
         _plan = plan;
         return Enter(Phase.Walk, ctx);
+    }
+
+    /// <summary>Plan a stand from where the player stands now (see <see cref="PlanFor"/>).</summary>
+    private BlastPlan? PlanFrom(GameCtx ctx, out string? why)
+    {
+        var p = ctx.Player;
+        var k = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
+        var here = NavMath.StandingTile(k, ctx.Grid);
+        return PlanFor(p, ctx.Grid, Snapshot(ctx.Grid, _s.Target), here, _s.Target, _s.Spec, out why);
+    }
+
+    /// <summary>
+    /// <see cref="BlastPlanner.Plan"/> without the stands whose walk failed recently (<see cref="Memory"/>), and with
+    /// a bounded pathfinder search (<see cref="BlastPlanner.ReachNodes"/> nodes, fair-vision grid, the move_to profile)
+    /// per top candidate: a stand the search proves unreachable is skipped before the player walks at it.
+    /// </summary>
+    public static BlastPlan? PlanFor(Player p, ITileGrid live, ArrayTileGrid snapshot, TilePoint here, TilePoint target,
+        ExplosiveSpec spec, out string? why)
+    {
+        Memory.UseWorld(ExploreCavesTask.WorldKey);
+        long now = Now;
+        var profile = ProfileBuilder.From(p);
+        var options = new PathOptions(GoalTolerance: 0, MaxNodes: BlastPlanner.ReachNodes);
+        return BlastPlanner.Plan(snapshot, here, target, spec, out why,
+            excluded: s => Memory.Blocked(s, now),
+            reachable: s => !BlastPlanner.ProvedUnreachable(Pathfinder.FindPath(live, here, s, profile, options)));
     }
 
     private GameTaskStatus Enter(Phase phase, GameCtx ctx)
@@ -385,7 +432,8 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
                 throw new CommandError(ErrorCodes.MissingItem, "no explosive in inventory (Sticky Bomb, Bomb, Sticky Dynamite or Dynamite; the Demolitionist sells Bombs and Dynamite)");
         }
 
-        var grid = Snapshot(new GameTileGrid(p), target);
+        var live = new GameTileGrid(p);
+        var grid = Snapshot(live, target);
         var k0 = NavMath.FromPixels(p.position.X, p.position.Y, p.velocity.X, p.velocity.Y, p.height);
         var here = NavMath.StandingTile(k0, grid);
         var reader = BlastWorld.Reader(p);
@@ -393,7 +441,7 @@ public sealed class BlastTask : IGameTask<GameCtx>, IUninterruptibleTask
         foreach (var (item, kind) in candidates)
         {
             var spec = BlastWorld.SpecOf(item, kind);
-            var plan = BlastPlanner.Plan(grid, here, target, spec, out var why);
+            var plan = PlanFor(p, live, grid, here, target, spec, out var why);
             if (plan == null)
             {
                 first ??= new CommandError(ErrorCodes.BadParams, $"{spec.Name}: {why}");
