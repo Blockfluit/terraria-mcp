@@ -33,7 +33,15 @@ public sealed class MoveToSim
     private readonly int _tolerance;
     private readonly Action<string>? _log;
 
-    private readonly ProgressGuard _progress = new(maxStalls: 3);
+    private ProgressGuard _progress = new(maxStalls: 3);
+    private TrailLeg? _leg;
+    private int _progressEpoch;
+    private TrailLeg Leg => _leg ??= new TrailLeg(Trail);
+
+    /// <summary>Travel memory for this walk (MoveToTask: the world's <c>TravelMemory</c>); null = none, as before.</summary>
+    public TrailGraph? Trail { get; init; }
+    /// <summary>Trail routes the walk used (far-goal start and rescues).</summary>
+    public int TrailRoutes => _leg?.Routes ?? 0;
     private readonly ReplanGuard _repeats = new();
     private readonly RouteCommitment _route = new();
     private readonly StallWatchdog _watchdog = new();
@@ -154,10 +162,21 @@ public sealed class MoveToSim
                 _failures = 0;
                 _follower = null;
                 _route.OnArrived();
+                Leg.OnArrived(here);
                 if (!_partial && _resolvedGoal is { } rg && Chebyshev(here, rg) <= _tolerance && k.OnGround)
                     return MoveOutcome.Arrived;
-                if (_progress.RecordArrival(Chebyshev(here, _goal)))
+                SyncProgress();
+                if (_progress.RecordArrival(Leg.Distance(here, _goal)))
+                {
+                    // Like MoveToTask: a trail route from here instead of failing.
+                    if (Leg.TryRescue(here, _goal))
+                    {
+                        Events.Add($"trail rescue from {here}");
+                        SyncProgress();
+                        return Plan(here);
+                    }
                     return Fail($"unreachable: no progress toward {_goal}");
+                }
                 if (_partial || Chebyshev(here, _goal) > _tolerance) return Plan(here);
                 Step(default);
                 return null;
@@ -202,9 +221,13 @@ public sealed class MoveToSim
             LavaWalk = _profile.LavaWalk && _sim.LavaWalk,
             WaterWalkTicks = Math.Min(_profile.WaterWalkTicks, _sim.WaterWalkTicks),
         };
-        var hint = _route.BeforePlan(here, _goal);
+        // Like MoveToTask.StartPlan: the next trail waypoint while travelling on the trail, else the goal.
+        var target = Leg.PlanGoal(here, _goal);
+        bool onTrail = Leg.Target != null;
+        var hint = _route.BeforePlan(here, target);
         if (!Commit) hint = null;
-        var job = new PlanJob(here, _goal, profile, _options with { GoalTolerance = _tolerance }, hint);
+        var job = new PlanJob(here, target, profile,
+            _options with { GoalTolerance = onTrail ? TrailTravel.ReachedRadius : _tolerance, GoalSet = onTrail ? null : _options.GoalSet }, hint);
         Plans++;
         while (!job.Step(_view)) Thread.Yield();
         // In game the job copies its window over several ticks (the player holds still), then the result is picked up
@@ -224,15 +247,31 @@ public sealed class MoveToSim
             Events.Add($"plan failed: {r.FailureReason} (from {here})");
             _log?.Invoke($"t={_sim.Ticks} plan failed from {here}: {r.FailureReason}");
             Reason = r.FailureReason;
+            // A plan to a trail waypoint failed: back to normal planning at once (not a failure).
+            if (Leg.OnPlanFailed())
+            {
+                _retryIn = 0;
+                return null;
+            }
             bool deterministic = r.FailureReason?.StartsWith("goal_not_standable") == true;
-            if (deterministic || ++_failures >= MaxConsecutiveFailures) return Fail(r.FailureReason);
+            if (deterministic || ++_failures >= MaxConsecutiveFailures)
+            {
+                if (!deterministic && Leg.TryRescue(here, _goal))
+                {
+                    Events.Add($"trail rescue from {here}");
+                    _failures = 0;
+                    _retryIn = 0;
+                    return null;
+                }
+                return Fail(r.FailureReason);
+            }
             _retryIn = RetryDelayTicks;
             return null;
         }
-        _partial = job.IsPartial;
+        _partial = job.IsPartial || onTrail;
         _resolvedGoal = r.ResolvedGoal;
         _route.OnPlanned(job.PlannedGoal, job.IsPartial);
-        PlanLog.Add((job.Start, job.PlannedGoal, job.IsPartial));
+        PlanLog.Add((job.Start, job.PlannedGoal, _partial));
         _follower = new PathFollower(r.Steps, start: Pathfinder.NormalizeStart(_view, job.Start),
             waterWalk: profile.WaterWalk, lavaWalk: profile.LavaWalk);
         _stepsAtPlan = _follower.RemainingSteps;
@@ -241,6 +280,14 @@ public sealed class MoveToSim
         _log?.Invoke($"t={_sim.Ticks} plan from {job.Start}{(job.IsPartial ? " (partial)" : "")} ({r.Steps.Count}): " +
                      string.Join(" ", r.Steps.Select(s => $"{s.Kind}{s.Pos}{(s.WorkTile is { } w ? "w" + w : "")}")));
         return null;
+    }
+
+    /// <summary>The trail started or ended: the progress measure changed meaning, start a fresh guard.</summary>
+    private void SyncProgress()
+    {
+        if (Leg.Epoch == _progressEpoch) return;
+        _progressEpoch = Leg.Epoch;
+        _progress = new ProgressGuard(maxStalls: 3);
     }
 
     private MoveOutcome Fail(string? why)

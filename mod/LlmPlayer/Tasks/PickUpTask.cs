@@ -2,6 +2,7 @@ using LlmPlayer.Control;
 using LlmPlayer.Core.Gather;
 using LlmPlayer.Core.Grid;
 using LlmPlayer.Core.Tasks;
+using LlmPlayer.Inventory;
 using LlmPlayer.Observe;
 using Terraria;
 
@@ -14,8 +15,11 @@ namespace LlmPlayer.Tasks;
 /// the player stops and waits for it instead of chasing it.
 /// Only items vanilla would let this player take are considered (reserved for this player, room in the inventory,
 /// <c>CanPullItem</c>). An item that can't be reached or won't come in is skipped.
+/// Items that don't fit because the inventory is full are handed to <see cref="InventorySpace.Notice"/>: reported
+/// (event, and "inventory full: … not picked up" appended to the task's reason by TaskHost), or, with set_reflexes
+/// <c>trash_when_full</c>, a listed junk stack is trashed so a valuable one fits and is collected after all.
 /// Ends Succeeded when none are left, or after the time limit (default 20 s) with the count left in the reason.
-/// Progress: "picked up N, M left in range".
+/// Progress: "picked up N, M left in range[, K don't fit (inventory full)]".
 /// </summary>
 public sealed class PickUpTask : IGameTask<GameCtx>
 {
@@ -67,8 +71,11 @@ public sealed class PickUpTask : IGameTask<GameCtx>
             DropTarget(ctx);
         }
 
-        var candidates = Candidates(p);
-        Progress = $"picked up {_pickedUp}, {candidates.Count} left in range";
+        var candidates = Candidates(p, out var blocked);
+        bool madeRoom = false;
+        foreach (int b in blocked) madeRoom |= InventorySpace.Notice(p, b);
+        Progress = $"picked up {_pickedUp}, {candidates.Count} left in range" + (blocked.Count > 0 ? $", {blocked.Count} don't fit (inventory full)" : "");
+        if (madeRoom) return GameTaskStatus.Running; // a junk stack was trashed: the item fits now
         if (candidates.Count == 0) return Finish(ctx, GameTaskStatus.Succeeded, null);
         if (++_elapsed > _timeoutTicks)
             return Finish(ctx, GameTaskStatus.Succeeded, $"time limit ({_timeoutTicks / 60} s) reached with {candidates.Count} items left");
@@ -109,9 +116,10 @@ public sealed class PickUpTask : IGameTask<GameCtx>
         ControlState.Pending = default;
     }
 
-    private List<int> Candidates(Player p)
+    private List<int> Candidates(Player p, out List<int> blocked)
     {
         var list = new List<int>();
+        blocked = new List<int>();
         var screen = Visibility.Screen;
         var c = _centre!.Value;
         long r2 = (long)_radius * _radius;
@@ -121,12 +129,13 @@ public sealed class PickUpTask : IGameTask<GameCtx>
             if (!it.active || it.IsAir || _skipped.Contains(i) || IsIgnored(i)) continue;
             if (_filter != null && !_filter(i)) continue;
             if (it.playerIndexTheItemIsReservedFor != p.whoAmI) continue;
-            if (!p.CanAcceptItemIntoInventory(it) || !p.CanPullItem(it, p.ItemSpace(it))) continue;
+            bool takes = p.CanAcceptItemIntoInventory(it) && p.CanPullItem(it, p.ItemSpace(it));
             var (x, y) = EntityReader.TileOf(it);
             long dx = x - c.X, dy = y - c.Y;
             if (dx * dx + dy * dy > r2) continue;
             if (!Visibility.IsEntityVisible(it, screen, p)) continue;
-            list.Add(i);
+            if (takes) list.Add(i);
+            else if (InventorySpace.Blocked(p, i)) blocked.Add(i);
         }
         return list;
     }

@@ -36,6 +36,7 @@ public static class StateReader
             ["Defense"] = (int)p.statDefense,
             ["Buffs"] = buffs,
             ["HeldItem"] = held == null || held.IsAir ? null : held.Name,
+            ["FreeSlots"] = LlmPlayer.Inventory.InventorySpace.FreeSlots(p),
             ["TimeOfDay"] = GameClock.Format(Main.dayTime, Main.time),
             ["Biome"] = Biome(p),
             ["Layer"] = DepthLayer.Classify((int)(p.Center.Y / 16f), Main.worldSurface, Main.rockLayer, Main.UnderworldLayer),

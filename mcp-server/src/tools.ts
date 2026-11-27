@@ -23,6 +23,9 @@ const STARTS_TASK =
   " Starts an async task and returns immediately: follow with wait_for_task (or get_task). Replaces any running task. Fails with user_has_control unless the user pressed Insert to hand over control.";
 const INSTANT_ACTION =
   " Instant action (no task). Fails with user_has_control unless the user pressed Insert to hand over control.";
+/** How tasks that pick things up report a full inventory. */
+const FULL_INVENTORY =
+  "Inventory full: drops that don't fit (all 50 main slots taken, nothing to stack onto; see freeSlots in get_state / get_inventory) stay on the ground, and the task's reason ends with \"inventory full: <item> at (x,y) not picked up — drop/trash something (e.g. Ebonstone Block 250) with drop_item and pick_up_items again\" (plus an inventory_full event per item). set_reflexes trash_when_full makes room for valuables automatically. ";
 
 const TOGGLE_HINT =
   "The user is driving. Call request_control to take control; if it is refused (the user took control back with Insert), stop and ask the user to press Insert when they want you to continue. Observation tools still work meanwhile.";
@@ -66,7 +69,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_state",
     description:
-      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups, deaths; drained by each get_state). Optional fields, present only when relevant: breath {now, max} (only while below max, i.e. the head has been under water/honey; at 0 you drown. A reflex surfaces for air on its own below 45% and resumes the task at 90%; routes avoid more than ~11 tiles under water unless you have gills), nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x?, y?, distance?, segments?}] (every boss alive in the world with its life, like the vanilla boss health bar; x/y/distance only while you can see it; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest), housing {homeless?: [names], canMoveIn?: [names]} (town NPCs without a house, and NPCs whose move-in conditions are met: they arrive during the day once a free valid house exists; see check_housing / build_house), lastDeaths [{text, killer, x, y, time, secondsAgo}] (the last 5 deaths in this world, newest first, never drained: what killed you and where). Start every decision here." +
+      "Player status: position {x,y}, life/mana/defense, buffs, held item, freeSlots (empty main inventory slots of 50; at 0 new items that don't stack are left on the ground), time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups, deaths; drained by each get_state). Optional fields, present only when relevant: breath {now, max} (only while below max, i.e. the head has been under water/honey; at 0 you drown. A reflex surfaces for air on its own below 45% and resumes the task at 90%; routes avoid more than ~11 tiles under water unless you have gills), nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x?, y?, distance?, segments?}] (every boss alive in the world with its life, like the vanilla boss health bar; x/y/distance only while you can see it; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest), housing {homeless?: [names], canMoveIn?: [names]} (town NPCs without a house, and NPCs whose move-in conditions are met: they arrive during the day once a free valid house exists; see check_housing / build_house), lastDeaths [{text, killer, x, y, time, secondsAgo}] (the last 5 deaths in this world, newest first, never drained: what killed you and where). Start every decision here." +
       COORDS,
     readOnly: true,
   },
@@ -134,7 +137,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_inventory",
     description:
-      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins and the selected hotbar slot. Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game). For choosing attack's weapon and ammo: weapons also carry useTime (ticks per use, 60 = 1 s; lower = faster), ammoType (the ammo class they fire, e.g. \"arrow\", \"bullet\") and mana (cost per use); ammo stacks carry damage (added to the weapon's per shot) and ammoType. Each hit loses about half the target's defense (get_entities shows defense), so against armored enemies fewer, harder hits win.",
+      "Hotbar (slots 0-9), main inventory, armor, accessories, ammo, coins, the selected hotbar slot and freeSlots (empty slots of the 50 hotbar + main slots: at 0, picked-up items that don't stack onto a slot are left lying; free some with drop_item, trash: true for junk). Empty slots are omitted. Hotbar/inventory/ammo items carry tags only when true: weapon + damage (with your bonuses), heal (life restored), ammo, consumable (used up on use, e.g. potions), placeable (blocks, walls, furniture), pick/axe/hammer (tool power, axe as shown in game). For choosing attack's weapon and ammo: weapons also carry useTime (ticks per use, 60 = 1 s; lower = faster), ammoType (the ammo class they fire, e.g. \"arrow\", \"bullet\") and mana (cost per use); ammo stacks carry damage (added to the weapon's per shot) and ammoType. Each hit loses about half the target's defense (get_entities shows defense), so against armored enemies fewer, harder hits win.",
     readOnly: true,
   },
   {
@@ -165,6 +168,7 @@ const TOOLS: ToolDef[] = [
     name: "move_to",
     description:
       "Walk to a tile or an entity with smart pathfinding (jumps, drops, platforms; digs and builds if allowed). Give x,y (a standing position; a target inside solid ground snaps to the nearest standable tile) or entity_id from get_entities. Fails with a reason if unreachable. " +
+      "Travel memory: the mod remembers where you have stood this session (a trail every ~8 tiles, per world, also your own walks when the user drives). A tile goal beyond one planning window (more than ~120 tiles across or ~80 up/down) first follows that trail toward the goal (surface trails preferred; progress says \"following a known trail\"), hop by hop, then plans the rest normally; a walk that stops making progress tries the trail instead of failing. So for long trips, walking a route once (e.g. along the surface via waypoints) makes later trips reliable. " +
       "Torches (default on, needs torches in the inventory): in the dark underground or in a tunnel it digs, with no torch within ~10 tiles, it pauses between steps, places a torch within reach and walks on, so the way is revealed (the pathfinder only knows tiles you have seen: unlit tunnels stay unknown). Never in an NPC house or the spawn area. " +
       "Platform reserve: building keeps platform_reserve platforms (default 20, see set_reflexes) for later descents: the route may only use platforms above it plus cheap blocks, bridges and climbs switch to dirt/stone/… at the reserve, and only when no route fits does it use the reserve (reserveReleased). When the task ends, report.result is {torchesPlaced, platformsUsed, blocksUsed, platformsLeft, reserveReleased, note?} (note when platforms run short). " +
       "Water Walking (Water Walking Potion, or Water Walking Boots and their upgrades): lakes and honey are walked over like floor (lava too only with lava immunity); drink the potion first with use_item. With the potion the route never stops on the water and crossings longer than the buff time left are refused (\"water walking would run out\"): drink a fresh one. Without it a non-swimmer only crosses water along the bottom (within breath) or over a platform bridge." +
@@ -209,7 +213,8 @@ const TOOLS: ToolDef[] = [
   {
     name: "mine",
     description:
-      "Mine one tile: walks within reach, picks the best pickaxe and digs it. Fails on protected tiles or if the pickaxe is too weak. To break a pot or life crystal and also pick up what drops, use collect." +
+      "Mine one tile: walks within reach, picks the best pickaxe and digs it. Fails on protected tiles or if the pickaxe is too weak. To break a pot or life crystal and also pick up what drops, use collect. " +
+      "Inventory full: the reason ends with \"inventory full: … not picked up\" for drops that didn't fit." +
       COORDS +
       STARTS_TASK,
     shape: { x: tileX(), y: tileY(),
@@ -253,7 +258,10 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "pick_up_items",
-    description: "Walk over visible dropped items within radius, nearest first, to collect them." + STARTS_TASK,
+    description:
+      "Walk over visible dropped items within radius, nearest first, to collect them. Progress: \"picked up N, M left in range, K don't fit (inventory full)\". " +
+      FULL_INVENTORY +
+      STARTS_TASK,
     shape: { radius: int().min(1).optional().describe("Tiles, default 10") },
   },
 
@@ -422,7 +430,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "set_reflexes",
     description:
-      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think), weapon / ammo (what auto-defend fights with; \"auto\" = the best weapon by damage per second and vanilla's ammo order, the default; a chosen weapon that becomes unusable falls back to the best other one, with a weapon_switch event, and comes back once usable), platform_reserve (platforms every walk — move_to and the walks of mine, collect, explore_caves … — keeps for later descents unless no route fits without them; default 20, 0 = use all). Omitted fields keep their value; returns the current settings." +
+      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think), weapon / ammo (what auto-defend fights with; \"auto\" = the best weapon by damage per second and vanilla's ammo order, the default; a chosen weapon that becomes unusable falls back to the best other one, with a weapon_switch event, and comes back once usable), platform_reserve (platforms every walk — move_to and the walks of mine, collect, explore_caves … — keeps for later descents unless no route fits without them; default 20, 0 = use all), trash_when_full (junk item names, default [] = never: when a valuable item — coins, potions, ores, bars, gems, Life Crystal/Fruit, Mana Crystal, Fallen Star, anything above white rarity such as boss drops — can't be picked up because the inventory is full, one stack of a listed item, earliest in the list first and smallest stack first, never favorited, goes to the trash slot (gone for good) so it fits; at most 5 per task, each with a reflex {kind: \"auto_trash\"} event; e.g. [\"Ebonstone Block\", \"Dirt Block\", \"Stone Block\", \"Mud Block\"]; valuable names are refused). Omitted fields keep their value; returns the current settings." +
       INSTANT_ACTION,
     shape: {
       auto_defend: z.boolean().optional(),
@@ -434,6 +442,10 @@ const TOOLS: ToolDef[] = [
         .describe('Auto-defend weapon: item name or inventory slot 0-57, or "auto"'),
       ammo: z.string().min(1).optional().describe('Auto-defend ammo item name (must fit the weapon), or "auto"'),
       platform_reserve: int().min(0).max(9999).optional().describe("Platforms walks keep for descents, default 20"),
+      trash_when_full: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('Junk to trash when a valuable drop does not fit, e.g. ["Ebonstone Block", "Dirt Block"]; [] = never (default)'),
     },
   },
   {
@@ -530,7 +542,8 @@ const TOOLS: ToolDef[] = [
   {
     name: "collect",
     description:
-      "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. Walks there lighting dark tunnels like move_to (torches). When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}], torchesPlaced}." +
+      "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. Walks there lighting dark tunnels like move_to (torches). When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}], torchesPlaced}. " +
+      FULL_INVENTORY +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -549,7 +562,8 @@ const TOOLS: ToolDef[] = [
       "Before throwing it checks the real tiles within the blast radius + 2 tiles of both the target and the predicted landing spot and refuses (protected_tile) if anything there is furniture, a chest, door, bed or crafting station, inside an NPC house or the spawn area, a Life Crystal / Life Fruit / sword in stone (collect it first), or a Shadow Orb / Crimson Heart without allow_orb (and the 3rd orb without allow_boss_summon, like collect). Altars and other explosion-proof blocks are fine; pots are fine too: the blast breaks them (listed in expectedDestroyed as 'Pot') and their loot is picked up with the other drops. " +
       "Explosives hurt you: it walks to a spot outside the damage area + a margin with a predicted throw (real throw speed and gravity, only through tiles you can see) that explodes at the target, throws with real controls, stays clear (backs off if it rolls close) until it explodes, retries once if the target survived, then picks up the drops. Auto-defend can't interrupt from the throw to the explosion. " +
       "A buried target (e.g. an orb deep in rock) is refused with the closest reachable spot: blast the exposed rock nearest to you first (a block next to open space you can see) and work inward, a layer per blast. Also refused when no safe spot to stand exists (a cramped cave: Dynamite needs ~10 tiles of room). Throwing spots the pathfinder proves unreachable are skipped; a spot whose walk fails is remembered for 5 minutes (it and its neighbours are not picked again) and the next best spot is tried. " +
-      "Reply: {item, stand, predictedExplosion, radius, fuseSeconds, expectedDestroyed: {count, byName, tiles, unseen, wallsInRadius, orbs}} — blocks and background walls in the radius are lost. When the task succeeds, report.result is {item, x, y, target, targetDestroyed, blasts, destroyed, destroyedByName, pickedUp: [{name, count}]}." +
+      "Reply: {item, stand, predictedExplosion, radius, fuseSeconds, expectedDestroyed: {count, byName, tiles, unseen, wallsInRadius, orbs}} — blocks and background walls in the radius are lost. When the task succeeds, report.result is {item, x, y, target, targetDestroyed, blasts, destroyed, destroyedByName, pickedUp: [{name, count}]}. " +
+      FULL_INVENTORY +
       COORDS +
       STARTS_TASK,
     shape: {

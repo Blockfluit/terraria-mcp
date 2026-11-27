@@ -33,6 +33,10 @@ public sealed class TaskRunner<TCtx>
     public IGameTask<TCtx>? CurrentTask => _task;
     public event Action<TaskReport>? Finished;
 
+    /// <summary>Optional: a note appended to every finished task's reason ("reason; note", or just the note), e.g. items
+    /// left behind because the inventory was full. Called once per finish; null/empty = nothing to add.</summary>
+    public Func<string?>? FinishNote { get; set; }
+
     public TaskReport? Current => _task == null
         ? null
         : new TaskReport(_task.Name, GameTaskStatus.Running, _task.Reason, _task.Progress, _task.Result);
@@ -76,6 +80,10 @@ public sealed class TaskRunner<TCtx>
     private void Finish(IGameTask<TCtx> task, GameTaskStatus status, string? reason)
     {
         _task = null;
+        string? note = null;
+        try { note = FinishNote?.Invoke(); }
+        catch { /* a failing note must not lose the report */ }
+        if (!string.IsNullOrEmpty(note)) reason = string.IsNullOrEmpty(reason) ? note : reason + "; " + note;
         var report = new TaskReport(task.Name, status, reason, task.Progress, task.Result);
         LastFinished = report;
         Finished?.Invoke(report);
