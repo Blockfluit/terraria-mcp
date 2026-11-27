@@ -42,6 +42,9 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 /// <see cref="DoorLookahead"/> steps), so an opened door doesn't break the run; otherwise stops and interacts.
 /// CloseDoor: stands still and interacts; given up after <see cref="CloseDoorPatience"/> ticks (someone in the
 /// doorway) so a door never strands the path.</item>
+/// <item>Water walking (<c>waterWalk</c> / <c>lavaWalk</c>): a walkable liquid surface counts as support like a
+/// platform top. Down is only pressed on DropThrough / BuildDown steps, which the planner never puts on a liquid surface
+/// (holding Down there sinks).</item>
 /// </list>
 /// </summary>
 public sealed class PathFollower
@@ -81,15 +84,19 @@ public sealed class PathFollower
     private bool _jumpHeld;
     private int _closeTicks;
     private ITileGrid? _grid;
-    private readonly bool _canSwim;
+    private readonly bool _canSwim, _waterWalk, _lavaWalk;
 
     /// <param name="start">Where the path starts (the planner's start); defaults to the standing tile on the first tick.</param>
     /// <param name="physics">Run constants; braking distances are planned with RunSlowdown.</param>
     /// <param name="canSwim">The player can swim up in mid-water (<see cref="MovementProfile.CanSwim"/>).</param>
+    /// <param name="waterWalk">Liquid surfaces of water/honey hold the player (<see cref="MovementProfile.WaterWalk"/>).</param>
+    /// <param name="lavaWalk">The lava surface holds the player (<see cref="MovementProfile.LavaWalk"/>).</param>
     public PathFollower(IReadOnlyList<PathStep> steps, int stuckTicks = 90, TilePoint? start = null, PlayerPhysics? physics = null,
-        bool canSwim = false)
+        bool canSwim = false, bool waterWalk = false, bool lavaWalk = false)
     {
         _canSwim = canSwim;
+        _waterWalk = waterWalk;
+        _lavaWalk = lavaWalk;
         _steps = steps;
         _stuckTicks = stuckTicks;
         _prev = start;
@@ -510,14 +517,18 @@ public sealed class PathFollower
         Math.Abs(k.X - target) <= AlignTolerance && Math.Abs(k.VelX) <= StillSpeed;
 
     /// <summary>Would the hitbox be off its support row two ticks from now?</summary>
-    private static bool LosingSupport(PlayerKinematics k, ITileGrid grid, int supportRow)
+    private bool LosingSupport(PlayerKinematics k, ITileGrid grid, int supportRow)
     {
         float x = k.X + 2 * k.VelX;
         int c0 = (int)MathF.Floor(x + 0.01f), c1 = (int)MathF.Floor(x + PlayerPhysics.HitboxWidth - 0.01f);
         for (int c = c0; c <= c1; c++)
-            if (grid.Get(c, supportRow).IsStandable) return false;
+            if (HoldsFeet(grid, c, supportRow)) return false;
         return true;
     }
+
+    /// <summary>A block or platform, or (water walking) a walkable liquid surface.</summary>
+    private bool HoldsFeet(ITileGrid grid, int x, int y) =>
+        _waterWalk || _lavaWalk ? LiquidWalk.Holds(grid, x, y, _waterWalk, _lavaWalk) : grid.Get(x, y).IsStandable;
 
     /// <summary>A solid tile right in front of the hitbox at body height.</summary>
     private static bool Blocked(PlayerKinematics k, ITileGrid grid, int dir)
@@ -682,6 +693,7 @@ public sealed class PathFollower
                 var below = new TilePoint(bx, p.Y + 1);
                 var t = grid.Get(below);
                 if (t.IsStandable || t.Kind == TileKind.Unknown || IsPlannedWork(below, MoveKind.BuildPlatform, i)
+                    || ((_waterWalk || _lavaWalk) && LiquidWalk.IsSurface(grid, bx, p.Y + 1, _waterWalk, _lavaWalk))
                     || IsPlannedWork(below, MoveKind.BuildDown, i))
                     supported = true;
                 if (grid.Get(bx, p.Y).Kind is TileKind.Water or TileKind.Honey or TileKind.Lava) inLiquid = true;

@@ -26,6 +26,9 @@ public enum ExploreDirection { Left, Right, Down, Up }
 /// and is planned again; no torch → "too dark: no torches". With <c>torches</c>, also places one whenever the body is
 /// dark underground (or while digging) and no torch is within <see cref="TorchPlanner.SpacingTiles"/>.</item>
 /// <item>Fails after <see cref="MaxStalls"/> sub-tasks in a row without progress (3 when it can't dig).</item>
+/// <item><b>Water walking</b> (potion / boots): a lake's surface is floor (<see cref="Pathfinder.CanStand(ITileGrid, TilePoint, MovementProfile)"/>:
+/// with gear legs may end on it; with the potion's limited buff only the far shore is a target, legs reach
+/// <see cref="WaterWalkLegReach"/> tiles and the planner refuses crossings longer than the buff lasts).</item>
 /// </list>
 /// Result: <see cref="ExploreResult"/> {covered, dug, torchesPlaced, stoppedBecause?}.
 /// </summary>
@@ -34,6 +37,9 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     private const int MaxStalls = 5, MaxWalkStalls = 3, LegReach = 40, LateralReach = 15, ArrivalTolerance = 1;
     private const int MaxDigFailures = 3, MaxTorchFailures = 3, TorchCheckTicks = 60, LightSettleTicks = 15, AlignTimeoutTicks = 180;
     private const int TunnelScanMax = 12;
+    /// <summary>Leg reach while water walking: far enough to see a lake's far shore as the leg's target (with a
+    /// time-limited potion buff legs never end on the water, so the whole lake has to fit in one leg).</summary>
+    private const int WaterWalkLegReach = 100;
 
     private readonly ExploreDirection _dir;
     private readonly int _distance;
@@ -505,7 +511,9 @@ public sealed class ExploreTask : IGameTask<GameCtx>
     {
         best = default;
         int remaining = _distance - Along(here - _origin!.Value);
-        int reach = Math.Min(LegReach, Math.Max(1, remaining));
+        var ww = ProfileBuilder.WaterWalkState(ctx.Player);
+        var stand = new MovementProfile(WaterWalk: ww.Water, LavaWalk: ww.Lava, WaterWalkTicks: ww.Ticks);
+        int reach = Math.Min(ww.Water ? WaterWalkLegReach : LegReach, Math.Max(1, remaining));
         bool horizontal = _dir is ExploreDirection.Left or ExploreDirection.Right;
         int sign = _dir is ExploreDirection.Left or ExploreDirection.Up ? -1 : 1;
         int bestScore = int.MinValue;
@@ -514,7 +522,7 @@ public sealed class ExploreTask : IGameTask<GameCtx>
             {
                 var p = horizontal ? new TilePoint(here.X + sign * a, here.Y + l) : new TilePoint(here.X + l, here.Y + sign * a);
                 int score = a * 100 - Math.Abs(l);
-                if (score <= bestScore || !Pathfinder.CanStand(ctx.Grid, p) || HasUnknown(ctx.Grid, p)) continue;
+                if (score <= bestScore || !Pathfinder.CanStand(ctx.Grid, p, stand) || HasUnknown(ctx.Grid, p)) continue;
                 if (_failedTargets.Any(f => Math.Abs(f.X - p.X) <= 2 && Math.Abs(f.Y - p.Y) <= 2)) continue;
                 bestScore = score;
                 best = p;

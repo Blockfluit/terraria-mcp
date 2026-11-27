@@ -166,7 +166,8 @@ const TOOLS: ToolDef[] = [
     description:
       "Walk to a tile or an entity with smart pathfinding (jumps, drops, platforms; digs and builds if allowed). Give x,y (a standing position; a target inside solid ground snaps to the nearest standable tile) or entity_id from get_entities. Fails with a reason if unreachable. " +
       "Torches (default on, needs torches in the inventory): in the dark underground or in a tunnel it digs, with no torch within ~10 tiles, it pauses between steps, places a torch within reach and walks on, so the way is revealed (the pathfinder only knows tiles you have seen: unlit tunnels stay unknown). Never in an NPC house or the spawn area. " +
-      "Platform reserve: building keeps platform_reserve platforms (default 20, see set_reflexes) for later descents: the route may only use platforms above it plus cheap blocks, bridges and climbs switch to dirt/stone/… at the reserve, and only when no route fits does it use the reserve (reserveReleased). When the task ends, report.result is {torchesPlaced, platformsUsed, blocksUsed, platformsLeft, reserveReleased, note?} (note when platforms run short)." +
+      "Platform reserve: building keeps platform_reserve platforms (default 20, see set_reflexes) for later descents: the route may only use platforms above it plus cheap blocks, bridges and climbs switch to dirt/stone/… at the reserve, and only when no route fits does it use the reserve (reserveReleased). When the task ends, report.result is {torchesPlaced, platformsUsed, blocksUsed, platformsLeft, reserveReleased, note?} (note when platforms run short). " +
+      "Water Walking (Water Walking Potion, or Water Walking Boots and their upgrades): lakes and honey are walked over like floor (lava too only with lava immunity); drink the potion first with use_item. With the potion the route never stops on the water and crossings longer than the buff time left are refused (\"water walking would run out\"): drink a fresh one. Without it a non-swimmer only crosses water along the bottom (within breath) or over a platform bridge." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -191,6 +192,7 @@ const TOOLS: ToolDef[] = [
       "down = a 2-wide shaft under you (you drop as the floor goes; move_to climbs back out with platforms), left/right = a 3-tall tunnel. Digging up isn't supported. " +
       "It only digs tiles it can see and stops with a reason before lava/water next to the hole, protected tiles, tiles too hard for the pickaxe (\"needs pick power N at (x,y)\") or an unsafe drop. " +
       "Dark tiles: it places a torch from your inventory and looks again (\"too dark: no torches\" without any); with torches on it also lights dark spots underground about every 10 tiles. " +
+      "With Water Walking (potion via use_item first, or Water Walking Boots) a lake ahead counts as floor and is walked over (with the potion only when the far shore is in view and the buff lasts the crossing). " +
       "Progress shows walking/digging; result: {covered, dug, torchesPlaced, stoppedBecause?}." +
       STARTS_TASK,
     shape: {

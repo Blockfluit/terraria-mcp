@@ -37,6 +37,9 @@ public enum SimTool { None, Pickaxe, Platform }
 /// (snaps down by up to the step's horizontal distance + 1 px, 8.5 px near a half block) while the player was on the
 /// ground and isn't jumping. The hitbox rests on the highest surface point under it, i.e. a corner on a slope.
 /// StepUp onto a half block rises 8 px, onto a full block from a half block 8 px. Ceiling slopes are full blocks.</item>
+/// <item>Water walking (<see cref="WaterWalk"/>, <see cref="LavaWalk"/>; Collision.WaterCollision): the top of a liquid
+/// cell with no liquid above it stops a falling hitbox like a platform (the grid has no liquid levels: the cell top),
+/// ignored while Down is held. <see cref="WaterWalkTicks"/> counts down; at 0 the buff is gone.</item>
 /// </list>
 /// </summary>
 public sealed class MiniPhysics
@@ -63,6 +66,13 @@ public sealed class MiniPhysics
     /// <summary>Wood Platforms have no tileBoost (reach 3 rows below the feet); <see cref="TileBoost"/> is the pickaxe's.</summary>
     public int PlatformTileBoost = 0;
     public int Ticks { get; private set; }
+    /// <summary>Ticks the hitbox overlapped water/honey, and ticks Down was held.</summary>
+    public int WetTicks { get; private set; }
+    public int DownTicks { get; private set; }
+    /// <summary>Water Walking: water/honey surfaces hold the player (and lava with <see cref="LavaWalk"/>).</summary>
+    public bool WaterWalk, LavaWalk;
+    /// <summary>Ticks of water walking left (int.MaxValue: unlimited); water walking ends at 0.</summary>
+    public int WaterWalkTicks = int.MaxValue;
     public readonly List<TilePoint> Mined = new(), Placed = new();
     public int Misuse { get; private set; }
     public string? Hurt { get; private set; }
@@ -91,6 +101,7 @@ public sealed class MiniPhysics
     public void Step(ControlIntent c, SimTool tool = SimTool.None)
     {
         Ticks++;
+        if (WaterWalkTicks != int.MaxValue && WaterWalkTicks > 0 && --WaterWalkTicks == 0) WaterWalk = LavaWalk = false;
         bool grounded = VY == 0f;
         _wet = Overlaps(X, Y, k => k is TileKind.Water or TileKind.Honey);
         float g = _wet ? WetGravity : Gravity, maxFall = _wet ? WetMaxFall : MaxFall;
@@ -155,6 +166,8 @@ public sealed class MiniPhysics
         }
 
         bool wetNow = Overlaps(X, Y, k => k is TileKind.Water or TileKind.Honey);
+        if (wetNow) WetTicks++;
+        if (c.Down) DownTicks++;
         if (_wet && !wetNow && _jump > jh / 5) _jump = jh / 5;
 
         if (Overlaps(X, Y, k => k is TileKind.Lava or TileKind.Hazard)) Hurt ??= $"touched lava/hazard at tick {Ticks}";
@@ -387,7 +400,7 @@ public sealed class MiniPhysics
                 var k = _g.Get(tx, ty).Kind;
                 if (vy > 0)
                 {
-                    bool blocks = k == TileKind.Solid || (k == TileKind.Platform && !fallThrough);
+                    bool blocks = k == TileKind.Solid || (k == TileKind.Platform && !fallThrough) || (!fallThrough && WalkSurface(tx, ty));
                     float top = k == TileKind.Solid ? TopOver(tx, ty, ShapeOf(tx, ty), X, X + W) : ty * 16;
                     // (Never negative: resting a hair inside a slope's surface must still read as velocity.Y == 0.)
                     if (blocks && Y + H <= top + Eps) r = Math.Min(r, Math.Max(0f, top - (Y + H)));
@@ -504,6 +517,9 @@ public sealed class MiniPhysics
         _g.Get(t).Wall
         || _g.Get(t.X - 1, t.Y).IsStandable || _g.Get(t.X + 1, t.Y).IsStandable
         || _g.Get(t.X, t.Y - 1).IsStandable || _g.Get(t.X, t.Y + 1).IsStandable;
+
+    private bool WalkSurface(int x, int y) =>
+        (WaterWalk || LavaWalk) && LiquidWalk.IsSurface(_g, x, y, WaterWalk, LavaWalk);
 
     private bool Solid(int x, int y) => _g.Get(x, y).Kind == TileKind.Solid;
     private TileKind Kind(int x, int y) => _g.Get(x, y).Kind;
