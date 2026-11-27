@@ -1,4 +1,6 @@
 using LlmPlayer.Control;
+using LlmPlayer.Core.Bridge;
+using LlmPlayer.Inventory;
 using LlmPlayer.Core.Build;
 using LlmPlayer.Core.Gather;
 using LlmPlayer.Core.Grid;
@@ -12,6 +14,10 @@ using Terraria.ID;
 
 namespace LlmPlayer.Tasks;
 
+/// <summary>Crafts to do at the work bench build_house placed itself (step <see cref="HousePart.Bench"/>), and the
+/// house's frame/wall counts to re-check the bill of materials with afterwards.</summary>
+public sealed record BenchCrafting(IReadOnlyList<CraftOrder> Orders, int FrameBlocks, int BackWalls);
+
 /// <summary>What build_house reports in the task's <c>result</c>.</summary>
 public sealed record HouseResult(int X, int Y, int Width, int Height, string Door, bool Valid, string? Reason,
     Dictionary<string, int> Placed, int Skipped, Dictionary<string, int> SkippedReasons, bool ExitedThroughDoor, HousingVerdict? Housing);
@@ -21,7 +27,10 @@ public sealed record HouseResult(int X, int Y, int Width, int Height, string Doo
 /// tile and use it. Every tile, wall and piece of furniture goes through vanilla ItemCheck/PlaceThing (reach, anchors,
 /// item consumed); nothing is set directly.
 /// <list type="bullet">
-/// <item>First, natural bumps inside the plot and decoration are mined (<see cref="HouseSite"/>).</item>
+/// <item>First, natural bumps inside the plot, decoration and platforms in the way (or in frame positions, to be
+/// replaced by blocks) are mined (<see cref="HouseSite"/>).</item>
+/// <item>Without a Work Bench in range, a work bench is placed beside the house first (<see cref="HousePart.Bench"/>);
+/// the player then walks next to it and crafts the rest (<see cref="BenchCrafting"/>) with the real recipes.</item>
 /// <item>Order from <see cref="HousePlan.Steps"/>: frame (floor, far wall, ceiling, door-side wall hanging from it),
 /// flatten (half blocks / slopes in the frame hammered to full blocks with the best hammer: the game refuses a door or
 /// furniture on a shaped block), door, background walls, table, chair, torch. The command checked the site and the bill of materials and did any
@@ -67,11 +76,16 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         _skips.Count, _skips.ByReason, _exited, _verdict);
 
     private MineTask? _clear;
+    private BenchCrafting? _benchCrafts;
+    private int _benchMoves;
 
-    /// <param name="clearFirst">Natural decoration (rock piles, dye plants) and small ground bumps in the plot to mine
-    /// before building, top-down.</param>
-    public BuildHouseTask(HouseLayout layout, List<HouseStep> steps, bool canExit, List<TilePoint>? clearFirst = null)
+    /// <param name="clearFirst">Natural decoration (rock piles, dye plants), small ground bumps and platforms in the
+    /// plot to mine before building, top-down.</param>
+    /// <param name="benchCrafts">Crafts to do right after the <see cref="HousePart.Bench"/> step.</param>
+    public BuildHouseTask(HouseLayout layout, List<HouseStep> steps, bool canExit, List<TilePoint>? clearFirst = null,
+        BenchCrafting? benchCrafts = null)
     {
+        _benchCrafts = benchCrafts;
         if (clearFirst is { Count: > 0 }) _clear = new MineTask(clearFirst, "build_house");
         _l = layout;
         _steps = steps;
@@ -120,7 +134,13 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
                 {
                     string key = PartName(step.Part);
                     _placed[key] = _placed.GetValueOrDefault(key) + 1;
-                    _placedTotal++;
+                    if (step.Part != HousePart.Bench) _placedTotal++; // the bench is outside: the first walk in may still dig
+                    _attempting = false;
+                }
+                if (step.Part == HousePart.Bench && _benchCrafts != null)
+                {
+                    var bs = CraftAtBench(ctx, p, step.Target);
+                    if (bs != null) return bs.Value;
                 }
                 NextStep(ctx);
                 continue;
@@ -187,6 +207,8 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
                     if (tool) { _skips.Add(step.Target, "couldn't hammer flat"); NextStep(ctx); continue; }
                     string why = ShapedFloorUnder(step) is { } sh
                         ? $"the floor block at {sh} is a half block or slope: furniture and doors need full blocks"
+                        : step.Part == HousePart.Door && PlatformAnchor() is { } pa
+                        ? $"the tile at {pa} next to the doorway is a platform: doors need solid blocks above and below"
                         : "something in the way, or nothing to attach to";
                     return Finish(ctx, GameTaskStatus.Failed,
                         $"the game refused to place the {PartName(step.Part)} ({item.Name}) at {aim} after {MaxAttempts} attempts " +
@@ -224,7 +246,8 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             if (_steps[i].Part == _steps[_idx].Part) upcoming.Add(_steps[i].Target);
         var reach = new ReachSpec(Player.tileRangeX + range, Player.tileRangeY + range, item.tileBoost);
         var stand = HousePlan.InsideStand(_l, here, upcoming, reach, solid, s => Pathfinder.CanStand(ctx.Grid, s))
-                    ?? (upcoming[0].Y == _l.FloorY ? PlatformPlan.BestStand(ctx.Grid, here, upcoming, reach, solid) : null);
+                    ?? (upcoming[0].Y == _l.FloorY || _steps[_idx].Part == HousePart.Bench
+                        ? PlatformPlan.BestStand(ctx.Grid, here, upcoming, reach, solid) : null);
         // Before anything is placed the walk may dig and build to get to the plot; afterwards it must not touch the house.
         bool free = _placedTotal == 0;
         _move = stand is { } s
@@ -237,6 +260,58 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
     {
         ControlState.Pending = default(ControlIntent) with { UseItem = use, CursorTile = t };
         return GameTaskStatus.Running;
+    }
+
+    /// <summary>
+    /// Right after the work bench is placed: walk next to it if it isn't in crafting range (vanilla AdjTiles), craft
+    /// the bench crafts, re-check the bill. Null when done (go on with the next step), else the status to return.
+    /// </summary>
+    private GameTaskStatus? CraftAtBench(GameCtx ctx, Player p, TilePoint bench)
+    {
+        if (_move != null)
+        {
+            var st = _move.Tick(ctx);
+            if (st == GameTaskStatus.Running)
+            {
+                Progress = $"walking to the work bench at {bench} to craft ({_move.Progress})";
+                return GameTaskStatus.Running;
+            }
+            _move = null;
+            ControlState.Pending = default;
+        }
+        _lease.Restore(p);
+        p.AdjTiles();
+        if (!p.adjTile[TileID.WorkBenches])
+        {
+            if (_benchMoves++ >= MaxMoves)
+                return Finish(ctx, GameTaskStatus.Failed, $"placed a work bench at {bench} but couldn't get within crafting range of it");
+            _move = new MoveToTask(bench, allowDig: false, allowBuild: false, tolerance: 1, name: Name);
+            ControlState.Pending = default;
+            return GameTaskStatus.Running;
+        }
+        var orders = _benchCrafts!.Orders;
+        var crafted = new List<string>();
+        try
+        {
+            foreach (var order in orders)
+            {
+                var r = Crafting.Craft(p, order.Item, order.Times);
+                crafted.Add($"{r.Item} x{r.Crafted}");
+                if (r.Reason != null)
+                    return Finish(ctx, GameTaskStatus.Failed, $"crafting {order.Item} x{order.Times} at the new work bench stopped: {r.Reason} " +
+                        $"(crafted: {string.Join(", ", crafted)})");
+            }
+        }
+        catch (CommandError e)
+        {
+            return Finish(ctx, GameTaskStatus.Failed, $"crafting at the new work bench failed: {e.Message} (crafted: {(crafted.Count == 0 ? "nothing" : string.Join(", ", crafted))})");
+        }
+        var after = HouseMaterials.Plan(_benchCrafts.FrameBlocks, _benchCrafts.BackWalls, HouseItems.Stock(p));
+        if (!after.Ok || after.Crafts.Count > 0 || after.BenchCrafts.Count > 0)
+            return Finish(ctx, GameTaskStatus.Failed, $"still short after crafting at the new work bench ({string.Join(", ", crafted)}): " +
+                (after.Ok ? string.Join(", ", after.Crafts.Concat(after.BenchCrafts).Select(c => $"{c.Item} x{c.Times}")) : after.MissingText()));
+        _benchCrafts = null;
+        return null;
     }
 
     // ---- leaving and checking ----------------------------------------------------------------------------------
@@ -308,7 +383,9 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         var tile = Main.tile[s.Target.X, s.Target.Y];
         return s.Part switch
         {
-            HousePart.Frame => tile.HasTile && !tile.IsActuated && Main.tileSolid[tile.TileType],
+            // A platform is "solid" too but isn't frame: it's mined and replaced (doors don't anchor to it).
+            HousePart.Frame => tile.HasTile && !tile.IsActuated && Main.tileSolid[tile.TileType] && !Main.tileSolidTop[tile.TileType],
+            HousePart.Bench => IsBenchAt(s.Target) || IsBenchAt(new TilePoint(s.Target.X + 1, s.Target.Y)),
             HousePart.BackWall => tile.WallType != WallID.None && Main.wallHouse[tile.WallType],
             HousePart.Table => tile.HasTile && IsIn(TileID.Sets.RoomNeeds.CountsAsTable, tile.TileType),
             HousePart.Chair => tile.HasTile && IsIn(TileID.Sets.RoomNeeds.CountsAsChair, tile.TileType),
@@ -317,6 +394,8 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
             _ => false,
         };
     }
+
+    private static bool IsBenchAt(TilePoint t) => Main.tile[t.X, t.Y] is { HasTile: true } tile && tile.TileType == TileID.WorkBenches;
 
     /// <summary>Something else took the spot since the site check (cuttable plants don't count: placing replaces them).</summary>
     private string? BlockedBy(HouseStep s)
@@ -332,6 +411,17 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
     }
 
     private static bool IsIn(int[] set, int type) => Array.IndexOf(set, type) >= 0;
+
+    /// <summary>A door anchor (above / below the doorway) that is a platform rather than a solid block, or null.</summary>
+    private TilePoint? PlatformAnchor()
+    {
+        foreach (var a in HousePlan.DoorAnchors(_l))
+        {
+            var t = Main.tile[a.X, a.Y];
+            if (t.HasTile && Main.tileSolidTop[t.TileType]) return a;
+        }
+        return null;
+    }
 
     /// <summary>A half block / slope in the floor under a table, chair or door (why the game refused it), or null.</summary>
     private TilePoint? ShapedFloorUnder(HouseStep s)
@@ -358,6 +448,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         HousePart.Table => "table",
         HousePart.Chair => "chair",
         HousePart.Flatten => "flattened block",
+        HousePart.Bench => "work bench",
         _ => "torch",
     };
 
@@ -369,6 +460,7 @@ public sealed class BuildHouseTask : IGameTask<GameCtx>
         HousePart.Table => "tables/work benches",
         HousePart.Chair => "chairs",
         HousePart.Flatten => "a hammer",
+        HousePart.Bench => "work benches",
         _ => "torches",
     };
 
