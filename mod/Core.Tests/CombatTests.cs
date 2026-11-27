@@ -110,6 +110,17 @@ public class WeaponScoringTests
     }
 
     [Fact]
+    public void Best_AccountsForTargetDefense()
+    {
+        // Iron Bow + Wooden Arrow (13 per shot, 27 ticks) vs Wand of Sparking (8, autoReuse ~ fast): against the Eye of
+        // Cthulhu's 12 defense the bow must win.
+        var bow = new WeaponCandidate(0, 13, 27, 27, 0, 4, AutoReuse: true, Channel: false, WeaponStyle.Ranged, 7f, 15f, true);
+        var wand = new WeaponCandidate(1, 8, 12, 12, 0, 4, AutoReuse: true, Channel: false, WeaponStyle.Ranged, 8f, 15f, true);
+        Assert.Equal(1, WeaponScoring.Best(new[] { bow, wand })?.Slot);          // no defense: the fast wand
+        Assert.Equal(0, WeaponScoring.Best(new[] { bow, wand }, 12)?.Slot);      // 12 defense: the bow
+    }
+
+    [Fact]
     public void Best_TieGoesToLowerSlot()
     {
         Assert.Equal(1, WeaponScoring.Best(new[] { Sword(4, 10, 20), Sword(1, 10, 20) })?.Slot);

@@ -148,7 +148,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
 
         if (_weapon == null || --_weaponAge <= 0 || !CombatKit.StillUsable(p, _weapon))
         {
-            _weapon = CombatKit.BestWeapon(p);
+            _weapon = CombatKit.BestWeapon(p, npc.defense);
             _weaponAge = WeaponRecheckTicks;
         }
         if (_weapon is not { } w) return Finish(ctx, GameTaskStatus.Failed, "no usable weapon (out of ammo or mana?)");
@@ -273,7 +273,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
         if (_weapon == null || --_weaponAge <= 0 || unusable)
         {
             string? old = _weapon?.Item.Name;
-            _weapon = CombatKit.BestWeapon(p);
+            _weapon = CombatKit.BestWeapon(p, npc.defense);
             _weaponAge = WeaponRecheckTicks;
             if (unusable && old != null)
                 RecentEvents.Add($"attack: {old} is out of ammo/mana" + (_weapon != null ? $", switched to {_weapon.Item.Name}" : ""));

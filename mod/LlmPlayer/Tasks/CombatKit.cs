@@ -96,13 +96,14 @@ public static class CombatKit
     // ---- weapons --------------------------------------------------------------------------------------------------
 
     /// <summary>Highest expected-DPS weapon usable right now (ammo / mana available), or null.</summary>
-    public static Weapon? BestWeapon(Player p)
+    /// <param name="targetDefense">The target's defense, so a low-damage fast weapon doesn't win against armor.</param>
+    public static Weapon? BestWeapon(Player p, int targetDefense = 0)
     {
         if (p.noItems || p.cursed) return null;
         var candidates = new List<WeaponCandidate>();
         for (int i = 0; i < 58; i++)
             if (Candidate(p, i) is { } c) candidates.Add(c);
-        return WeaponScoring.Best(candidates) is { } best ? new Weapon(best.Slot, p.inventory[best.Slot], best) : null;
+        return WeaponScoring.Best(candidates, targetDefense) is { } best ? new Weapon(best.Slot, p.inventory[best.Slot], best) : null;
     }
 
     /// <summary>

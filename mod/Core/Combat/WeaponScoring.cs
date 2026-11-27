@@ -21,13 +21,19 @@ public static class WeaponScoring
     /// animation fire several times per animation (Clockwork Assault Rifle). Weapons without autoReuse (and not
     /// channelled) need one released tick between uses.
     /// </summary>
-    public static double Dps(in WeaponCandidate w)
+    public static double Dps(in WeaponCandidate w) => Dps(w, 0);
+
+    /// <summary><see cref="Dps(in WeaponCandidate)"/> against a target with this defense: each hit loses
+    /// defense/2 (Classic mode), at least 1 damage remains. Seen in game: against the Eye of Cthulhu (12 defense) the
+    /// AI switched from a bow (~7 per hit after defense) to a Wand of Sparking (8 → ~2 per hit).</summary>
+    public static double Dps(in WeaponCandidate w, int targetDefense)
     {
         if (w.Damage <= 0) return 0;
+        int perHit = Math.Max(1, w.Damage - targetDefense / 2);
         int anim = Math.Max(1, w.Style == WeaponStyle.Melee ? w.UseAnimation : Math.Max(w.UseAnimation, w.UseTime));
         int uses = w.Style == WeaponStyle.Melee ? 1 : Math.Max(1, (int)Math.Ceiling(anim / (double)Math.Max(1, w.UseTime)));
         int cycle = anim + Math.Max(0, w.ReuseDelay) + (w.AutoReuse || w.Channel ? 0 : 1);
-        return w.Damage * (1 + Math.Clamp(w.CritChance, 0, 100) / 100.0) * uses * 60.0 / cycle;
+        return perHit * (1 + Math.Clamp(w.CritChance, 0, 100) / 100.0) * uses * 60.0 / cycle;
     }
 
     /// <summary>
@@ -39,17 +45,17 @@ public static class WeaponScoring
         w.Style == WeaponStyle.Ranged ? 1.0 : w.ReachTiles < 3f ? 0.6 : w.ReachTiles < 4f ? 0.8 : 1.0;
 
     /// <summary>The value weapons are chosen by: <see cref="Dps"/> × <see cref="SafetyFactor"/>.</summary>
-    public static double Score(in WeaponCandidate w) => Dps(w) * SafetyFactor(w);
+    public static double Score(in WeaponCandidate w, int targetDefense = 0) => Dps(w, targetDefense) * SafetyFactor(w);
 
     /// <summary>Best usable weapon by <see cref="Score"/>; ties go to the lower slot. Null if none.</summary>
-    public static WeaponCandidate? Best(IEnumerable<WeaponCandidate> weapons)
+    public static WeaponCandidate? Best(IEnumerable<WeaponCandidate> weapons, int targetDefense = 0)
     {
         WeaponCandidate? best = null;
         double bestDps = 0;
         foreach (var w in weapons)
         {
             if (!w.Usable) continue;
-            double dps = Score(w);
+            double dps = Score(w, targetDefense);
             if (dps <= 0) continue;
             if (best is { } b && (dps < bestDps || (dps == bestDps && b.Slot < w.Slot))) continue;
             best = w;
