@@ -543,10 +543,26 @@ public static class BlastSafety
             }
 
         refusal ??= unseenRefusal;
-        if (refusal == null && orbs.Count > 0 && orbsBroken + orbs.Count >= 3 && !allowBossSummon)
-            refusal = $"{orbsBroken} orbs were already broken: breaking {orbs.Count} more summons the Eater of Worlds / Brain of Cthulhu " +
+        int orbCount = DistinctOrbs(orbs);
+        if (refusal == null && orbCount > 0 && orbsBroken + orbCount >= 3 && !allowBossSummon)
+            refusal = $"{orbsBroken} orbs were already broken: breaking {orbCount} more summons the Eater of Worlds / Brain of Cthulhu " +
                       "(pass allow_boss_summon to do it on purpose)";
-        return new BlastReport(refusal, destroys, byName, unseen, orbs.Count, walls);
+        return new BlastReport(refusal, destroys, byName, unseen, orbCount, walls);
+    }
+
+    /// <summary>
+    /// How many orbs the given origins stand for. An orb is a 2x2 object, so origins of real, distinct orbs are at least 2
+    /// tiles apart on some axis; points closer than that (an orb tile reported without its object origin, or a frame-
+    /// based origin off by one sub-tile) belong to an orb already counted. Seen in game: one Shadow Orb in the zone with
+    /// one already broken was refused as "breaking 2 more summons the Eater of Worlds".
+    /// </summary>
+    public static int DistinctOrbs(IEnumerable<TilePoint> origins)
+    {
+        var reps = new List<TilePoint>();
+        foreach (var p in origins.OrderBy(p => p.Y).ThenBy(p => p.X))
+            if (!reps.Any(r => Math.Abs(r.X - p.X) <= 1 && Math.Abs(r.Y - p.Y) <= 1))
+                reps.Add(p);
+        return reps.Count;
     }
 
     private static float Dist(float ax, float ay, float bx, float by) => MathF.Sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by));
