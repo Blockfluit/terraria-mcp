@@ -339,7 +339,7 @@ public static class BlastPlanner
             for (int x = target.X - SearchRadius; x <= target.X + SearchRadius; x++)
             {
                 var s = new TilePoint(x, y);
-                if (!Pathfinder.CanStand(grid, s) || !BodyKnownAndDry(grid, s)) continue;
+                if (!Pathfinder.CanStand(grid, s) || !BodyKnownAndDry(grid, s) || !FloorUnder(grid, s)) continue;
                 if (!HitboxSafe(Hitbox(s), tx, ty, spec, margin)) continue;
                 candidates.Add(s);
             }
@@ -381,6 +381,12 @@ public static class BlastPlanner
         }
         return best;
     }
+
+    /// <summary>A real floor (block or platform) under the body: standing "on" liquid sinks the player to the bottom
+    /// (seen in game: the planned stand was on a flooded crater's surface, the player sank a row, and the re-aim from
+    /// there found no throw, three replans in a row).</summary>
+    private static bool FloorUnder(ITileGrid g, TilePoint s) =>
+        g.Get(s.X, s.Y + 1).Kind is TileKind.Solid or TileKind.Platform || g.Get(s.X + 1, s.Y + 1).Kind is TileKind.Solid or TileKind.Platform;
 
     private static bool BodyKnownAndDry(ITileGrid g, TilePoint s)
     {

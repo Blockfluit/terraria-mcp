@@ -453,3 +453,21 @@ public class BlastSafetyTests
         Assert.NotNull(r.Refusal);
     }
 }
+public class BlastStandTests
+{
+    /// <summary>Seen in game: the planned stand was on a flooded crater's water surface; the player sank a row and
+    /// every re-aim failed. A stand needs a block or platform under it.</summary>
+    [Fact]
+    public void StandIsNeverOnWater()
+    {
+        var rows = new string[24];
+        for (int y = 0; y < 24; y++)
+            rows[y] = y < 16 ? new string('.', 40) : y == 16 ? new string('~', 14) + new string('#', 26) : new string('#', 40);
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var plan = BlastPlanner.Plan(g, new TilePoint(20, 15), new TilePoint(26, 16), Explosives.Spec(ExplosiveKind.StickyBomb), out var why);
+        Assert.True(plan != null, why);
+        var k = g.Get(plan!.Stand.X, plan.Stand.Y + 1).Kind;
+        var k2 = g.Get(plan.Stand.X + 1, plan.Stand.Y + 1).Kind;
+        Assert.True(k == TileKind.Solid || k2 == TileKind.Solid, $"stand {plan.Stand} has no floor");
+    }
+}
