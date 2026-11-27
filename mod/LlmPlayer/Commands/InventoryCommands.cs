@@ -123,7 +123,7 @@ public static class InventoryCommands
                 throw new CommandError(ErrorCodes.BadParams, $"{item.Name} works on tiles: give x and y to aim it (or use mine/place)");
             }
             if (LlmPlayer.Tasks.CombatKit.IsExplosive(item.shoot))
-                throw new CommandError(ErrorCodes.BadParams, $"{item.Name} is an explosive: explosives are disabled because they destroy tiles, furniture and walls in a radius");
+                throw new CommandError(ErrorCodes.BadParams, $"{item.Name} is an explosive: use_item never throws explosives (they destroy tiles, furniture and walls in a radius): use blast, which checks the radius and keeps you clear");
             if (item.potion && pl.potionDelay > 0)
                 throw new CommandError(ErrorCodes.BadParams, $"potion sickness: can't drink {item.Name} for another {(pl.potionDelay + 59) / 60}s");
             var task = new UseItemTask(pl, slot, aim);

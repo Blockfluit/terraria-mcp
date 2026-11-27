@@ -271,7 +271,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "use_item",
     description:
-      "Use an item once (potion, tool, summon), aiming at tile x,y if given. Identify it by item name or inventory slot." +
+      "Use an item once (potion, tool, summon), aiming at tile x,y if given. Identify it by item name or inventory slot. Explosives are refused: use blast." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -513,6 +513,25 @@ const TOOLS: ToolDef[] = [
       x: tileX(),
       y: tileY(),
       allow_orb: z.boolean().optional().describe("Break a Shadow Orb / Crimson Heart with your best hammer (first one drops a Musket + 100 Musket Balls; meteorite/goblin effects follow)"),
+      allow_boss_summon: z.boolean().optional().describe("Also allow breaking the 3rd orb, which summons the Eater of Worlds / Brain of Cthulhu"),
+    },
+  },
+  {
+    name: "blast",
+    description:
+      "Blow up the block at x,y with a thrown explosive from your inventory — the only way the AI uses explosives (use_item, attack and auto-defend never do). Use it for rock your pickaxe can't break: the Ebonstone / Crimstone around a Shadow Orb / Crimson Heart (pick power 65), or other hard rock. " +
+      "Default explosive: the smallest blast that works, sticky first (Sticky Bomb, Bomb, Sticky Dynamite, Dynamite; Bomb/Sticky Bomb: radius 4 tiles, 3 s fuse; Dynamite: radius 7, 5 s; bouncy variants aren't supported). " +
+      "Before throwing it checks the real tiles within the blast radius + 2 tiles of both the target and the predicted landing spot and refuses (protected_tile) if anything there is furniture, a chest, door, bed or crafting station, inside an NPC house or the spawn area, a Life Crystal / pot / other loot (collect it first), or a Shadow Orb / Crimson Heart without allow_orb (and the 3rd orb without allow_boss_summon, like collect). Altars and other explosion-proof blocks are fine. " +
+      "Explosives hurt you: it walks to a spot outside the damage area + a margin with a predicted throw (real throw speed and gravity, only through tiles you can see) that explodes at the target, throws with real controls, stays clear (backs off if it rolls close) until it explodes, retries once if the target survived, then picks up the drops. Auto-defend can't interrupt from the throw to the explosion. " +
+      "A buried target (e.g. an orb deep in rock) is refused with the closest reachable spot: blast the exposed rock nearest to you first (a block next to open space you can see) and work inward, a layer per blast. Also refused when no safe spot to stand exists (a cramped cave: Dynamite needs ~10 tiles of room). " +
+      "Reply: {item, stand, predictedExplosion, radius, fuseSeconds, expectedDestroyed: {count, byName, tiles, unseen, wallsInRadius, orbs}} — blocks and background walls in the radius are lost. When the task succeeds, report.result is {item, x, y, target, targetDestroyed, blasts, destroyed, destroyedByName, pickedUp: [{name, count}]}." +
+      COORDS +
+      STARTS_TASK,
+    shape: {
+      x: tileX(),
+      y: tileY(),
+      item: z.string().min(1).optional().describe("Explosive to throw (e.g. 'Sticky Bomb', 'Bomb', 'Dynamite'); default: the smallest that can be thrown safely"),
+      allow_orb: z.boolean().optional().describe("Allow a Shadow Orb / Crimson Heart in the blast (breaking it on purpose: the first drops a Musket)"),
       allow_boss_summon: z.boolean().optional().describe("Also allow breaking the 3rd orb, which summons the Eater of Worlds / Brain of Cthulhu"),
     },
   },

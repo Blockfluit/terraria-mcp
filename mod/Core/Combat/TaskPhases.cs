@@ -23,7 +23,7 @@ public interface IUninterruptibleTask
 /// use up a swing timeout, pickup deadline or stuck counter. A swing in progress finishes before the defender
 /// switches to its weapon (HeldItemLease waits for the use to end).</item>
 /// <item>Busy: <c>attack</c> (it fights already) and any task reporting <see cref="IUninterruptibleTask.Uninterruptible"/>
-/// (use_item once it pressed "use"). Everything else, including unknown/new tasks (explore_caves, collect,
+/// (use_item once it pressed "use"; blast from the throw until the explosion, so nobody walks it back into the blast). Everything else, including unknown/new tasks (explore_caves, collect,
 /// loot_chest, …), is Defendable.</item>
 /// </list>
 /// </summary>
