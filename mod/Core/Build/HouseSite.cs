@@ -30,7 +30,10 @@ public enum WallState { None, House, Other }
 /// <param name="Natural">A natural ground block (dirt, grass, stone, mud, clay, snow) outside protected areas: a
 /// player would mine it out of the way. Only meaningful for <see cref="SiteTile.Solid"/>.</param>
 /// <param name="Shaped">A half block or slope (hammered or natural). Furniture and doors can't stand on one.</param>
-public readonly record struct SiteCell(SiteTile Tile, WallState Wall = WallState.None, bool Natural = false, bool Shaped = false)
+/// <param name="Door">A door (open or closed), whatever <paramref name="Tile"/> says (an NPC house's door reads as
+/// <see cref="SiteTile.NpcHouse"/>): a new house must not wall off the space in front of it.</param>
+public readonly record struct SiteCell(SiteTile Tile, WallState Wall = WallState.None, bool Natural = false, bool Shaped = false,
+    bool Door = false)
 {
     public bool IsBlock => Tile is SiteTile.Solid or SiteTile.Platform;
 }
@@ -68,10 +71,16 @@ public sealed record SiteCheck(string? Problem, HashSet<TilePoint> FrameToPlace,
 /// ground and every floor gap must have ground within <see cref="MaxDipDepth"/> tiles below (a dip, not a cliff); the
 /// rest of the frame must be empty except natural bumps in the bottom rows; the player must be able to stand just
 /// outside the door.</item>
+/// <item>Both modes: the house must not stand in front of an existing door (a neighbour's): its frame may not come
+/// within <see cref="DoorApproach"/> columns of a door beside it, or that door opens onto a gap the 2-wide player
+/// can't stand in (seen in game: two houses one tile apart, doors facing each other, the second unreachable).</item>
 /// </list>
 /// </summary>
 public static class HouseSite
 {
+    /// <summary>Free columns a door needs in front of it: the player's body width.</summary>
+    public const int DoorApproach = 2;
+
     /// <summary>Natural blocks this high above the floor (rows FloorY-1, FloorY-2) are mined out of the way.</summary>
     public const int MaxBumpHeight = 2;
     /// <summary>Strict mode: a floor gap needs ground within this many tiles below it.</summary>
@@ -143,6 +152,10 @@ public static class HouseSite
             if (c.Wall == WallState.None) walls.Add(t);
         }
 
+        if (BlockedDoor(l, rawCell) is { } blocked)
+            problem ??= $"the house would wall off the door at {blocked} (another house's): leave at least {DoorApproach} free columns in front of it " +
+                        $"(x {(blocked.X < l.Left ? $">= {blocked.X + DoorApproach + 1}" : $"<= {blocked.X - DoorApproach - l.Width}")})";
+
         bool canExit = ExitClear(l, (x, y) => cell(x, y));
         if (strict && !canExit) problem ??= $"no room to stand outside the door at {l.OutsideStand}";
         int work = floorFill + 2 * bumps.Count + clear.Count + flatten.Count;
@@ -167,6 +180,33 @@ public static class HouseSite
                 if (cell(s.X + dx, s.Y - dy).Tile != SiteTile.Air) return false;
         }
         return cell(s.X, s.Y + 1).IsBlock || cell(s.X + 1, s.Y + 1).IsBlock;
+    }
+
+    /// <summary>An existing door within <see cref="DoorApproach"/> columns beside the house whose rows the house
+    /// covers (so the house would fill the space in front of it), or null.</summary>
+    public static TilePoint? BlockedDoor(HouseLayout l, Func<int, int, SiteCell> cell)
+    {
+        for (int d = 1; d <= DoorApproach; d++)
+            foreach (int x in new[] { l.Left - d, l.Right + d })
+                for (int y = l.CeilingY; y <= l.FloorY; y++)
+                    if (cell(x, y).Door) return new TilePoint(x, y);
+        return null;
+    }
+
+    /// <summary>
+    /// Door side for a house at a given spot when the caller didn't choose one: a side with room to stand outside
+    /// (<see cref="ExitClear"/>: a 2-wide, 3-high clear body on ground) first; between two such sides (or two without),
+    /// the one facing the player (<paramref name="player"/> = feet tile), so the door opens toward the way the player
+    /// came. Decoration outside counts as open (it is broken when in the way).
+    /// </summary>
+    public static DoorSide DefaultDoor(int x, int floorY, int width, int height, TilePoint player, Func<int, int, SiteCell> cell)
+    {
+        var facing = player.X + 1 < x + width / 2f ? DoorSide.Left : DoorSide.Right;
+        var other = facing == DoorSide.Left ? DoorSide.Right : DoorSide.Left;
+        SiteCell open(int cx, int cy) => cell(cx, cy) is { Tile: SiteTile.Decor } c ? c with { Tile = SiteTile.Air } : cell(cx, cy);
+        if (ExitClear(new HouseLayout(x, floorY, width, height, facing), open)) return facing;
+        if (ExitClear(new HouseLayout(x, floorY, width, height, other), open)) return other;
+        return facing;
     }
 
     /// <summary>

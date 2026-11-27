@@ -9,7 +9,8 @@ public enum EntityKind { Hostile, Town, Critter, Item, Projectile }
 
 /// <summary>One visible NPC, dropped item or hostile projectile. (X,Y) is the tile the entity stands on, like the
 /// player's. Optional fields are omitted when null: Boss only when true, velocity (tiles/s) only when moving,
-/// Damage/Defense only for hostile NPCs and projectiles when above 0.</summary>
+/// Damage/Defense only for hostile NPCs and projectiles when above 0. Profession: a town NPC's type ("Arms Dealer") when its
+/// name is a personal one ("Demetrius").</summary>
 public sealed record EntityInfo(int Id, string Name, EntityKind Kind, int X, int Y,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Life,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? LifeMax,
@@ -18,7 +19,8 @@ public sealed record EntityInfo(int Id, string Name, EntityKind Kind, int X, int
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Vx = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Vy = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Damage = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Defense = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Defense = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Profession = null)
 {
     [JsonIgnore] public EntityTier Tier =>
         Boss == true ? EntityTier.Boss
@@ -116,7 +118,15 @@ public static class EntityReader
         return new EntityInfo(npc.whoAmI, npc.GivenOrTypeName, kind, x, y, npc.life, npc.lifeMax, Dist(x - px, y - py),
             Boss: IsBoss(npc) ? true : null, Vx: vx, Vy: vy,
             Damage: hostile && npc.damage > 0 ? npc.damage : null,
-            Defense: hostile && npc.defense > 0 ? npc.defense : null);
+            Defense: hostile && npc.defense > 0 ? npc.defense : null,
+            Profession: kind == EntityKind.Town ? ProfessionOf(npc) : null);
+    }
+
+    /// <summary>The NPC's type name ("Arms Dealer") when it differs from its shown name (a personal name), else null.</summary>
+    public static string? ProfessionOf(NPC npc)
+    {
+        string type = npc.TypeName;
+        return string.IsNullOrEmpty(type) || type == npc.GivenOrTypeName ? null : type;
     }
 
     private static EntityInfo Describe(Item item, int index, int px, int py)

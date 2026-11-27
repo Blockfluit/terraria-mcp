@@ -222,7 +222,7 @@ public sealed class PlanJob
         foreach (var c in candidates)
         {
             if (_cancelled) break;
-            var r = Pathfinder.FindPath(g, Start, c, _profile, _options);
+            var r = Pathfinder.FindPath(g, Start, c, _profile, _options with { GoalSet = null }); // an intermediate target: it ends the search
             if (r.Success) return (r, c, true);
             last = r;
         }
@@ -240,7 +240,7 @@ public sealed class PlanJob
         var t = h.Target;
         if (!Inside(t, EdgeKeepOut) || !Pathfinder.CanStand(g, t)) return null;
         if (bestDistance < Distance(t, RequestedGoal) - h.SwitchMargin) return null;
-        var r = Pathfinder.FindPath(g, Start, t, _profile, _options);
+        var r = Pathfinder.FindPath(g, Start, t, _profile, _options with { GoalSet = null });
         return r.Success ? (r, t, true) : null;
     }
 

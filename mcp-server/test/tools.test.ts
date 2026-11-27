@@ -374,6 +374,21 @@ describe("registerTools", () => {
     expect(conn.calls).toHaveLength(1);
   });
 
+  it("talk_to_npc and buy take exactly one of entity_id or name", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "talk_to_npc" }));
+    const client = await setup(conn);
+    expect((await call(client, "talk_to_npc", { name: "Arms Dealer" })).isError).toBeFalsy();
+    expect((await call(client, "buy", { name: "Demetrius", item: "Musket Ball", count: 10 })).isError).toBeFalsy();
+    expect(conn.calls).toEqual([
+      { method: "talk_to_npc", params: { name: "Arms Dealer" } },
+      { method: "buy", params: { name: "Demetrius", item: "Musket Ball", count: 10 } },
+    ]);
+    expect((await call(client, "talk_to_npc", {})).isError).toBe(true);
+    expect((await call(client, "talk_to_npc", { entity_id: 3, name: "Guide" })).isError).toBe(true);
+    expect((await call(client, "buy", { item: "Torch" })).isError).toBe(true);
+    expect(conn.calls).toHaveLength(2);
+  });
+
   describe("chests and beds", () => {
     it("open_chest forwards x,y or nothing, and rejects a lone coordinate", async () => {
       const conn = new FakeConn(() => ({ started: true, task: "open_chest" }));

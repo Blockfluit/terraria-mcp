@@ -108,4 +108,22 @@ public class PlanJobTests
         Assert.True(r.Success, r.FailureReason);
         Assert.True(job.IsPartial);
     }
+
+    [Fact]
+    public void GoalSet_BeyondTheWindow_StillPlansPartway_ThenEndsAtAMember()
+    {
+        // A goal set around a goal 400 tiles off: the first plan is partial (intermediate targets drop the set), and a
+        // plan from near the goal ends at the nearest member.
+        var (g, m) = Wide(420);
+        var set = new HashSet<TilePoint> { new(m['G'].X - 5, 14), new(m['G'].X - 4, 14) };
+        var opts = new PathOptions(AllowDig: false, AllowBuild: false, GoalSet: set);
+        var far = RunToEnd(new PlanJob(m['S'], m['G'], new MovementProfile(), opts), g, out _);
+        Assert.True(far.Success, far.FailureReason);
+        var job = new PlanJob(new TilePoint(m['G'].X - 40, 14), m['G'], new MovementProfile(), opts);
+        var near = RunToEnd(job, g, out _);
+        Assert.True(near.Success, near.FailureReason);
+        Assert.False(job.IsPartial);
+        Assert.Equal(new TilePoint(m['G'].X - 5, 14), near.Steps[^1].Pos);
+        Assert.Equal(near.Steps[^1].Pos, near.ResolvedGoal);
+    }
 }

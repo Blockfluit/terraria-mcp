@@ -215,9 +215,15 @@ public static class Pathfinder
 
         public PathResult Run()
         {
+            if (_o.GoalSet is { Count: > 0 } set)
+            {
+                _goalSet = set;
+                _gx0 = set.Min(t => t.X); _gx1 = set.Max(t => t.X);
+                _gy0 = set.Min(t => t.Y); _gy1 = set.Max(t => t.Y);
+            }
             if (!ResolveGoal(out _goal))
             {
-                if (!_o.BestEffort)
+                if (!_o.BestEffort && _goalSet == null)
                     return new PathResult(false, Array.Empty<PathStep>(),
                         $"goal_not_standable: no standable position within {GoalSearchRadius} tiles of {_requestedGoal}", 0);
                 _goal = _requestedGoal; // heuristic target only
@@ -247,8 +253,17 @@ public static class Pathfinder
                     closest = ni;
                 }
 
-                if (n.X == _goal.X && n.Y == _goal.Y) return Success(ni, expanded);
-                if (fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance && CanEnd(n))
+                if (_goalSet != null)
+                {
+                    // Only members end the search: the goal merely steers it.
+                    if (_goalSet.Contains(new TilePoint(n.X, n.Y)) && CanEnd(n))
+                    {
+                        var end = new TilePoint(n.X, n.Y);
+                        return Success(ni, expanded) with { ResolvedGoal = end };
+                    }
+                }
+                else if (n.X == _goal.X && n.Y == _goal.Y) return Success(ni, expanded);
+                if (_goalSet == null && fallback < 0 && Chebyshev(n.X, n.Y) <= _o.GoalTolerance && CanEnd(n))
                 {
                     // Prefer the exact goal, but don't spend much more effort looking for it.
                     fallback = ni;
@@ -362,7 +377,15 @@ public static class Pathfinder
         private static bool Covers(TilePoint body, int column) => column == body.X || column == body.X + 1;
 
         private int Chebyshev(int x, int y) => Math.Max(Math.Abs(x - _goal.X), Math.Abs(y - _goal.Y));
-        private float H(int x, int y) => Math.Abs(x - _goal.X) + Math.Abs(y - _goal.Y);
+        /// <summary>Manhattan distance to the goal, or with a <see cref="PathOptions.GoalSet"/> to the set's bounding box
+        /// (the set surrounds the goal: aiming at its centre would overestimate and steer past nearer members).</summary>
+        private float H(int x, int y) =>
+            _goalSet == null
+                ? Math.Abs(x - _goal.X) + Math.Abs(y - _goal.Y)
+                : Math.Max(0, Math.Max(_gx0 - x, x - _gx1)) + Math.Max(0, Math.Max(_gy0 - y, y - _gy1));
+
+        private IReadOnlySet<TilePoint>? _goalSet;
+        private int _gx0, _gx1, _gy0, _gy1;
 
         /// <summary>
         /// States are keyed by position only. Builds used are carried in the node (and capped when
