@@ -161,7 +161,8 @@ const TOOLS: ToolDef[] = [
   {
     name: "move_to",
     description:
-      "Walk to a tile or an entity with smart pathfinding (jumps, drops, platforms; digs and builds if allowed). Give x,y (a standing position; a target inside solid ground snaps to the nearest standable tile) or entity_id from get_entities. Fails with a reason if unreachable." +
+      "Walk to a tile or an entity with smart pathfinding (jumps, drops, platforms; digs and builds if allowed). Give x,y (a standing position; a target inside solid ground snaps to the nearest standable tile) or entity_id from get_entities. Fails with a reason if unreachable. " +
+      "Torches (default on, needs torches in the inventory): in the dark underground or in a tunnel it digs, with no torch within ~10 tiles, it pauses between steps, places a torch within reach and walks on, so the way is revealed (the pathfinder only knows tiles you have seen: unlit tunnels stay unknown). Never in an NPC house or the spawn area. When the task ends, report.result is {torchesPlaced}." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -170,6 +171,7 @@ const TOOLS: ToolDef[] = [
       entity_id: int().optional().describe("Entity id from get_entities, instead of x,y"),
       allow_dig: z.boolean().optional().describe("May mine through blocks on the way, default true"),
       allow_build: z.boolean().optional().describe("May place platforms/blocks to climb, bridge, or build down a drop too deep to fall safely (a platform below the feet, then drop onto it), default true"),
+      torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
     },
     check: (a) =>
       a.entity_id !== undefined || (a.x !== undefined && a.y !== undefined)
@@ -201,7 +203,9 @@ const TOOLS: ToolDef[] = [
       "Mine one tile: walks within reach, picks the best pickaxe and digs it. Fails on protected tiles or if the pickaxe is too weak. To break a pot or life crystal and also pick up what drops, use collect." +
       COORDS +
       STARTS_TASK,
-    shape: { x: tileX(), y: tileY() },
+    shape: { x: tileX(), y: tileY(),
+      torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
+    },
   },
   {
     name: "mine_area",
@@ -209,21 +213,24 @@ const TOOLS: ToolDef[] = [
       "Mine every tile in the rectangle (x1,y1)-(x2,y2), inclusive, at most 200 tiles, top row first. Tiles that can't or " +
       "mustn't be mined are skipped, not fatal: air, trees, hammer-only, protected, locked (holding up an object), not " +
       "visible, too hard for your pickaxe. The reply (and the finished task's report.result) has skipped, " +
-      "skippedReasons {reason: count} and skippedTiles [{x,y,reason}] (first 10, air omitted)." +
+      "skippedReasons {reason: count}, skippedTiles [{x,y,reason}] (first 10, air omitted) and torchesPlaced (walks are lit like move_to's)." +
       COORDS +
       STARTS_TASK,
-    shape: { x1: tileX(), y1: tileY(), x2: tileX(), y2: tileY() },
+    shape: { x1: tileX(), y1: tileY(), x2: tileX(), y2: tileY(),
+      torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
+    },
   },
   {
     name: "mine_vein",
     description:
-      "Mine one connected deposit: give any visible tile of it. Ore: the whole vein (every visible tile of the same ore connected to it, 8-neighbourhood, up to 200) by default. Any other block (Stone, Sand, Clay, Mud…): `max` tiles of it (default 20), nearest to the given tile first — e.g. 20 Stone for a furnace. Only that block type is mined, not what surrounds it. Tiles it can't reach or break are skipped and reported (report.result.skippedReasons). find category=ore / category=block gives a tile." +
+      "Mine one connected deposit: give any visible tile of it. Ore: the whole vein (every visible tile of the same ore connected to it, 8-neighbourhood, up to 200) by default. Any other block (Stone, Sand, Clay, Mud…): `max` tiles of it (default 20), nearest to the given tile first — e.g. 20 Stone for a furnace. Only that block type is mined, not what surrounds it. Tiles it can't reach or break are skipped and reported (report.result.skippedReasons; also torchesPlaced: walks are lit like move_to's). find category=ore / category=block gives a tile." +
       COORDS +
       STARTS_TASK,
     shape: {
       x: tileX(),
       y: tileY(),
       max: int().min(1).max(200).optional().describe("How many tiles at most; default all of an ore vein, 20 of other blocks"),
+      torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
     },
   },
   {
@@ -507,7 +514,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "collect",
     description:
-      "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}]}." +
+      "Break one piece of natural cave loot with your best pickaxe and pick up what drops: a Pot (one hit; coins, potions, torches…), a Life Crystal (+20 max life when used: use_item 'Life Crystal'), Life Fruit, or the sword in stone of an Enchanted Sword shrine. Give any tile of it (find category=valuable). Walks within reach like mine. Refused for chests (use loot_chest), Shadow Orbs / Crimson Hearts (world effects; never broken), altars, and anything inside an NPC house or near spawn. Walks there lighting dark tunnels like move_to (torches). When the task succeeds, report.result is {broke, x, y, pickedUp: [{name, count}], torchesPlaced}." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -515,6 +522,7 @@ const TOOLS: ToolDef[] = [
       y: tileY(),
       allow_orb: z.boolean().optional().describe("Break a Shadow Orb / Crimson Heart with your best hammer (first one drops a Musket + 100 Musket Balls; meteorite/goblin effects follow)"),
       allow_boss_summon: z.boolean().optional().describe("Also allow breaking the 3rd orb, which summons the Eater of Worlds / Brain of Cthulhu"),
+      torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
     },
   },
   {
@@ -522,7 +530,7 @@ const TOOLS: ToolDef[] = [
     description:
       "Blow up the block at x,y with a thrown explosive from your inventory — the only way the AI uses explosives (use_item, attack and auto-defend never do). Use it for rock your pickaxe can't break: the Ebonstone / Crimstone around a Shadow Orb / Crimson Heart (pick power 65), or other hard rock. " +
       "Default explosive: the smallest blast that works, sticky first (Sticky Bomb, Bomb, Sticky Dynamite, Dynamite; Bomb/Sticky Bomb: radius 4 tiles, 3 s fuse; Dynamite: radius 7, 5 s; bouncy variants aren't supported). " +
-      "Before throwing it checks the real tiles within the blast radius + 2 tiles of both the target and the predicted landing spot and refuses (protected_tile) if anything there is furniture, a chest, door, bed or crafting station, inside an NPC house or the spawn area, a Life Crystal / pot / other loot (collect it first), or a Shadow Orb / Crimson Heart without allow_orb (and the 3rd orb without allow_boss_summon, like collect). Altars and other explosion-proof blocks are fine. " +
+      "Before throwing it checks the real tiles within the blast radius + 2 tiles of both the target and the predicted landing spot and refuses (protected_tile) if anything there is furniture, a chest, door, bed or crafting station, inside an NPC house or the spawn area, a Life Crystal / Life Fruit / sword in stone (collect it first), or a Shadow Orb / Crimson Heart without allow_orb (and the 3rd orb without allow_boss_summon, like collect). Altars and other explosion-proof blocks are fine; pots are fine too: the blast breaks them (listed in expectedDestroyed as 'Pot') and their loot is picked up with the other drops. " +
       "Explosives hurt you: it walks to a spot outside the damage area + a margin with a predicted throw (real throw speed and gravity, only through tiles you can see) that explodes at the target, throws with real controls, stays clear (backs off if it rolls close) until it explodes, retries once if the target survived, then picks up the drops. Auto-defend can't interrupt from the throw to the explosion. " +
       "A buried target (e.g. an orb deep in rock) is refused with the closest reachable spot: blast the exposed rock nearest to you first (a block next to open space you can see) and work inward, a layer per blast. Also refused when no safe spot to stand exists (a cramped cave: Dynamite needs ~10 tiles of room). " +
       "Reply: {item, stand, predictedExplosion, radius, fuseSeconds, expectedDestroyed: {count, byName, tiles, unseen, wallsInRadius, orbs}} — blocks and background walls in the radius are lost. When the task succeeds, report.result is {item, x, y, target, targetDestroyed, blasts, destroyed, destroyedByName, pickedUp: [{name, count}]}." +

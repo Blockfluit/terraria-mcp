@@ -383,6 +383,40 @@ public class BlastSafetyTests
     }
 
     [Fact]
+    public void Pot_InTheRadius_IsFine_AndListedAsDestroyed()
+    {
+        // Seen in game: a pot inside rock 4 tiles from an orb refused the blast ("collect it first"), but it couldn't be
+        // reached. The explosion just breaks it and the drops are picked up afterwards.
+        var pot = new Dictionary<TilePoint, BlastTile>();
+        for (int dx = 0; dx < 2; dx++)
+            for (int dy = 0; dy < 2; dy++)
+                pot[new TilePoint(48 + dx, 48 + dy)] = new BlastTile(BlastTileKind.Breakable, "Pot", Origin: new TilePoint(48, 48));
+        var r = Check(pot);
+        Assert.Null(r.Refusal);
+        Assert.Contains(new TilePoint(48, 48), r.Destroys);
+        Assert.Equal(4, r.DestroysByName["Pot"]);
+    }
+
+    [Fact]
+    public void Pot_InTheMarginZone_IsFine_ButNotDestroyed()
+    {
+        var r = Check(new() { [new TilePoint(55, 49)] = new BlastTile(BlastTileKind.Breakable, "Pot") });
+        Assert.Null(r.Refusal);
+        Assert.DoesNotContain(new TilePoint(55, 49), r.Destroys);
+    }
+
+    [Fact]
+    public void Pot_DoesNotHideAReal_Refusal()
+    {
+        var r = Check(new()
+        {
+            [new TilePoint(48, 49)] = new BlastTile(BlastTileKind.Breakable, "Pot"),
+            [new TilePoint(52, 49)] = new BlastTile(BlastTileKind.Collectible, "Life Crystal"),
+        });
+        Assert.Contains("Life Crystal", r.Refusal);
+    }
+
+    [Fact]
     public void SpawnOrHouse_IsRefused() =>
         Assert.Contains("NPC house or the spawn area",
             Check(new() { [new TilePoint(52, 52)] = new BlastTile(BlastTileKind.Block, ProtectedArea: true) }).Refusal);

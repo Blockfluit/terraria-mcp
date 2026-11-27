@@ -459,6 +459,7 @@ public static class BlastWorld
             {
                 ValuableKind.Orb => BlastTileKind.Orb,
                 ValuableKind.Altar => BlastTileKind.Altar,
+                ValuableKind.Pot => BlastTileKind.Breakable, // breaks and drops its loot: picked up afterwards
                 _ => BlastTileKind.Collectible,
             };
             return new BlastTile(kind, vname, vis, area, new TilePoint(ox, oy), wall);

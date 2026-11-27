@@ -43,6 +43,12 @@ internal sealed class TileWorker
 
     public string? Reason { get; private set; }
 
+    /// <summary>Light the walks to the tiles with torches (<see cref="MoveToTask.Torches"/>).</summary>
+    public bool Torches { get; init; }
+
+    /// <summary>Torches placed by the walks so far.</summary>
+    public int TorchesPlaced { get; private set; }
+
     /// <summary>Walking right now (for progress strings): the move sub-task's progress, else null.</summary>
     public string? MoveProgress => _move?.Progress;
 
@@ -133,15 +139,16 @@ internal sealed class TileWorker
             // left the tile out of reach while every re-approach "arrived" instantly at the same spot (seen in game:
             // "couldn't get within reach" after 4 approaches from far away).
             _move = stand is { } st
-                ? new MoveToTask(st, allowDig: true, allowBuild: true, tolerance: 0, name: _name)
+                ? new MoveToTask(st, allowDig: true, allowBuild: true, tolerance: 0, name: _name) { Torches = Torches }
                 // No spot at all (the tile is out of reach behind rock): dig toward it; the path digs the body out,
                 // usually through the target itself (seen in game: ore 4 tiles into a shaft wall).
-                : new MoveToTask(_target, allowDig: true, allowBuild: true, tolerance: 1, name: _name) { DigToGoal = true };
+                : new MoveToTask(_target, allowDig: true, allowBuild: true, tolerance: 1, name: _name) { DigToGoal = true, Torches = Torches };
         }
 
         var status = _move.Tick(ctx);
         if (status == GameTaskStatus.Running) return GameTaskStatus.Running;
         string? why = _move.Reason;
+        TorchesPlaced += _move.TorchesPlaced;
         _move = null; // it cleaned up after itself
         ControlState.Pending = default;
         if (status == GameTaskStatus.Failed) return Fail(ctx, $"can't reach {_target}: {why}");
@@ -164,6 +171,7 @@ internal sealed class TileWorker
 
     private void StopMove(GameCtx ctx)
     {
+        TorchesPlaced += _move?.TorchesPlaced ?? 0;
         _move?.OnCancel(ctx);
         _move = null;
     }
