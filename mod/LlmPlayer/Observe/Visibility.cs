@@ -25,12 +25,24 @@ public static class Visibility
     {
         if (!WorldGen.InWorld(x, y)) return false;
         if (Main.Map != null && Main.Map.IsRevealed(x, y)) return true;
+        if (Touching(player, x, y)) return true;
         if (!screen.Contains(x, y)) return false;
         if (Lighting.Brightness(x, y) > MinBrightness) return true;
         var tile = Main.tile[x, y];
         if (player.findTreasure && tile.HasTile && Main.tileSpelunker[tile.TileType]) return true;
         if (player.dangerSense && tile.HasTile && TileDrawing.IsTileDangerous(x, y, player)) return true;
         return false;
+    }
+
+    /// <summary>Within one tile of the player's hitbox: known by touch even in the dark (the tiles the player stands
+    /// in, on and bumps into), the same rule as GameTileGrid. Seen in game: in an unlit pocket, place refused a torch
+    /// at the player's own feet as "not visible".</summary>
+    public static bool Touching(Player player, int x, int y)
+    {
+        var p = player.position;
+        int left = (int)Math.Floor(p.X / 16f) - 1, right = (int)Math.Floor((p.X + player.width - 1) / 16f) + 1;
+        int top = (int)Math.Floor(p.Y / 16f) - 1, bottom = (int)Math.Floor((p.Y + player.height - 1) / 16f) + 1;
+        return x >= left && x <= right && y >= top && y <= bottom;
     }
 
     public static bool IsEntityVisible(Entity e) => IsEntityVisible(e, Screen, Main.LocalPlayer);
