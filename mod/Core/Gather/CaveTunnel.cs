@@ -25,7 +25,8 @@ public sealed record TunnelDecision(TunnelChoice? Choice, IReadOnlyList<TunnelRe
 /// <list type="bullet">
 /// <item>Starts: standable, known spots of the current pocket (the <see cref="CaveFrontier.Flood"/> from the player):
 /// for down the lowest ones, for left/right the outermost ones on that side (nearest to the player first), at most
-/// <see cref="StartsPerDir"/> per direction, at least 3 tiles apart.</item>
+/// <see cref="StartsPerDir"/> per direction, at least 3 tiles apart; plus the player's own spot (no walk: the flood
+/// doesn't model jump heights, so a "reachable" start may not be).</item>
 /// <item>Corridor: the body's 2 columns below the stand (down) or its 3 rows beside it (left/right), up to
 /// <c>maxTiles</c>. Up to the first Unknown cell every corridor cell must be air, a platform or rock the pickaxe can
 /// break (not protected, unbreakable or too hard, no spikes, water or lava); water right beside the corridor would
@@ -84,6 +85,13 @@ public static class CaveTunnel
                 if (best == null || choice.Score < best.Score) best = choice;
                 break; // the best start of this direction
             }
+            // Also from where the player stands: no walk needed (the flood's "reachable" stands may not be: it
+            // doesn't model jump heights, and a failed walk to the start wasted a whole tunnel).
+            if (!starts.Contains(here) && CaveFrontier.IsStand(g, here) && (tried == null || !tried(dir, here)))
+            {
+                var (own, _) = Evaluate(g, here, dir, pickPower, maxTiles, 0);
+                if (own != null && (best == null || own.Score < best.Score)) best = own;
+            }
         }
         return new TunnelDecision(best, refused);
     }
@@ -141,7 +149,7 @@ public static class CaveTunnel
     };
 
     /// <summary>The cells right beside the corridor at step k (left/right of a shaft, above/below a tunnel).</summary>
-    private static TilePoint[] Beside(TilePoint s, TunnelDir dir, int k) => dir switch
+    public static TilePoint[] Beside(TilePoint s, TunnelDir dir, int k) => dir switch
     {
         TunnelDir.Down => new[] { new TilePoint(s.X - 1, s.Y + k), new TilePoint(s.X + 2, s.Y + k) },
         TunnelDir.Left => new[] { new TilePoint(s.X - k, s.Y - 3), new TilePoint(s.X - k, s.Y + 1) },

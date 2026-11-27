@@ -19,10 +19,13 @@ public sealed record FoundThing(string Kind, string Name, int X, int Y);
 /// <summary>explore_caves' result. RevealedTiles: tiles that became visible around the player during the task
 /// (approximate: counted in a window around the player). Descended: tiles dug getting below the surface layer;
 /// Tunnels/Tunnelled: tunnels started and tiles dug in them once a pocket was exhausted. LifeCrystals: every Life
-/// Crystal seen (also ones already in view at the start).</summary>
+/// Crystal seen (also ones already in view at the start). Tunnels only counts tunnels that dug or moved; FailedTunnels:
+/// attempts that couldn't start (start unreachable, first dig refused). Relocations: trips to a far unexplored region
+/// once the neighbourhood was exhausted; Relocated: tiles travelled on them (their digging is in Tunnelled).</summary>
 public sealed record ExploreCavesResult(int RevealedTiles, List<FoundThing> Found, int TorchesPlaced, int PotsBroken,
     int Legs, int Descended, int Tunnels, int Tunnelled, List<FoundThing> LifeCrystals, string StoppedBecause,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FoundThing? StoppedAt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FoundThing? StoppedAt = null,
+    int FailedTunnels = 0, int Relocations = 0, int Relocated = 0);
 
 /// <summary>
 /// Explore caves through their open space, frontier by frontier (<see cref="CaveFrontier"/>): walk (a
@@ -46,9 +49,17 @@ public sealed record ExploreCavesResult(int RevealedTiles, List<FoundThing> Foun
 /// liquid, protected/too-hard rock): walk to the start, then an <see cref="ExploreTask"/> of at most
 /// <see cref="CaveTunnel.MaxTiles"/> tiles (DigPlanner's safety rules, torches in the dark). It stops as soon as a
 /// frontier outside its own corridor appears (it broke into a cave) and exploring resumes, <c>radius</c> now counted
-/// from there. At most <see cref="MaxTunnels"/> tunnels per task.</item>
-/// <item>Ends (succeeded) on the time limit or when no reachable frontier is left within <c>radius</c> and no safe
-/// tunnel either; fails after <see cref="MaxStalls"/> walks in a row that failed or revealed nothing.</item>
+/// from there. At most <see cref="MaxTunnels"/> tunnels per area; a tunnel that dug nothing and moved nobody doesn't
+/// count (<see cref="TunnelTally"/>): it is remembered and another direction/stand is tried.</item>
+/// <item>Memory across calls (<see cref="Memory"/>, per world, expiring): failed walks (stand + frontier) and failed
+/// tunnel/relocation starts aren't retried by the next call.</item>
+/// <item>Relocation: when no frontier and no tunnel is left (or the tunnel limit is reached, or
+/// <see cref="MaxStalls"/> walks in a row failed or revealed nothing), it travels to the nearest large unexplored
+/// region (<see cref="CaveRelocate"/>: a long tunnel left/right at the current depth or a shaft down, through known
+/// caves where they lie on the way, torches in the dark, DigPlanner's safety rules) and explores again there; it
+/// stops early when a frontier well along the way appears. At most <see cref="MaxRelocations"/> per task.</item>
+/// <item>Ends (succeeded) on the time limit or when nothing of the above is left; fails when walks keep failing and
+/// no tunnel or relocation is possible either.</item>
 /// </list>
 /// </summary>
 public sealed class ExploreCavesTask : IGameTask<GameCtx>
@@ -57,7 +68,11 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     public const int MaxStalls = 6, LegTimeoutTicks = 30 * 60, LegStallTicks = 8 * 60, MaxFound = 30;
     private int _legBest = int.MaxValue, _legStallTicks;
     private const int TorchCheckTicks = 60, LightSettleTicks = 20, MaxTorchFailures = 4, NearRejected = 2;
-    public const int MaxTunnels = 10, BreakCheckTicks = 45;
+    public const int MaxTunnels = 10, BreakCheckTicks = 45, MaxRelocations = 4;
+
+    /// <summary>Failed walks/tunnels, kept across calls (per world, expiring).</summary>
+    public static readonly ExploreMemory Memory = new();
+    private static long Now => Main.GameUpdateCount;
 
     private readonly int _radius, _maxTicks;
     private readonly HashSet<ValuableKind> _stopOn;
@@ -85,12 +100,16 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     private TilePoint? _darkFixAt;
 
     // Getting underground and tunnelling out of exhausted pockets.
-    private ExploreTask? _descend, _tunnel;
+    private ExploreTask? _descend, _tunnel, _relocTask;
     private MoveToTask? _tunnelWalk;
     private TunnelChoice? _tunnelChoice;
-    private bool _descendTried;
-    private int _descended, _tunnels, _tunnelled, _tunnelTicks, _breakCheckIn;
-    private readonly List<(TilePoint Start, TunnelDir Dir)> _corridors = new(), _triedTunnels = new();
+    private RelocateChoice? _reloc;
+    private bool _descendTried, _pocketExhausted;
+    private int _descended, _tunnelTicks, _breakCheckIn, _relocations, _relocated;
+    private readonly TunnelTally _tally = new();
+    private readonly List<(TilePoint Start, TunnelDir Dir, int Length)> _corridors = new();
+    private readonly List<(TilePoint Start, TunnelDir Dir)> _triedTunnels = new(), _triedRelocs = new();
+    private string? _stallNote;
     private readonly List<FoundThing> _lifeCrystals = new();
     private string? _lastTunnelStop;
     private FoundThing? _stopHit;
@@ -101,7 +120,8 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     public string? Reason { get; private set; }
     public string? Progress { get; private set; }
     public object? Result => new ExploreCavesResult(_revealed, _found, _torchesPlaced, _potsBroken, _legs,
-        _descended, _tunnels, _tunnelled, _lifeCrystals, _stopped ?? "running", _stopHit);
+        _descended, _tally.Counted, _tally.Tiles, _lifeCrystals, _stopped ?? "running", _stopHit,
+        _tally.Wasted, _relocations, _relocated);
 
     public ExploreCavesTask(int radius, int maxSeconds, IEnumerable<ValuableKind> stopOn, bool collectPots, bool torches)
     {
@@ -121,6 +141,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         if (!_seeded)
         {
             _seeded = true;
+            Memory.UseWorld($"{Main.worldID}:{Main.worldName}");
             Seed(p, here);
         }
         _elapsed++;
@@ -139,6 +160,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
 
         if (_descend != null) return TickDescend(ctx, here);
         if (_tunnelWalk != null || _tunnel != null) return TickTunnel(ctx, here);
+        if (_relocTask != null) return TickRelocate(ctx, here);
         if (!_descendTried)
         {
             _descendTried = true;
@@ -146,7 +168,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
             if (down > 0)
             {
                 _descend = new ExploreTask(ExploreDirection.Down, down, allowDig: true, torches: _torches);
-                _corridors.Add((here, TunnelDir.Down));
+                _corridors.Add((here, TunnelDir.Down, down));
                 _mode = $"going underground ({down} tiles down)";
                 return GameTaskStatus.Running;
             }
@@ -182,35 +204,56 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     private GameTaskStatus Decide(GameCtx ctx, TilePoint here)
     {
         int power = HeldItemLease.PickPower(ctx.Player);
-        var pick = CaveFrontier.Pick(ctx.Grid, here, _origin!.Value, _radius, IsRejected, power, ignoreFrontier: IgnoreFrontier);
+        var pick = _pocketExhausted ? null
+            : CaveFrontier.Pick(ctx.Grid, here, _origin!.Value, _radius, IsRejected, power, ignoreFrontier: IgnoreFrontier);
         if (pick == null)
         {
             // Nothing known to walk to: light up where we stand once (toward the nearest dark opening, if any), then
             // look again.
-            var focus = _torches && _darkFixAt != here
+            var focus = _torches && !_pocketExhausted && _darkFixAt != here
                 ? CaveFrontier.NearestFrontier(ctx.Grid, here, _origin!.Value, _radius, power, ignoreFrontier: IgnoreFrontier) : null;
-            if (_torches && _darkFixAt != here && ExploreTask.TorchSlot(ctx.Player) is var slot and >= 0
+            if (_torches && !_pocketExhausted && _darkFixAt != here && ExploreTask.TorchSlot(ctx.Player) is var slot and >= 0
                 && ExploreTask.NearestTorch(here, 3) == null && TorchSpot(ctx, here, slot, focus) is { } spot)
             {
                 _darkFixAt = here;
                 StartTorch(ctx.Player, slot, spot);
                 return GameTaskStatus.Running;
             }
-            // The pocket is exhausted: tunnel toward unexplored space.
-            string where = _tunnels > 0 ? "of the last tunnel's end" : "of the start";
+            // The pocket is exhausted: tunnel toward unexplored space, else relocate to a far unexplored region.
+            string where = _tally.Counted > 0 || _relocations > 0 ? "of the last tunnel's end" : "of the start";
+            string nothing = _stallNote != null
+                ? $"no progress after {MaxStalls} walks in a row ({_stallNote})"
+                : $"nothing left to explore: no reachable unexplored opening within {_radius} tiles {where}";
+            var status = _stallNote != null ? GameTaskStatus.Failed : GameTaskStatus.Succeeded;
             if (power <= 0)
-                return Finish(ctx, GameTaskStatus.Succeeded,
-                    $"nothing left to explore: no reachable unexplored opening within {_radius} tiles {where}, and no pickaxe to tunnel with");
-            if (_tunnels >= MaxTunnels)
-                return Finish(ctx, GameTaskStatus.Succeeded,
-                    $"nothing left to explore: no reachable unexplored opening within {_radius} tiles {where} (tunnel limit {MaxTunnels} reached)");
-            var decision = CaveTunnel.Choose(ctx.Grid, here, _origin!.Value, _radius, power, TunnelTried);
-            if (decision.Choice is not { } choice)
-                return Finish(ctx, GameTaskStatus.Succeeded,
-                    $"nothing left to explore: no reachable unexplored opening within {_radius} tiles {where}, and no safe tunnel ({decision.Summary})"
-                    + (_lastTunnelStop != null ? $"; last tunnel: {_lastTunnelStop}" : ""));
-            StartTunnel(choice, here);
-            return GameTaskStatus.Running;
+                return Finish(ctx, status, $"{nothing}, and no pickaxe to tunnel with");
+            string tunnelWhy;
+            if (_tally.LimitReached(MaxTunnels))
+                tunnelWhy = $"tunnel limit reached ({_tally.CountedHere} tunnels, {_tally.WastedHere} failed starts here)";
+            else
+            {
+                var decision = CaveTunnel.Choose(ctx.Grid, here, _origin!.Value, _radius, power, TunnelTried);
+                if (decision.Choice is { } choice)
+                {
+                    StartTunnel(choice, here);
+                    return GameTaskStatus.Running;
+                }
+                tunnelWhy = $"no safe tunnel ({decision.Summary})";
+            }
+            string relocWhy;
+            if (_relocations >= MaxRelocations) relocWhy = $"relocation limit ({MaxRelocations}) reached";
+            else
+            {
+                var reloc = CaveRelocate.Choose(ctx.Grid, here, power, RelocTried);
+                if (reloc.Choice is { } r)
+                {
+                    StartRelocate(r);
+                    return GameTaskStatus.Running;
+                }
+                relocWhy = $"no way to a large unexplored region ({reloc.Summary})";
+            }
+            return Finish(ctx, status, $"{nothing}; {tunnelWhy}; {relocWhy}"
+                + (_lastTunnelStop != null ? $"; last tunnel: {_lastTunnelStop}" : ""));
         }
         _legStand = pick.Stand;
         _legFrontier = pick.Frontier;
@@ -226,19 +269,64 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
 
     /// <summary>Frontier cells not worth walking to: the surface layer, and the faces of our own shafts/tunnels.</summary>
     private bool IgnoreFrontier(TilePoint c) =>
-        c.Y <= Main.worldSurface || _corridors.Any(k => CaveTunnel.InCorridor(k.Start, k.Dir, CaveTunnel.MaxTiles, c));
+        c.Y <= Main.worldSurface || _corridors.Any(k => CaveTunnel.InCorridor(k.Start, k.Dir, k.Length, c))
+        || Memory.FrontierBlocked(c, Now);
 
     private bool TunnelTried(TunnelDir dir, TilePoint s) =>
-        _triedTunnels.Any(t => t.Dir == dir && CaveFrontier.Chebyshev(t.Start, s) <= NearRejected);
+        _triedTunnels.Any(t => t.Dir == dir && CaveFrontier.Chebyshev(t.Start, s) <= NearRejected) || Memory.TunnelBlocked(dir, s, Now);
+
+    private bool RelocTried(TunnelDir dir, TilePoint s) =>
+        _triedRelocs.Any(t => t.Dir == dir && CaveFrontier.Chebyshev(t.Start, s) <= NearRejected) || Memory.TunnelBlocked(dir, s, Now);
+
+    private void StartRelocate(RelocateChoice r)
+    {
+        _reloc = r;
+        _tunnelTicks = 0;
+        _breakCheckIn = BreakCheckTicks;
+        _triedRelocs.Add((r.Start, r.Dir));
+        _corridors.Add((r.Start, r.Dir, r.Distance));
+        _relocTask = new ExploreTask(ToExplore(r.Dir), r.Distance, allowDig: true, torches: _torches);
+        _mode = $"relocating {DirName(r.Dir)} {r.Distance} tiles from {r.Start} (unexplored region {r.RegionAt} tiles away, {r.UnknownShare}% unknown)";
+    }
+
+    private GameTaskStatus TickRelocate(GameCtx ctx, TilePoint here)
+    {
+        var r = _reloc!;
+        string? stop = null;
+        if (BrokeThrough(ctx, here, c => CaveRelocate.Beyond(r, c))) stop = "reached unexplored caves";
+        else
+        {
+            var st = _relocTask!.Tick(ctx);
+            if (st == GameTaskStatus.Running) return GameTaskStatus.Running;
+            stop = st == GameTaskStatus.Succeeded ? "arrived" : _relocTask.Reason ?? "stopped";
+        }
+        int dug = Dug(_relocTask!), covered = Covered(_relocTask!);
+        _relocTask!.OnCancel(ctx);
+        _relocTask = null;
+        _reloc = null;
+        ControlState.Pending = default;
+        bool counted = _tally.Record(dug, covered);
+        if (counted)
+        {
+            _relocations++;
+            _relocated += covered;
+            _tally.NewArea();
+            _lastTunnelStop = $"relocation {DirName(r.Dir)} from {r.Start}: {stop} after {covered} tiles ({dug} dug)";
+            return Resume(here, "exploring a new area");
+        }
+        Memory.TunnelFailed(r.Dir, r.Start, Now);
+        _lastTunnelStop = $"relocation {DirName(r.Dir)} from {r.Start} went nowhere: {stop}";
+        _mode = "looking around";
+        return GameTaskStatus.Running;
+    }
 
     private void StartTunnel(TunnelChoice choice, TilePoint here)
     {
         _tunnelChoice = choice;
-        _tunnels++;
         _tunnelTicks = 0;
         _breakCheckIn = BreakCheckTicks;
         _triedTunnels.Add((choice.Start, choice.Dir));
-        _corridors.Add((choice.Start, choice.Dir));
+        _corridors.Add((choice.Start, choice.Dir, CaveTunnel.MaxTiles));
         if (choice.Start != here)
         {
             _tunnelWalk = new MoveToTask(choice.Start, allowDig: true, allowBuild: true, tolerance: 0, name: Name);
@@ -262,13 +350,14 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
 
     private static string DirName(TunnelDir d) => d.ToString().ToLowerInvariant();
 
-    /// <summary>A frontier outside our own shafts/tunnels within reach: we broke into a cave.</summary>
-    private bool BrokeThrough(GameCtx ctx, TilePoint here)
+    /// <summary>A frontier outside our own shafts/tunnels within reach (and passing <paramref name="accept"/>): we
+    /// broke into a cave.</summary>
+    private bool BrokeThrough(GameCtx ctx, TilePoint here, Func<TilePoint, bool>? accept = null)
     {
         if (here.Y <= Main.worldSurface || --_breakCheckIn > 0) return false;
         _breakCheckIn = BreakCheckTicks;
         return CaveFrontier.Pick(ctx.Grid, here, here, _radius, IsRejected, HeldItemLease.PickPower(ctx.Player),
-            ignoreFrontier: IgnoreFrontier) != null;
+            ignoreFrontier: c => IgnoreFrontier(c) || (accept != null && !accept(c))) != null;
     }
 
     private GameTaskStatus TickDescend(GameCtx ctx, TilePoint here)
@@ -304,6 +393,9 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
             ControlState.Pending = default;
             if (ws != GameTaskStatus.Succeeded)
             {
+                // Nothing dug, nobody moved toward it: doesn't count; remembered so the next pick is another start.
+                _tally.Record(0, 0);
+                Memory.TunnelFailed(choice.Dir, choice.Start, Now);
                 _lastTunnelStop = $"couldn't reach {choice.Start} to tunnel {DirName(choice.Dir)}" + (why != null ? $": {why}" : "");
                 _tunnelChoice = null;
                 _mode = "looking around";
@@ -314,7 +406,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         }
         if (BrokeThrough(ctx, here))
         {
-            _tunnelled += Dug(_tunnel!);
+            _tally.Record(Dug(_tunnel!), Covered(_tunnel!));
             _tunnel!.OnCancel(ctx);
             _tunnel = null;
             _tunnelChoice = null;
@@ -323,7 +415,7 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         var st = _tunnel!.Tick(ctx);
         if (st == GameTaskStatus.Running) return GameTaskStatus.Running;
         int dug = Dug(_tunnel);
-        _tunnelled += dug;
+        if (!_tally.Record(dug, Covered(_tunnel))) Memory.TunnelFailed(choice.Dir, choice.Start, Now);
         _lastTunnelStop = st == GameTaskStatus.Succeeded
             ? $"dug {DirName(choice.Dir)} {CaveTunnel.MaxTiles} tiles without reaching a cave"
             : $"{DirName(choice.Dir)} from {choice.Start} stopped: {_tunnel.Reason}";
@@ -339,15 +431,19 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         _origin = here;
         _stalls = 0;
         _darkFixAt = null;
+        _pocketExhausted = false;
+        _stallNote = null;
         _mode = mode;
         ControlState.Pending = default;
         return GameTaskStatus.Running;
     }
 
     private static int Dug(ExploreTask t) => (t.Result as ExploreResult)?.Dug ?? 0;
+    private static int Covered(ExploreTask t) => (t.Result as ExploreResult)?.Covered ?? 0;
 
     private bool IsRejected(TilePoint s) =>
-        _rejected.Any(r => CaveFrontier.Chebyshev(r, s) <= NearRejected) || _visited.Any(v => CaveFrontier.Chebyshev(v, s) <= NearRejected);
+        _rejected.Any(r => CaveFrontier.Chebyshev(r, s) <= NearRejected) || _visited.Any(v => CaveFrontier.Chebyshev(v, s) <= NearRejected)
+        || Memory.StandBlocked(s, Now);
 
     private bool TryStartPot(GameCtx ctx, TilePoint here)
     {
@@ -403,7 +499,11 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         ControlState.Pending = default;
         bool revealedSomething = _revealed > _revealedAtLegStart;
         if (st == GameTaskStatus.Succeeded) _visited.Add(_legStand);
-        else _rejected.Add(_legStand);
+        else
+        {
+            _rejected.Add(_legStand);
+            Memory.WalkFailed(_legStand, _legFrontier, Now);
+        }
         // Arrived next to a dark opening (often a cave whose floor isn't known yet): light it from here.
         if (st == GameTaskStatus.Succeeded && _torches && Lighting.Brightness(_legFrontier.X, _legFrontier.Y) < TorchPlanner.DarkBrightness
             && ExploreTask.NearestTorch(here, 4) == null && ExploreTask.TorchSlot(ctx.Player) is var tslot and >= 0
@@ -416,7 +516,14 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         if (st == GameTaskStatus.Succeeded || revealedSomething) _mode = "looking around";
         _stalls = revealedSomething ? 0 : _stalls + 1;
         if (_stalls >= MaxStalls)
-            return Finish(ctx, GameTaskStatus.Failed, $"no progress after {MaxStalls} walks in a row (last: {(st == GameTaskStatus.Succeeded ? "revealed nothing new" : "couldn't reach " + _legStand)})");
+        {
+            // The openings left here are out of reach: stop picking them and tunnel/relocate instead (Decide fails
+            // the task only when neither is possible).
+            _stallNote = $"last: {(st == GameTaskStatus.Succeeded ? "revealed nothing new" : "couldn't reach " + _legStand)}";
+            _pocketExhausted = true;
+            _stalls = 0;
+            _mode = "openings here are out of reach";
+        }
         return null;
     }
 
@@ -544,7 +651,8 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
     {
         Progress = $"{_mode}; {_elapsed / 60}/{_maxTicks / 60} s, revealed {_revealed}, found {_found.Count}"
                    + (_torchesPlaced > 0 ? $", torches {_torchesPlaced}" : "")
-                   + (_tunnels > 0 ? $", tunnels {_tunnels} ({_tunnelled} dug)" : "")
+                   + (_tally.Counted > 0 ? $", tunnels {_tally.Counted} ({_tally.Tiles} dug)" : "")
+                   + (_relocations > 0 ? $", relocations {_relocations} ({_relocated} tiles)" : "")
                    + (_potsBroken > 0 ? $", pots {_potsBroken}" : "");
     }
 
@@ -563,10 +671,17 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         _torch?.OnCancel(ctx);
         _collect?.OnCancel(ctx);
         if (_descend != null) { _descended += Dug(_descend); _descend.OnCancel(ctx); }
-        if (_tunnel != null) { _tunnelled += Dug(_tunnel); _tunnel.OnCancel(ctx); }
+        if (_tunnel != null) { _tally.Record(Dug(_tunnel), Covered(_tunnel)); _tunnel.OnCancel(ctx); }
+        if (_relocTask != null)
+        {
+            int dug = Dug(_relocTask), covered = Covered(_relocTask);
+            if (_tally.Record(dug, covered)) { _relocations++; _relocated += covered; }
+            _relocTask.OnCancel(ctx);
+        }
         _tunnelWalk?.OnCancel(ctx);
         _descend = null;
         _tunnel = null;
+        _relocTask = null;
         _tunnelWalk = null;
         _leg = null;
         _torch = null;
