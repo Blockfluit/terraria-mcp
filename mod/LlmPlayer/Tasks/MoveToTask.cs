@@ -30,7 +30,8 @@ namespace LlmPlayer.Tasks;
 /// </summary>
 public sealed class MoveToTask : IGameTask<GameCtx>
 {
-    public const int MaxConsecutiveFailures = 5;
+    public const int MaxConsecutiveFailures = 5, MaxLearnedReplans = 15;
+    private int _learnedReplans;
     private const int UnknownReplanTicks = 120, EntityReplanTicks = 60, RetryDelayTicks = 20, DoorRetryTicks = 10;
     private int _doorCooldown;
 
@@ -131,7 +132,11 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                 _lastFailure = $"{what} at {o.Current?.Kind} {o.Current?.Pos}";
                 DropFollower();
                 ControlState.Pending = default;
-                if (!progressed && ++_failures >= MaxConsecutiveFailures) return Finish(ctx, GameTaskStatus.Failed, _lastFailure);
+                // A path through unknown tiles that changes because those tiles came into view isn't a failure: the
+                // next plan knows more (seen in game: 5 such replans in a row ended move_to at a cave pool). Capped so
+                // it can't replan forever.
+                bool learned = o.Status == FollowerStatus.NeedsReplan && _pathCrossesUnknown && ++_learnedReplans <= MaxLearnedReplans;
+                if (!progressed && !learned && ++_failures >= MaxConsecutiveFailures) return Finish(ctx, GameTaskStatus.Failed, _lastFailure);
                 if (progressed) _failures = 0;
                 StartPlan(p, here);
                 return GameTaskStatus.Running;
