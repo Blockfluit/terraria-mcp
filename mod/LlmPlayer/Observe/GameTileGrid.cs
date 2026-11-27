@@ -61,7 +61,13 @@ public sealed class GameTileGrid : ITileGrid
     public TileInfo Get(int x, int y)
     {
         var info = GetCore(x, y);
-        if (info.Kind != TileKind.Unknown && WorldGen.InWorld(x, y) && Main.tile[x, y].WallType != 0) info = info with { Wall = true };
+        if (info.Kind == TileKind.Unknown || !WorldGen.InWorld(x, y)) return info;
+        var t = Main.tile[x, y];
+        if (t.WallType != 0) info = info with { Wall = true };
+        // A non-solid tile that isn't cuttable grass (furniture, torches, vines…) is passable but nothing can be placed
+        // into it (seen in game: a planned platform into a cabin's furniture was never placed; the walk stalled).
+        if (t.HasTile && !t.IsActuated && !Main.tileSolid[t.TileType] && !Main.tileCut[t.TileType] && info.Kind is not (TileKind.Solid or TileKind.Platform))
+            info = info with { Occupied = true };
         return info;
     }
 

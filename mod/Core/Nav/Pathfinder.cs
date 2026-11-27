@@ -932,7 +932,7 @@ public static class Pathfinder
     private sealed class TileCache : IDisposable
     {
         public const ushort Computed = 1, Block = 2, Stand = 4, Plat = 8, Liquid = 16, Deadly = 32, Unknown = 64, Diggable = 128,
-            Door = 256, Wall = 512;
+            Door = 256, Wall = 512, Occupied = 1024;
         private const int Margin = 128, MaxDim = 1024;
 
         private readonly ITileGrid _g;
@@ -1064,6 +1064,7 @@ public static class Pathfinder
                 case TileKind.Unknown: b |= Unknown; break;
             }
             if (t.Wall) b |= Wall;
+            if (t.Occupied) b |= Occupied;
             Seen |= b;
             return (ushort)b;
         }

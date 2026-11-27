@@ -86,7 +86,7 @@ public static class StandFinder
                 if (grid.Get(s.X + dx, s.Y - dy).BlocksBody) return false;
         var under = new TilePoint(s.X, s.Y + 1);
         var u = grid.Get(under);
-        if (u.Kind != TileKind.Air) return false;
+        if (u.Kind != TileKind.Air || u.Occupied) return false;
         // Vanilla anchoring: a tile on one of the 4 sides, or a background wall behind it.
         return u.Wall || grid.Get(under.X - 1, under.Y).IsStandable || grid.Get(under.X + 1, under.Y).IsStandable
                || grid.Get(under.X, under.Y + 1).IsStandable;
