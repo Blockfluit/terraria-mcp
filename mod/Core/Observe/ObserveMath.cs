@@ -108,17 +108,25 @@ public static class ItemMatcher
 /// Consecutive repeats collapse into "msg (xN)".</summary>
 public sealed class EventLog(int capacity = 20)
 {
-    private readonly LinkedList<(string Msg, int Count)> _items = new();
+    private readonly LinkedList<(string Msg, int Count, bool Sticky)> _items = new();
 
-    public void Add(string message)
+    /// <summary>Add a line. Sticky lines (deaths) are never pushed out by newer ones while a non-sticky line can go
+    /// instead; they leave only by <see cref="Drain"/> / <see cref="Clear"/> (seen in game: a death line evicted by the
+    /// auto-defend and damage lines that followed it before the next get_state).</summary>
+    public void Add(string message, bool sticky = false)
     {
         if (_items.Last is { } last && last.Value.Msg == message)
         {
-            last.Value = (message, last.Value.Count + 1);
+            last.Value = (message, last.Value.Count + 1, last.Value.Sticky || sticky);
             return;
         }
-        _items.AddLast((message, 1));
-        while (_items.Count > capacity) _items.RemoveFirst();
+        _items.AddLast((message, 1, sticky));
+        while (_items.Count > capacity)
+        {
+            var victim = _items.First;
+            while (victim != null && victim.Value.Sticky) victim = victim.Next;
+            _items.Remove(victim ?? _items.First!);
+        }
     }
 
     public List<string> Recent() =>

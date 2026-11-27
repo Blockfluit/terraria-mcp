@@ -16,6 +16,8 @@ public static class TaskCommands
         CommandRouter.Register("move_to", p =>
         {
             bool dig = Params.Bool(p, "allow_dig", true), build = Params.Bool(p, "allow_build", true), torches = Params.Bool(p, "torches", true);
+            int reserve = Params.Has(p, "platform_reserve") ? Params.Int(p, "platform_reserve") : MoveToTask.DefaultPlatformReserve;
+            if (reserve < 0 || reserve > 9999) throw new CommandError(ErrorCodes.BadParams, "platform_reserve must be 0..9999");
             MoveToTask task;
             if (Params.Has(p, "entity_id"))
             {
@@ -24,7 +26,7 @@ public static class TaskCommands
                     throw new CommandError(ErrorCodes.BadParams, $"no entity {id} (ids come from get_entities)");
                 if (!Visibility.IsEntityVisible(e))
                     throw new CommandError(ErrorCodes.NotVisible, $"entity {id} is not visible");
-                task = new MoveToTask(id, dig, build) { Torches = torches };
+                task = new MoveToTask(id, dig, build) { Torches = torches, PlatformReserve = reserve };
             }
             else
             {
@@ -33,7 +35,7 @@ public static class TaskCommands
                 int x = Params.Int(p, "x"), y = Params.Int(p, "y");
                 if (!WorldGen.InWorld(x, y, 10))
                     throw new CommandError(ErrorCodes.BadParams, $"({x},{y}) is outside the world");
-                task = new MoveToTask(new TilePoint(x, y), dig, build) { Torches = torches };
+                task = new MoveToTask(new TilePoint(x, y), dig, build) { Torches = torches, PlatformReserve = reserve };
             }
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name };

@@ -11,7 +11,12 @@ public static class RecentEvents
 {
     public static readonly EventLog Log = new(capacity: 20);
 
+    /// <summary>The last deaths (get_state <c>lastDeaths</c>): never drained or evicted by other events.</summary>
+    public static readonly DeathLog Deaths = new(capacity: 5);
+
     public static void Add(string message) => Log.Add(message);
+
+    public static List<DeathView> DeathsView() => Deaths.View(Main.GameUpdateCount);
 }
 
 public sealed class RecentEventsPlayer : ModPlayer
@@ -25,15 +30,22 @@ public sealed class RecentEventsPlayer : ModPlayer
         if (Main.worldID == _worldId) return;
         _worldId = Main.worldID;
         RecentEvents.Log.Clear();
+        RecentEvents.Deaths.Clear();
     }
 
     /// <summary>Vanilla's death message ("Bot was slain by a Zombie") as a recent event and a player_died event.</summary>
     public override void Kill(double damage, int hitDirection, bool pvp, PlayerDeathReason damageSource)
     {
         if (Player.whoAmI != Main.myPlayer) return;
-        string text = damageSource.GetDeathText(Player.name).ToString();
-        RecentEvents.Add($"died: {text}");
-        BridgeSystem.Emit("player_died", new { Text = text, X = (int)(Player.position.X / 16f), Y = (int)(Player.Bottom.Y / 16f) });
+        string text = "";
+        try { text = damageSource.GetDeathText(Player.name).ToString(); }
+        catch (Exception) { /* a modded death reason without text: the killer below still says what happened */ }
+        string killer = DescribeSource(damageSource);
+        if (string.IsNullOrWhiteSpace(text)) text = $"{Player.name} died ({killer})";
+        var (x, y) = StateReader.StandingTile(Player); // feet-left tile, like get_state's x,y
+        RecentEvents.Deaths.Add(new DeathRecord(text, killer, x, y, GameClock.Format(Main.dayTime, Main.time), Main.GameUpdateCount));
+        RecentEvents.Log.Add($"died: {text} at ({x},{y})", sticky: true);
+        BridgeSystem.Emit("player_died", new { Text = text, Killer = killer, X = x, Y = y });
     }
 
     /// <summary>One call per hit: feeds both get_state's recent events and the <c>took_damage</c> wire event.
@@ -49,10 +61,10 @@ public sealed class RecentEventsPlayer : ModPlayer
     }
 
     /// <summary>NPC name, projectile name, or environment (vanilla PlayerDeathReason.ByOther: 0 fall, 1 drowning,
-    /// 2 lava).</summary>
+    /// 2 lava). A killer NPC that is already gone (e.g. a slime that died on the same hit) still has its name.</summary>
     private static string DescribeSource(PlayerDeathReason r)
     {
-        if (r.SourceNPCIndex >= 0 && r.SourceNPCIndex < Main.maxNPCs && Main.npc[r.SourceNPCIndex].active)
+        if (r.SourceNPCIndex >= 0 && r.SourceNPCIndex < Main.maxNPCs && Main.npc[r.SourceNPCIndex].type > 0)
             return Main.npc[r.SourceNPCIndex].GivenOrTypeName;
         if (r.SourceProjectileType > 0) return Lang.GetProjectileName(r.SourceProjectileType).Value;
         if (r.SourcePlayerIndex >= 0) return "player";

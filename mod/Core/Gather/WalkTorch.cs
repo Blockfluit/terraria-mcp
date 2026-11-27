@@ -97,5 +97,8 @@ public sealed class WalkTorch
     }
 }
 
-/// <summary>move_to's structured result (report.result).</summary>
-public sealed record MoveToResult(int TorchesPlaced);
+/// <summary>move_to's structured result (report.result): torches placed, platforms / blocks used on the way, platforms
+/// left, whether the platform reserve had to be used, and a note when platforms run short.</summary>
+public sealed record MoveToResult(int TorchesPlaced, int PlatformsUsed = 0, int BlocksUsed = 0, int PlatformsLeft = 0,
+    bool ReserveReleased = false,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Note = null);

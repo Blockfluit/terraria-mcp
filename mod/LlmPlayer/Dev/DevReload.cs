@@ -56,23 +56,7 @@ public static class DevCommands
                 {
                     var t = grid.Get(x, y);
                     if (Main.tile[x, y].HasTile && Main.tile[x, y].TileType == Terraria.ID.TileID.Heart) { sb.Append('H'); continue; }
-                    sb.Append(t.Kind switch
-                    {
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.IsClosedDoor => '|',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.HalfBlock => '_',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.DownRight => '/',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.DownLeft => '\\',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.UpLeft => 'r',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.Slope == LlmPlayer.Core.Grid.TileSlope.UpRight => 'q',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.PickPowerRequired > 35 => 'X',
-                        LlmPlayer.Core.Grid.TileKind.Solid when t.Protected => 'P',
-                        LlmPlayer.Core.Grid.TileKind.Solid => '#',
-                        LlmPlayer.Core.Grid.TileKind.Platform => '=',
-                        LlmPlayer.Core.Grid.TileKind.Water or LlmPlayer.Core.Grid.TileKind.Honey => '~',
-                        LlmPlayer.Core.Grid.TileKind.Lava => 'L',
-                        LlmPlayer.Core.Grid.TileKind.Hazard => '^',
-                        _ => '.',
-                    });
+                    sb.Append(LlmPlayer.Core.Grid.ArrayTileGrid.GlyphOf(t)); // hardness before shape (hard slopes: ')' '(' '-' 'R' 'Q')
                 }
                 rows.Add(sb.ToString());
             }

@@ -55,6 +55,8 @@ public static class StateReader
         state["Driver"] = LlmPlayer.Control.ControlState.Driver.WireName();
         state["Task"] = LlmPlayer.Tasks.TaskHost.Runner.Current;
         state["RecentEvents"] = RecentEvents.Log.Drain();
+        var deaths = RecentEvents.DeathsView();
+        if (deaths.Count > 0) state["LastDeaths"] = deaths;
         return state;
     }
 

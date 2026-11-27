@@ -190,4 +190,50 @@ public class EventLogTests
         log.Add("killed Green Slime");
         Assert.Equal(new[] { "picked up Wood (x3)", "killed Green Slime" }, log.Recent());
     }
+
+    [Fact]
+    public void StickyDeathLine_SurvivesAFloodOfOtherLines()
+    {
+        var log = new EventLog(capacity: 5);
+        log.Add("took 10 damage from Zombie");
+        log.Add("died: Bot was slain by a Zombie", sticky: true);
+        for (int i = 0; i < 30; i++) log.Add($"reflex: auto-defend vs Zombie {i}");
+        var r = log.Recent();
+        Assert.Equal(5, r.Count);
+        Assert.Equal("died: Bot was slain by a Zombie", r[0]);
+        Assert.Equal("reflex: auto-defend vs Zombie 29", r[4]);
+    }
+
+    [Fact]
+    public void OnlyStickyLines_StillCapped()
+    {
+        var log = new EventLog(capacity: 2);
+        for (int i = 0; i < 4; i++) log.Add($"died {i}", sticky: true);
+        Assert.Equal(new[] { "died 2", "died 3" }, log.Recent());
+    }
+}
+
+public class DeathLogTests
+{
+    [Fact]
+    public void KeepsLastDeathsNewestFirst_WithSecondsAgo()
+    {
+        var log = new DeathLog(capacity: 3);
+        for (int i = 0; i < 5; i++) log.Add(new DeathRecord($"death {i}", "Zombie", i, 10, "night 1:00 AM", Tick: i * 600));
+        var v = log.View(nowTick: 3000);
+        Assert.Equal(new[] { "death 4", "death 3", "death 2" }, v.Select(d => d.Text));
+        Assert.Equal(new long[] { 10, 20, 30 }, v.Select(d => d.SecondsAgo));
+        Assert.Equal("Zombie", v[0].Killer);
+    }
+
+    [Fact]
+    public void ViewDoesNotDrain_AndClockGoingBackShowsZero()
+    {
+        var log = new DeathLog();
+        log.Add(new DeathRecord("x", null, 0, 0, "day", Tick: 1000));
+        Assert.Single(log.View(500));
+        Assert.Equal(0, log.View(500)[0].SecondsAgo);
+        log.Clear();
+        Assert.Empty(log.View(0));
+    }
 }

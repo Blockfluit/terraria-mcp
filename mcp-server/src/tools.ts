@@ -66,7 +66,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_state",
     description:
-      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups). Optional fields, present only when relevant: breath {now, max} (only while below max, i.e. the head has been under water/honey; at 0 you drown. A reflex surfaces for air on its own below 45% and resumes the task at 90%; routes avoid more than ~11 tiles under water unless you have gills), nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x?, y?, distance?, segments?}] (every boss alive in the world with its life, like the vanilla boss health bar; x/y/distance only while you can see it; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest), housing {homeless?: [names], canMoveIn?: [names]} (town NPCs without a house, and NPCs whose move-in conditions are met: they arrive during the day once a free valid house exists; see check_housing / build_house). Start every decision here." +
+      "Player status: position {x,y}, life/mana/defense, buffs, held item, time of day, biome, depth layer, spawn point, driver, current task and recent events (damage, kills, pickups, deaths; drained by each get_state). Optional fields, present only when relevant: breath {now, max} (only while below max, i.e. the head has been under water/honey; at 0 you drown. A reflex surfaces for air on its own below 45% and resumes the task at 90%; routes avoid more than ~11 tiles under water unless you have gills), nearbyHostiles {count, nearest} (visible hostile NPCs within 40 tiles and the nearest one's distance), boss [{id, name, life, lifeMax, x?, y?, distance?, segments?}] (every boss alive in the world with its life, like the vanilla boss health bar; x/y/distance only while you can see it; segmented bosses merged), worldEvents (e.g. 'blood moon', 'goblin army', 'slime rain', 'rain'), openChest {x, y, name} (the container open right now; see open_chest), housing {homeless?: [names], canMoveIn?: [names]} (town NPCs without a house, and NPCs whose move-in conditions are met: they arrive during the day once a free valid house exists; see check_housing / build_house), lastDeaths [{text, killer, x, y, time, secondsAgo}] (the last 5 deaths in this world, newest first, never drained: what killed you and where). Start every decision here." +
       COORDS,
     readOnly: true,
   },
@@ -165,7 +165,8 @@ const TOOLS: ToolDef[] = [
     name: "move_to",
     description:
       "Walk to a tile or an entity with smart pathfinding (jumps, drops, platforms; digs and builds if allowed). Give x,y (a standing position; a target inside solid ground snaps to the nearest standable tile) or entity_id from get_entities. Fails with a reason if unreachable. " +
-      "Torches (default on, needs torches in the inventory): in the dark underground or in a tunnel it digs, with no torch within ~10 tiles, it pauses between steps, places a torch within reach and walks on, so the way is revealed (the pathfinder only knows tiles you have seen: unlit tunnels stay unknown). Never in an NPC house or the spawn area. When the task ends, report.result is {torchesPlaced}." +
+      "Torches (default on, needs torches in the inventory): in the dark underground or in a tunnel it digs, with no torch within ~10 tiles, it pauses between steps, places a torch within reach and walks on, so the way is revealed (the pathfinder only knows tiles you have seen: unlit tunnels stay unknown). Never in an NPC house or the spawn area. " +
+      "Platform reserve: building keeps platform_reserve platforms (default 20, see set_reflexes) for later descents: the route may only use platforms above it plus cheap blocks, bridges and climbs switch to dirt/stone/… at the reserve, and only when no route fits does it use the reserve (reserveReleased). When the task ends, report.result is {torchesPlaced, platformsUsed, blocksUsed, platformsLeft, reserveReleased, note?} (note when platforms run short)." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -175,6 +176,7 @@ const TOOLS: ToolDef[] = [
       allow_dig: z.boolean().optional().describe("May mine through blocks on the way, default true"),
       allow_build: z.boolean().optional().describe("May place platforms/blocks to climb, bridge, or build down a drop too deep to fall safely (a platform below the feet, then drop onto it), default true"),
       torches: z.boolean().optional().describe("Light the walk: place torches from the inventory in the dark (underground or in a dug tunnel, about every 10 tiles), default true"),
+      platform_reserve: int().min(0).max(9999).optional().describe("Platforms to keep for this walk unless no route fits without them (default: set_reflexes platform_reserve, 20)"),
     },
     check: (a) =>
       a.entity_id !== undefined || (a.x !== undefined && a.y !== undefined)
@@ -281,7 +283,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "use_item",
     description:
-      "Use an item once (potion, tool, summon), aiming at tile x,y if given. Identify it by item name or inventory slot. Explosives are refused: use blast." +
+      "Use an item once (potion, tool, summon), aiming at tile x,y if given. Identify it by item name or inventory slot. Explosives are refused: use blast. Waits for any swing still running, then checks the use really happened (a consumable lost one, a buff item's buff is active) and fails with a reason otherwise. Calling use_item while another use_item is still running queues it (reply has queued: n) instead of cancelling the first, so several buff potions can be drunk back to back; one wait_for_task then covers them all and report.result is {used: [{item, ok, detail}]} (the task fails if any use failed)." +
       COORDS +
       STARTS_TASK,
     shape: {
@@ -416,7 +418,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "set_reflexes",
     description:
-      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think), weapon / ammo (what auto-defend fights with; \"auto\" = the best weapon by damage per second and vanilla's ammo order, the default; a chosen weapon that becomes unusable falls back to the best other one, with a weapon_switch event, and comes back once usable). Omitted fields keep their value; returns the current settings." +
+      "Configure automatic behaviour while you drive: auto_defend (hit hostile enemies in reach, or that just hit you, while idle, waiting, moving, exploring, chopping, mining, placing, picking up or walking to an NPC: the task pauses and resumes after the fight; attack and an item use already under way keep the controls), quick_heal_threshold (quick-heal below this life fraction), pause_when_idle (singleplayer: pause the game while no task runs so you can think), weapon / ammo (what auto-defend fights with; \"auto\" = the best weapon by damage per second and vanilla's ammo order, the default; a chosen weapon that becomes unusable falls back to the best other one, with a weapon_switch event, and comes back once usable), platform_reserve (platforms every walk — move_to and the walks of mine, collect, explore_caves … — keeps for later descents unless no route fits without them; default 20, 0 = use all). Omitted fields keep their value; returns the current settings." +
       INSTANT_ACTION,
     shape: {
       auto_defend: z.boolean().optional(),
@@ -427,6 +429,7 @@ const TOOLS: ToolDef[] = [
         .optional()
         .describe('Auto-defend weapon: item name or inventory slot 0-57, or "auto"'),
       ammo: z.string().min(1).optional().describe('Auto-defend ammo item name (must fit the weapon), or "auto"'),
+      platform_reserve: int().min(0).max(9999).optional().describe("Platforms walks keep for descents, default 20"),
     },
   },
   {
@@ -567,7 +570,7 @@ const TOOLS: ToolDef[] = [
     description:
       "Explore caves systematically through their open space, revealing the map, to find Life Crystals and other cave loot. Started in the surface layer it first goes underground (walks down, or digs a 2-wide shaft like explore down). Then it repeatedly walks to a known ledge next to the nearest reachable edge between known open space and unknown tiles (digging only through walls up to 3 tiles thick to reach the next cave), lights the dark opening with a torch from your inventory (also underground whenever it's dark and no torch is within ~10 tiles), looks, and moves on. A dark cave whose floor isn't known yet is lit from its edge first. " +
       "When the cave pocket is exhausted it tunnels toward the nearest large unrevealed region (down preferred, else left/right): a 2-wide shaft or 3-tall tunnel of at most 40 tiles per tunnel (max 10 per area; an attempt that dug nothing — its start unreachable — doesn't count and another start is tried) through rock your pickaxe can break, never toward known lava, through water/honey, protected or too-hard tiles, never into an unsafe drop, torches in the dark; as soon as it breaks into open space it explores again (radius then counts from there). When the whole neighbourhood is exhausted (no opening, no short tunnel, or 6 walks in a row failed) it relocates: travels to the nearest large unexplored region on the map ('?' country, up to ~250 tiles left/right at the current depth or down), walking through known caves and tunnelling through rock with the same safety rules and torches, then explores there (max 4 relocations per call). Failed walks and tunnel starts are remembered across calls (per world, ~20 min), so the next call doesn't retry them. Avoids lava (never walks through it, skips openings within 3 tiles of it) and unsafe drops. " +
-      "Stops (succeeded) when something in stop_on that wasn't visible at the start comes into view — report.reason says what and where (a Life Crystal: 'found a Life Crystal at (x,y): collect it for +20 max life'), report.result.stoppedAt has it — or when max_seconds is up or no reachable opening, no safe tunnel and no relocation is left (the reason says why each direction was refused); fails when walks keep failing and neither a tunnel nor a relocation is possible, or if it can't get underground. " +
+      "Stops (succeeded) when something in stop_on that wasn't visible at the start comes into view — report.reason says what and where (a Life Crystal: 'found a Life Crystal at (x,y): collect it for +20 max life'), report.result.stoppedAt has it; each thing stops only one call (later calls just list it in found, for ~20 min), and rigged Dead Man's Chests and chests you opened before that are empty now never stop it — or when max_seconds is up or no reachable opening, no safe tunnel and no relocation is left (the reason says why each direction was refused); fails when walks keep failing and neither a tunnel nor a relocation is possible, or if it can't get underground. " +
       "Kinds: life_crystal, life_fruit, pot, chest, enchanted_sword, altar, orb, ore, fallen_star (default stop_on: life_crystal, chest, enchanted_sword, life_fruit; [] = only time/radius). collect_pots: true breaks visible pots within 12 tiles on the way. " +
       "Result: {revealedTiles (approximate), found: [{kind, name, x, y}] (everything newly seen, max 30), torchesPlaced, potsBroken, legs, descended (tiles dug getting underground), tunnels (that dug or moved), tunnelled (tiles dug in tunnels and relocations), failedTunnels (attempts that couldn't start), relocations, relocated (tiles travelled relocating), lifeCrystals: [{kind, name, x, y}] (every Life Crystal seen, also ones in view at the start), stoppedBecause, stoppedAt?}. Then: collect for life crystals/pots, loot_chest for chests, mine_vein for ore." +
       STARTS_TASK,

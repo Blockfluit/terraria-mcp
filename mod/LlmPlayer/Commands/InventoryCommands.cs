@@ -126,6 +126,10 @@ public static class InventoryCommands
                 throw new CommandError(ErrorCodes.BadParams, $"{item.Name} is an explosive: use_item never throws explosives (they destroy tiles, furniture and walls in a radius): use blast, which checks the radius and keeps you clear");
             if (item.potion && pl.potionDelay > 0)
                 throw new CommandError(ErrorCodes.BadParams, $"potion sickness: can't drink {item.Name} for another {(pl.potionDelay + 59) / 60}s");
+            // A use_item already running (e.g. buff potions drunk one after another): queue behind it instead of
+            // cancelling it before its use happened.
+            if (TaskHost.Runner.CurrentTask is UseItemTask running && running.TryEnqueue(pl, slot, aim))
+                return new { Started = true, Task = running.Name, Item = item.Name, Queued = running.Queued };
             var task = new UseItemTask(pl, slot, aim);
             TaskHost.Start(task);
             return new { Started = true, Task = task.Name, Item = item.Name };

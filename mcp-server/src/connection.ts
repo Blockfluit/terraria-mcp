@@ -1,5 +1,5 @@
 import net from "node:net";
-import { compactEvents } from "./events.js";
+import { compactEvents, trimBuffer } from "./events.js";
 
 export class ModError extends Error {
   constructor(
@@ -153,7 +153,7 @@ export class ModConnection {
     }
     if (typeof msg.event === "string") {
       this.events.push(msg as ModEvent);
-      if (this.events.length > MAX_BUFFERED_EVENTS) this.events.splice(0, this.events.length - MAX_BUFFERED_EVENTS);
+      if (this.events.length > MAX_BUFFERED_EVENTS) this.events = trimBuffer(this.events, MAX_BUFFERED_EVENTS);
       return;
     }
     if (typeof msg.id !== "number") return;
