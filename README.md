@@ -22,7 +22,8 @@ mod/LlmPlayer tModLoader mod inside Terraria
   flags bosses (always listed first), and includes visible hostile projectiles. `get_state` counts nearby
   hostiles, lists every living boss with its health (like the vanilla boss bar; its position only while visible), and names events such as
   a blood moon or goblin army. `get_inventory` tags items as weapon (with damage), heal, ammo, consumable,
-  placeable, or pickaxe/axe/hammer power.
+  placeable, or pickaxe/axe/hammer power. Weapons also show their use time, mana cost and the ammo type they fire,
+  and ammo stacks show their damage and ammo type, so the LLM can choose what to fight with.
 - **Move smartly.** `move_to` plans an A* route over the real tile grid. The route walks, jumps,
   drops through platforms, swims, digs with your best pickaxe, and places platforms to cross gaps
   or climb out of shafts. It opens doors in its way like a player does (right-click, normal reach)
@@ -56,6 +57,16 @@ mod/LlmPlayer tModLoader mod inside Terraria
   ("Life Crystal", "Pot", "Locked Gold Chest", "Demon Altar", "Shadow Orb (don't break)"…). `collect` breaks a pot,
   life crystal, life fruit or the sword in stone with your pickaxe and picks up what drops. `loot_chest` opens a
   chest, presses *Loot All* and closes it again.
+- **The LLM decides the fight; the mod reacts.** The LLM picks the weapon (`weapon`: name or slot), the ammo
+  (`ammo`) and the strategy (`strategy`: `kite` keeps `keep_distance` tiles and keeps running, `hit_and_run` steps
+  in, swings and backs off, `hold` stands its ground, `flee_and_shoot` keeps moving away while it shoots). The mod
+  only does what has to happen within a second: aiming, dodging and stepping. Without a choice, `auto` picks the
+  highest damage per second after the target's defense, but that is only a convenience. In a real boss fight it
+  once switched to a useless Wand of Sparking. A chosen weapon that becomes unusable (gone, out of ammo or mana)
+  falls back to the best alternative, with a `weapon_switch` event, until it works again. With `fallback: false`
+  the attack stops instead. The chosen ammo is moved to the front of the ammo slots and put back afterwards. The
+  progress and result report the weapon, ammo and strategy used and every switch. `set_reflexes` takes `weapon` and
+  `ammo` for auto-defend too.
 - **Fight without trading hits.** `attack` predicts when an enemy is about to touch the player (from its hitbox
   and velocity) and backs off or jumps instead, never into a hole or lava, while it keeps swinging or shooting.
   Melee becomes hit-and-run. `target: "all"` clears every visible hostile nearby in one call. Below a life
@@ -68,8 +79,10 @@ mod/LlmPlayer tModLoader mod inside Terraria
   dropping through the platform under it to the row below. Servants and other minions about to reach you get shot
   first (`kill_minions`), then it goes back to the boss. If the boss leaves the screen it stays the target. The task
   fails with "boss fled" only when the boss despawns alive (the Eye of Cthulhu at dawn). `heal_below` raises the
-  quick-heal threshold while the fight runs. When ammo runs out, the game picks the next stack of the same ammo
-  type, and once none is left `attack` switches to another weapon. The result adds potions used, ammo left, and the
+  quick-heal threshold while the fight runs. The strategy applies in arena mode too (kite and flee_and_shoot run
+  across the arena, hit_and_run steps in and out, hold stays put). When the chosen ammo runs out, the next stack of
+  the same ammo type fires, and once none is left `attack` falls back to another weapon (or stops with
+  `fallback: false`). The result adds potions used, ammo left, and the
   boss's life left in percent if it survived. Build the arena first: `build_platforms` with 2-3 rows about 5 tiles
   apart, so you can jump between them. `get_boss_info` gives short facts about the Eye of Cthulhu and King Slime:
   summon item and recipe, spawn rules, when it leaves, and whether this world has beaten it. In a simulated fight
@@ -183,7 +196,8 @@ In game: *Workshop → Manage Mods → LLM Player → Config*.
 | ShowPathOverlay | on | Draw the planned path in game |
 | DevCommands | off | Allow `dev_save_and_exit` (save and quit the game) for `scripts/dev-reload.sh`, see below |
 
-`set_reflexes` changes the reflex options at runtime.
+`set_reflexes` changes the reflex options at runtime, and also sets which `weapon` and `ammo` auto-defend uses
+(default `auto`).
 
 ## Development
 

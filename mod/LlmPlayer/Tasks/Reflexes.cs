@@ -25,7 +25,8 @@ namespace LlmPlayer.Tasks;
 /// <c>heal_below</c> (<see cref="SetHealOverride"/>). Also during attack: quick-heal never needs the controls.</item>
 /// <item>Auto-defend: while idle, waiting, or in a task it may pause (<see cref="TaskPhases"/>: move_to, explore,
 /// talk_to_npc, chop_tree, mine, mine_area, pick_up_items, place, use_item until it presses "use"), and a visible
-/// hostile is within the best weapon's reach (or just touched the player and is one tile beyond it,
+/// hostile is within the weapon's reach (set_reflexes' <c>weapon</c>/<c>ammo</c>, <see cref="SetDefendLoadout"/>;
+/// default the best one) (or just touched the player and is one tile beyond it,
 /// <see cref="ThreatRules"/>). <see cref="Tick"/> then returns true: reflexes own <see cref="ControlState.Pending"/>
 /// this tick and TaskHost does not tick the task (it is paused, not cancelled, and resumes ~1/3 s after the last
 /// threat, once the defender's swing has ended). The defender stands its ground, aims and swings/shoots; it switches
@@ -38,12 +39,29 @@ namespace LlmPlayer.Tasks;
 /// </summary>
 public static class Reflexes
 {
-    private const int WeaponCacheTicks = 30;
-
     private static readonly ReflexArbiter Arbiter = new();
     private static HeldItemLease _lease = new();
     private static Weapon? _weapon;
-    private static uint _weaponAt;
+    private static WeaponLoadout _loadout = NewLoadout(null, null);
+    private static Item? _defendWeapon, _defendAmmo;
+
+    /// <summary>The weapon / ammo auto-defend uses (set_reflexes), null = auto (best weapon, vanilla ammo order).</summary>
+    public static Item? DefendWeapon => _defendWeapon;
+    public static Item? DefendAmmo => _defendAmmo;
+
+    /// <summary>Choose auto-defend's weapon and ammo (null = auto). If the weapon becomes unusable it falls back to the
+    /// best other one (and back once it works again), with a weapon_switch event.</summary>
+    public static void SetDefendLoadout(Player p, Item? weapon, Item? ammo)
+    {
+        _loadout.Restore(p);
+        _defendWeapon = weapon;
+        _defendAmmo = ammo;
+        _loadout = NewLoadout(weapon, ammo);
+        _weapon = null;
+    }
+
+    private static WeaponLoadout NewLoadout(Item? weapon, Item? ammo) =>
+        new(weapon, ammo, fallback: true, AttackStrategy.Hold, who: "auto-defend");
     private static int _targetId = -1;
     private static bool _lastUse;
 
@@ -89,11 +107,7 @@ public static class Reflexes
         NPC? threat = null;
         if (cfg.AutoDefend && phase != TaskPhase.Busy)
         {
-            if (_weapon == null || Main.GameUpdateCount - _weaponAt >= WeaponCacheTicks || !CombatKit.StillUsable(p, _weapon))
-            {
-                _weapon = CombatKit.BestWeapon(p);
-                _weaponAt = Main.GameUpdateCount;
-            }
+            _weapon = _loadout.Tick(p, 0, applyAmmo: false);
             if (_weapon != null) threat = CombatKit.NearestThreat(p, _weapon);
         }
 
@@ -122,6 +136,7 @@ public static class Reflexes
         ControlIntent intent = default;
         if (threat != null && _weapon is { } w)
         {
+            _loadout.ApplyAmmo(p);
             bool held = _lease.Hold(p, w.Slot);
             intent = CombatKit.Aim(intent, p, w, threat, fire: held, ref _lastUse);
         }
@@ -175,8 +190,13 @@ public static class Reflexes
         Arbiter.Reset();
         Surfacer.Reset();
         _healOwner = null;
-        if (p != null) _lease.Restore(p);
+        if (p != null)
+        {
+            _loadout.Restore(p);
+            _lease.Restore(p);
+        }
         _lease = new HeldItemLease();
+        _loadout = NewLoadout(_defendWeapon, _defendAmmo);
         _weapon = null;
         _targetId = -1;
         _lastUse = false;
@@ -184,6 +204,7 @@ public static class Reflexes
 
     private static void EndDefense(Player p)
     {
+        _loadout.Restore(p);
         _lease.Restore(p);
         _targetId = -1;
         _lastUse = false;

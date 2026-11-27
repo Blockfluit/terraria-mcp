@@ -95,15 +95,69 @@ public static class CombatKit
 
     // ---- weapons --------------------------------------------------------------------------------------------------
 
-    /// <summary>Highest expected-DPS weapon usable right now (ammo / mana available), or null.</summary>
+    /// <summary>Highest expected-DPS weapon usable right now (ammo / mana available), or null. Only a convenience for
+    /// <c>attack</c> without <c>weapon</c> and for fallbacks: the LLM chooses weapons.</summary>
     /// <param name="targetDefense">The target's defense, so a low-damage fast weapon doesn't win against armor.</param>
-    public static Weapon? BestWeapon(Player p, int targetDefense = 0)
+    /// <param name="prefer">Prefer this style (a strategy's need) when any such weapon is usable.</param>
+    /// <param name="useAmmo">Prefer weapons firing this ammo class (an ammo the LLM chose), when any is usable.</param>
+    /// <param name="exclude">Never pick this item (the chosen weapon that just became unusable).</param>
+    public static Weapon? BestWeapon(Player p, int targetDefense = 0, WeaponStyle? prefer = null, int useAmmo = 0, Item? exclude = null)
     {
-        if (p.noItems || p.cursed) return null;
-        var candidates = new List<WeaponCandidate>();
+        var candidates = Candidates(p, exclude);
+        WeaponCandidate? best = null;
+        if (useAmmo > 0)
+            best = WeaponFallback.Pick(candidates.Where(c => p.inventory[c.Slot].useAmmo == useAmmo), targetDefense, prefer);
+        best ??= WeaponFallback.Pick(candidates, targetDefense, prefer);
+        return best is { } b ? new Weapon(b.Slot, p.inventory[b.Slot], b) : null;
+    }
+
+    /// <summary>Every weapon candidate in slots 0-57 (none while the player can't use items).</summary>
+    public static List<WeaponCandidate> Candidates(Player p, Item? exclude = null)
+    {
+        var list = new List<WeaponCandidate>();
+        if (p.noItems || p.cursed) return list;
         for (int i = 0; i < 58; i++)
-            if (Candidate(p, i) is { } c) candidates.Add(c);
-        return WeaponScoring.Best(candidates, targetDefense) is { } best ? new Weapon(best.Slot, p.inventory[best.Slot], best) : null;
+            if (!ReferenceEquals(p.inventory[i], exclude) && Candidate(p, i) is { } c) list.Add(c);
+        return list;
+    }
+
+    /// <summary>Where <paramref name="item"/> is now (slot 0-57): the same object, else the first item of its type
+    /// (HeldItemLease and the player move items between slots). -1 if gone.</summary>
+    public static int Locate(Player p, Item item)
+    {
+        for (int i = 0; i < 58; i++)
+            if (ReferenceEquals(p.inventory[i], item) && !item.IsAir) return i;
+        for (int i = 0; i < 58; i++)
+            if (!p.inventory[i].IsAir && p.inventory[i].type == item.type) return i;
+        return -1;
+    }
+
+    /// <summary>Slots 0-57 as Core's <see cref="AmmoOrder"/> sees them.</summary>
+    public static AmmoSlot[] AmmoSlots(Player p)
+    {
+        var a = new AmmoSlot[AmmoOrder.SearchedSlots];
+        for (int i = 0; i < a.Length; i++)
+        {
+            var it = p.inventory[i];
+            a[i] = it.IsAir ? default : new AmmoSlot(it.ammo, it.type, it.stack);
+        }
+        return a;
+    }
+
+    private static Dictionary<int, string>? _ammoNames;
+
+    /// <summary>A short name for an ammo class (<c>Item.useAmmo</c> / <c>Item.ammo</c>): "arrow", "bullet", "gel"…;
+    /// otherwise the class's base item name, lower case. Null for 0.</summary>
+    public static string? AmmoClassName(int ammoClass)
+    {
+        if (ammoClass <= 0) return null;
+        _ammoNames ??= new Dictionary<int, string>
+        {
+            [AmmoID.Arrow] = "arrow", [AmmoID.Bullet] = "bullet", [AmmoID.Rocket] = "rocket", [AmmoID.Dart] = "dart",
+            [AmmoID.Gel] = "gel", [AmmoID.FallenStar] = "fallen star", [AmmoID.Sand] = "sand", [AmmoID.Snowball] = "snowball",
+            [AmmoID.Coin] = "coin", [AmmoID.Solution] = "solution", [AmmoID.Stake] = "stake", [AmmoID.Flare] = "flare",
+        };
+        return _ammoNames.TryGetValue(ammoClass, out var n) ? n : Lang.GetItemNameValue(ammoClass).ToLowerInvariant();
     }
 
     /// <summary>
@@ -123,9 +177,9 @@ public static class CombatKit
         return n;
     }
 
-    /// <summary>Is the chosen weapon still in its slot and usable (ammo / mana)?</summary>
+    /// <summary>Is the chosen weapon still in the inventory (wherever a held-item swap put it) and usable (ammo / mana)?</summary>
     public static bool StillUsable(Player p, Weapon w) =>
-        ReferenceEquals(p.inventory[w.Slot], w.Item) && Candidate(p, w.Slot) is { Usable: true };
+        Locate(p, w.Item) is var s and >= 0 && ReferenceEquals(p.inventory[s], w.Item) && Candidate(p, s) is { Usable: true };
 
     /// <summary>Score inputs for inventory slot <paramref name="slot"/>, or null if the item isn't a weapon we use.</summary>
     public static WeaponCandidate? Candidate(Player p, int slot)

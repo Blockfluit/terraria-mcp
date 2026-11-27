@@ -323,13 +323,18 @@ public static class Retreat
 
 /// <summary>The structured outcome attack reports in the task's result. Boss fields only for a boss fight
 /// (<see cref="Boss"/> = its name); <see cref="BossLifeLeftPct"/> only when it wasn't killed; <see cref="AmmoLeft"/>
-/// only while the weapon uses ammo.</summary>
+/// only while the weapon uses ammo. <see cref="Weapon"/>/<see cref="Ammo"/>/<see cref="Strategy"/>: what was used last;
+/// <see cref="Switches"/>: every weapon/ammo switch (fallbacks), in order, omitted when none.</summary>
 public sealed record AttackResult(int Killed, string[] Kills, int DamageTaken, float DurationS, int Dodges, bool Retreated,
     int PotionsUsed = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Boss = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BossKilled = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? BossLifeLeftPct = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? AmmoLeft = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? AmmoLeft = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Weapon = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Ammo = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Strategy = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Switches = null);
 
 /// <summary>Running totals for one attack task: life lost (decreases only; healing doesn't offset it), kills, dodges,
 /// potions, and the boss's last seen life.</summary>
@@ -346,6 +351,12 @@ public sealed class AttackStats
     public bool Retreated { get; set; }
     public int PotionsUsed { get; set; }
     public int? AmmoLeft { get; set; }
+    public string? Weapon { get; set; }
+    public string? Ammo { get; set; }
+    public string? Strategy { get; set; }
+    private readonly List<string> _switches = new();
+    public IReadOnlyList<string> Switches => _switches;
+    public void AddSwitch(string what) => _switches.Add(what);
     public IReadOnlyList<string> Kills => _kills;
 
     /// <summary>The boss being fought (null: not a boss fight), whether it died, and its last observed life.</summary>
@@ -374,7 +385,8 @@ public sealed class AttackStats
 
     public AttackResult Result(uint nowTick) =>
         new(_kills.Count, _kills.ToArray(), DamageTaken, MathF.Round((nowTick - _startTick) / 60f, 1), Dodges, Retreated,
-            PotionsUsed, Boss, Boss == null ? null : BossKilled, Boss == null || BossKilled ? null : BossLifeLeftPct, AmmoLeft);
+            PotionsUsed, Boss, Boss == null ? null : BossKilled, Boss == null || BossKilled ? null : BossLifeLeftPct, AmmoLeft,
+            Weapon, Ammo, Strategy, _switches.Count > 0 ? _switches.ToArray() : null);
 }
 
 /// <summary>

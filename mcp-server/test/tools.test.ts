@@ -204,6 +204,55 @@ describe("registerTools", () => {
     for (const prop of ["arena", "heal_below", "kill_minions"]) expect(tool.inputSchema.properties).toHaveProperty(prop);
   });
 
+  it("attack forwards the LLM's weapon, ammo, strategy, keep_distance and fallback", async () => {
+    const conn = new FakeConn(() => ({ started: true, task: "attack", weapon: "Wooden Bow", strategy: "kite" }));
+    const client = await setup(conn);
+    const args = { target: "boss", weapon: "Wooden Bow", ammo: "Flaming Arrow", strategy: "kite", keep_distance: 14, fallback: false };
+    expect((await call(client, "attack", args)).isError).toBeFalsy();
+    expect((await call(client, "attack", { target: 3, weapon: 12, strategy: "hit_and_run" })).isError).toBeFalsy();
+    for (const strategy of ["auto", "hold", "flee_and_shoot"])
+      expect((await call(client, "attack", { target: "nearest", strategy })).isError).toBeFalsy();
+    expect(conn.calls[0]).toEqual({ method: "attack", params: args });
+    expect(conn.calls[1].params).toEqual({ target: 3, weapon: 12, strategy: "hit_and_run" });
+  });
+
+  it("attack rejects a bad strategy, keep_distance, weapon slot or ammo", async () => {
+    const conn = new FakeConn(() => ({ started: true }));
+    const client = await setup(conn);
+    expect((await call(client, "attack", { target: "boss", strategy: "charge" })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", strategy: "kite", keep_distance: 2 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", keep_distance: 31 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", weapon: 58 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", weapon: 1.5 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", weapon: "" })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", ammo: 54 })).isError).toBe(true);
+    expect((await call(client, "attack", { target: "boss", fallback: "no" })).isError).toBe(true);
+    expect(conn.calls).toEqual([]);
+  });
+
+  it("attack description makes the LLM responsible for weapon, ammo and strategy", async () => {
+    const client = await setup(new FakeConn());
+    const tool = (await client.listTools()).tools.find((t) => t.name === "attack")!;
+    for (const word of ["YOU choose", "fallback", "weapon_switch", "kite", "hit_and_run", "hold", "flee_and_shoot", "keep_distance", "ammo slots", "switches"])
+      expect(tool.description).toContain(word);
+    for (const prop of ["weapon", "ammo", "strategy", "keep_distance", "fallback"]) expect(tool.inputSchema.properties).toHaveProperty(prop);
+  });
+
+  it("set_reflexes forwards the auto-defend weapon and ammo", async () => {
+    const conn = new FakeConn(() => ({ autoDefend: true, weapon: "Wooden Bow", ammo: "auto" }));
+    const client = await setup(conn);
+    expect((await call(client, "set_reflexes", { weapon: "Wooden Bow", ammo: "auto" })).isError).toBeFalsy();
+    expect((await call(client, "set_reflexes", { weapon: 3 })).isError).toBeFalsy();
+    expect((await call(client, "set_reflexes", { weapon: -1 })).isError).toBe(true);
+    expect(conn.calls.map((c) => c.params)).toEqual([{ weapon: "Wooden Bow", ammo: "auto" }, { weapon: 3 }]);
+  });
+
+  it("get_inventory description lists the weapon/ammo facts for choosing", async () => {
+    const client = await setup(new FakeConn());
+    const tool = (await client.listTools()).tools.find((t) => t.name === "get_inventory")!;
+    for (const word of ["useTime", "ammoType", "defense"]) expect(tool.description).toContain(word);
+  });
+
   it("get_boss_info is read-only and forwards the boss name", async () => {
     const info = { bosses: [{ key: "eye_of_cthulhu", name: "Eye of Cthulhu", defeated: false }], isNight: true };
     const conn = new FakeConn(() => info);

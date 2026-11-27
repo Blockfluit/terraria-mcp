@@ -37,10 +37,28 @@ public static class CombatCommands
             }
             bool killMinions = Params.Bool(p, "kill_minions", true);
             ArenaBounds? arena = ParseArena(p);
+            var chosen = ResolveWeapon(player, p);
+            var ammo = ResolveAmmo(player, p, chosen);
+            var strategy = AttackStrategy.Auto;
+            if (Params.StringOrNull(p, "strategy") is { } sName && !Strategies.TryParse(sName, out strategy))
+                throw new CommandError(ErrorCodes.BadParams, $"strategy must be one of {string.Join(", ", Strategies.Names)}");
+            float? keep = null;
+            if (Params.Has(p, "keep_distance"))
+            {
+                float kd = Params.Float(p, "keep_distance");
+                if (!float.IsFinite(kd) || kd < Strategies.MinKeepTiles || kd > Strategies.MaxKeepTiles)
+                    throw new CommandError(ErrorCodes.BadParams, $"keep_distance must be {Strategies.MinKeepTiles:0}..{Strategies.MaxKeepTiles:0} tiles");
+                keep = kd;
+            }
+            bool fallback = Params.Bool(p, "fallback", true);
+            if (chosen != null && CombatKit.Candidate(player, CombatKit.Locate(player, chosen)) is { } cc
+                && Strategies.CheckWeapon(strategy, cc.Style, chosen.Name) is { } mismatch)
+                throw new CommandError(ErrorCodes.BadParams, mismatch);
             var npc = all ? Nearest(player, radius) : ResolveTarget(p, player);
-            var weapon = CombatKit.BestWeapon(player)
+            var weapon = chosen ?? CombatKit.BestWeapon(player, npc.defense, Strategies.RequiredStyle(strategy), ammo?.ammo ?? 0)?.Item
                 ?? throw new CommandError(ErrorCodes.MissingItem, "no usable weapon (need a damaging item with its ammo/mana)");
-            var task = new AttackTask(npc, all, radius, retreat, arena, killMinions, healBelow);
+            var loadout = new WeaponLoadout(chosen, ammo, fallback, strategy);
+            var task = new AttackTask(npc, all, radius, retreat, arena, killMinions, healBelow, loadout, keep);
             TaskHost.Start(task);
             return new
             {
@@ -48,7 +66,12 @@ public static class CombatCommands
                 Task = task.Name,
                 Target = new { Id = npc.whoAmI, Name = npc.GivenOrTypeName },
                 All = all,
-                Weapon = weapon.Item.Name,
+                Weapon = weapon.Name,
+                WeaponChoice = chosen != null ? "chosen" : "auto",
+                Ammo = ammo?.Name ?? (weapon.useAmmo > 0 ? player.ChooseAmmo(weapon)?.Name : null),
+                Strategy = Strategies.Name(strategy),
+                KeepDistance = strategy is AttackStrategy.Kite or AttackStrategy.FleeAndShoot ? Strategies.Keep(keep) : (float?)null,
+                Fallback = fallback,
                 Boss = EntityReader.IsBoss(npc) ? true : (bool?)null,
                 Arena = arena is { } a ? new { a.X1, a.X2 } : null,
             };
@@ -67,6 +90,11 @@ public static class CombatCommands
         CommandRouter.Register("set_reflexes", p =>
         {
             // Validate everything before changing anything.
+            var pl = Main.LocalPlayer;
+            bool hasWeapon = Params.Has(p, "weapon"), hasAmmo = Params.Has(p, "ammo");
+            var defWeapon = hasWeapon ? ResolveWeapon(pl, p) : Reflexes.DefendWeapon;
+            var defAmmo = hasAmmo ? ResolveAmmo(pl, p, defWeapon) : Reflexes.DefendAmmo;
+            if (!hasAmmo && defAmmo != null && defWeapon != null && defWeapon.useAmmo != defAmmo.ammo) defAmmo = null; // new weapon, old ammo doesn't fit
             bool? autoDefend = Params.Has(p, "auto_defend") ? Params.Bool(p, "auto_defend") : null;
             bool? pause = Params.Has(p, "pause_when_idle") ? Params.Bool(p, "pause_when_idle") : null;
             float? threshold = null;
@@ -83,10 +111,13 @@ public static class CombatCommands
             if (autoDefend is { } a) cfg.AutoDefend = a;
             if (threshold is { } th) cfg.QuickHealThreshold = th;
             if (pause is { } pw) cfg.PauseWhenIdle = pw;
+            if (hasWeapon || hasAmmo) Reflexes.SetDefendLoadout(pl, defWeapon, defAmmo);
             bool sp = Main.netMode == NetmodeID.SinglePlayer;
             return new
             {
                 AutoDefend = cfg.AutoDefend,
+                Weapon = Reflexes.DefendWeapon?.Name ?? "auto",
+                Ammo = Reflexes.DefendAmmo?.Name ?? "auto",
                 QuickHealThreshold = cfg.QuickHealThreshold,
                 PauseWhenIdle = cfg.PauseWhenIdle,
                 Note = cfg.PauseWhenIdle && !sp ? "pause_when_idle only works in singleplayer" : null,
@@ -95,6 +126,63 @@ public static class CombatCommands
     }
 
     private const float DefaultAllRadius = 25f;
+
+    /// <summary>Optional <c>weapon</c>: an item name or inventory slot (0-57); "auto" or absent = null (best weapon).
+    /// Must be a weapon the AI may use, with ammo to fire.</summary>
+    private static Item? ResolveWeapon(Player pl, JsonElement p)
+    {
+        if (ItemParam(p, "weapon") is not { } q) return null;
+        var it = pl.inventory[ItemLookup.FindSlot(pl, q)];
+        if (!CombatKit.IsWeapon(it))
+            throw new CommandError(ErrorCodes.BadParams,
+                $"{it.Name} is not a weapon the AI may use (tools, ammo, placeables, potions, summon staves, sentries and explosives don't count)");
+        if (it.useAmmo > 0)
+        {
+            if (!pl.HasAmmo(it))
+                throw new CommandError(ErrorCodes.MissingItem, $"{it.Name} has no {CombatKit.AmmoClassName(it.useAmmo)} to fire");
+            if (pl.ChooseAmmo(it) is { } next && CombatKit.IsExplosive(next.shoot))
+                throw new CommandError(ErrorCodes.BadParams, $"{it.Name} would fire explosive {next.Name} (can break your tiles); not allowed");
+        }
+        return it;
+    }
+
+    /// <summary>Optional <c>ammo</c>: an item name or slot; "auto" or absent = null (vanilla's order). Must be ammo that
+    /// fits <paramref name="weapon"/> (or, without one, that some weapon in the inventory fires) and not explosive.</summary>
+    private static Item? ResolveAmmo(Player pl, JsonElement p, Item? weapon)
+    {
+        if (ItemParam(p, "ammo") is not { } q) return null;
+        var it = pl.inventory[ItemLookup.FindSlot(pl, q)];
+        if (it.ammo <= 0) throw new CommandError(ErrorCodes.BadParams, $"{it.Name} is not ammo");
+        if (CombatKit.IsExplosive(it.shoot))
+            throw new CommandError(ErrorCodes.BadParams, $"{it.Name} is explosive (can break your tiles); not allowed");
+        string cls = CombatKit.AmmoClassName(it.ammo) ?? "ammo";
+        if (weapon != null)
+        {
+            if (weapon.useAmmo != it.ammo)
+                throw new CommandError(ErrorCodes.BadParams, weapon.useAmmo > 0
+                    ? $"{it.Name} ({cls}) doesn't fit {weapon.Name}, which fires {CombatKit.AmmoClassName(weapon.useAmmo)}"
+                    : $"{weapon.Name} uses no ammo");
+            return it;
+        }
+        for (int i = 0; i < 58; i++)
+            if (CombatKit.IsWeapon(pl.inventory[i]) && pl.inventory[i].useAmmo == it.ammo) return it;
+        throw new CommandError(ErrorCodes.BadParams, $"no weapon in the inventory fires {it.Name} ({cls})");
+    }
+
+    /// <summary>A string or integer item param; null when absent or "auto".</summary>
+    private static string? ItemParam(JsonElement p, string name)
+    {
+        if (!Params.Has(p, name)) return null;
+        var e = p.GetProperty(name);
+        string? q = e.ValueKind switch
+        {
+            JsonValueKind.Number => e.TryGetInt32(out int n) ? n.ToString() : null,
+            JsonValueKind.String => e.GetString(),
+            _ => null,
+        };
+        if (string.IsNullOrWhiteSpace(q)) throw new CommandError(ErrorCodes.BadParams, $"{name} must be an item name or inventory slot (or \"auto\")");
+        return string.Equals(q.Trim(), "auto", StringComparison.OrdinalIgnoreCase) ? null : q;
+    }
 
     /// <summary>Optional <c>arena: {x1, x2}</c> (tile columns, any order, at least <see cref="ArenaBounds.MinWidth"/>
     /// wide, at most 400).</summary>
