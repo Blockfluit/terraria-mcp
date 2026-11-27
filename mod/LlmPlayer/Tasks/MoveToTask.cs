@@ -31,6 +31,10 @@ namespace LlmPlayer.Tasks;
 /// (<see cref="HeldItemLease"/>). Result: platforms/blocks used, platforms left.</item>
 /// <item>Doors: when the follower asks to interact with a door (OpenDoor / CloseDoor steps) it is opened or closed
 /// like a right-click (<see cref="DoorActions"/>, vanilla reach), at most every <see cref="DoorRetryTicks"/> ticks.</item>
+/// <item>Travel memory (<see cref="TrailLeg"/> over <see cref="TravelMemory"/>, tile goals only): a goal beyond the
+/// planning window first follows the trail of tiles the player stood on before, hop by hop (each plan heads for a trail
+/// waypoint); a walk that stops making progress, or whose plans keep failing, tries a trail route from where it is
+/// instead of failing. A waypoint that can't be planned to drops the trail (normal planning resumes).</item>
 /// <item>Torches (<see cref="Torches"/>, move_to's <c>torches</c>): in the dark underground or in a dug tunnel, with no
 /// torch within 10 tiles, it stops between steps, places one within reach (<see cref="PlaceTask"/>: real controls,
 /// vanilla rules) and replans, so the way is revealed for this and later trips (<see cref="WalkTorch"/> decides when
@@ -98,6 +102,10 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     private bool _partial, _pathCrossesUnknown;
     private TilePoint? _resolvedGoal;
     private ProgressGuard _progress = new(maxStalls: 3);
+    private TrailLeg? _trail;
+    private int _progressEpoch;
+    /// <summary>The trail part of this walk (none for entity goals: they move).</summary>
+    private TrailLeg Trail => _trail ??= new TrailLeg(_entityId == null ? TravelMemory.Current : null);
     private readonly ReplanGuard _repeats = new();
     private readonly RouteCommitment _route = new();
     private int _ticksSincePlan, _retryIn, _failures, _stepsAtPlan;
@@ -159,7 +167,7 @@ public sealed class MoveToTask : IGameTask<GameCtx>
         if (_entityId is { } id && !UpdateEntityGoal(id, here, out var why)) return Finish(ctx, GameTaskStatus.Failed, why);
 
         int dist = Chebyshev(here, _goal);
-        Progress = $"{dist} tiles remaining";
+        Progress = $"{dist} tiles remaining" + (_trail?.Active == true ? " (following a known trail)" : "");
         if ((dist <= _tolerance || InGoalSet(here)) && k.OnGround) return Finish(ctx, GameTaskStatus.Succeeded, null);
 
         if (_torch != null) return TickTorch(ctx, here);
@@ -197,14 +205,24 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                 _failures = 0;
                 DropFollower();
                 _route.OnArrived();
+                Trail.OnArrived(here);
                 // A complete plan whose goal was snapped (the requested tile wasn't standable) ends within tolerance
                 // of the snapped goal, maybe 2-4 tiles from _goal: that's as close as the body can get, so done.
                 // Without this the task replanned the same path forever ("2 tiles remaining").
                 if (!_partial && _resolvedGoal is { } rg && (Chebyshev(here, rg) <= _tolerance || InGoalSet(here)) && k.OnGround)
                     return Finish(ctx, GameTaskStatus.Succeeded, null);
                 // Any plan (partial or not) that keeps ending no closer to the goal: give up instead of looping.
-                if (_progress.RecordArrival(Chebyshev(here, _goal)))
+                SyncProgress();
+                if (_progress.RecordArrival(Trail.Distance(here, _goal)))
                 {
+                    // A trail the player walked before may lead on from here.
+                    if (Trail.TryRescue(here, _goal))
+                    {
+                        SyncProgress();
+                        StartPlan(p, here);
+                        ControlState.Pending = default;
+                        return GameTaskStatus.Running;
+                    }
                     // The route within the platform reserve leads nowhere: try once more with every build item.
                     if (TryReleaseReserve(p, "no progress"))
                     {
@@ -338,12 +356,26 @@ public sealed class MoveToTask : IGameTask<GameCtx>
                 _retryIn = 0;
                 return GameTaskStatus.Running;
             }
+            // A plan to a trail waypoint failed: plan normally at once (not counted).
+            if (Trail.OnPlanFailed())
+            {
+                _retryIn = 0;
+                return GameTaskStatus.Running;
+            }
             if (deterministic || ++_failures >= MaxConsecutiveFailures)
+            {
+                if (!deterministic && Trail.TryRescue(here, _goal))
+                {
+                    _failures = 0;
+                    _retryIn = 0;
+                    return GameTaskStatus.Running;
+                }
                 return Finish(ctx, GameTaskStatus.Failed, r.FailureReason);
+            }
             _retryIn = RetryDelayTicks;
             return GameTaskStatus.Running;
         }
-        _partial = job.IsPartial;
+        _partial = job.IsPartial || job.RequestedGoal != _goal; // a trail waypoint is an intermediate target too
         _resolvedGoal = r.ResolvedGoal;
         _route.OnPlanned(job.PlannedGoal, job.IsPartial);
         // The search started from the normalized start (FindPath): the follower's first "previous position" must match.
@@ -375,10 +407,22 @@ public sealed class MoveToTask : IGameTask<GameCtx>
     {
         _job?.Cancel();
         var profile = ProfileBuilder.From(p, _allowDig, _allowBuild, EffectiveReserve);
+        // Far goals hop along the travel memory's trail while there is one (Core TrailLeg decides).
+        var target = Trail.PlanGoal(here, _goal);
+        bool onTrail = Trail.Target != null;
         // Replans stick to the current partial target unless a clearly better one appears (no ping-pong between two).
-        var hint = _route.BeforePlan(here, _goal);
-        _job = new PlanJob(here, _goal, profile, new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig,
-            GoalSet: _goalSet), hint);
+        var hint = _route.BeforePlan(here, target);
+        _job = new PlanJob(here, target, profile, onTrail
+            ? new PathOptions(_allowDig, _allowBuild, GoalTolerance: TrailTravel.ReachedRadius)
+            : new PathOptions(_allowDig, _allowBuild, GoalTolerance: _tolerance, DigToGoal: DigToGoal && _allowDig, GoalSet: _goalSet), hint);
+    }
+
+    /// <summary>The trail started or ended: the progress measure changed meaning, so start a fresh guard.</summary>
+    private void SyncProgress()
+    {
+        if (Trail.Epoch == _progressEpoch) return;
+        _progressEpoch = Trail.Epoch;
+        _progress = new ProgressGuard(maxStalls: 3);
     }
 
     private void DropFollower()
