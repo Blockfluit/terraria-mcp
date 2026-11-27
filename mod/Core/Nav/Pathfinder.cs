@@ -38,7 +38,8 @@ namespace LlmPlayer.Core.Nav;
 /// the previous position, place a platform at WorkTile (1..2 rows under Pos's feet row + 1, i.e. at most 3 rows below
 /// the current feet: vanilla placement reach), then either drop through the platform underfoot (Pos straight below:
 /// hold Down) or step one tile sideways off the edge (Pos one column over), and land on it. Only generated where the
-/// plain fall/drop from there is not safe (or finds no floor), so real routes and safe falls always win.</item>
+/// plain fall/drop from there is not safe, finds no floor or ends in liquid (a non-swimmer can't climb back out of a pool:
+/// spots above the water are only reached on platforms), so real routes and safe dry falls always win.</item>
 /// <item>OpenDoor: stand at Pos (= the previous position) and open the closed door at WorkTile (any of its tiles);
 /// always followed by the Walk into the door's column. Only plain walks pass doors (no digging, jumping or
 /// falling through a door column).</item>
@@ -953,8 +954,11 @@ public static class Pathfinder
             }
         }
 
-        /// <summary>Falling from feet row <paramref name="fy"/> (column x) lands safely, measured from source row y.</summary>
-        private bool SafeFall(int x, int fy, int y) => FallScan(x, fy, out int ly, out bool lq) && (lq || FallOk(ly - y));
+        /// <summary>Falling from feet row <paramref name="fy"/> (column x) lands safely on dry ground, measured from source
+        /// row y, so BuildDown isn't needed. A fall into liquid doesn't count: it is harmless, but a non-swimmer can't get
+        /// back up out of a pool (no building while wet), so every spot above the water would be lost (seen in game: a
+        /// shaft over a pool beside a Shadow Orb; each mid-shaft stand to hammer the orb from was "unreachable").</summary>
+        private bool SafeFall(int x, int fy, int y) => FallScan(x, fy, out int ly, out bool lq) && !lq && FallOk(ly - y);
 
         /// <summary>The node was reached by placing a platform that lies under the body at (tx, y).</summary>
         private bool PlannedUnder(int ni, int tx, int y)

@@ -38,6 +38,23 @@ public static class Valuables
     public static bool IsSwordInStone(int type, int frameX) =>
         type == LargePiles2 && frameX / LargePileFrameWidth is SwordStyle or SwordDecoyStyle;
 
+    /// <summary>Loot objects that are always 2x2 (18 px frames per sub-tile, styles side by side or stacked in 36 px
+    /// steps), whatever the game's TileObjectData says or lacks: pots, life crystals, life fruit and Shadow Orbs /
+    /// Crimson Hearts. Seen in game: with no 2x2 size known for orbs, each orb tile was its own object and
+    /// <c>blast</c> counted one orb as two ("1 orbs were already broken: breaking 2 more summons the Eater of
+    /// Worlds").</summary>
+    public static bool IsFixed2x2(int type) => type is Pots or Heart or LifeFruit or ShadowOrbs;
+
+    /// <summary>Top-left tile of the w x h object containing (x, y), from the tile's frame (18 px per sub-tile; style
+    /// offsets are whole multiples of the object's size, so the remainder is the sub-tile).</summary>
+    public static (int X, int Y) FrameOrigin(int x, int y, int frameX, int frameY, int w, int h)
+    {
+        if (w <= 1 && h <= 1) return (x, y);
+        int ox = frameX / 18 % Math.Max(1, w);
+        int oy = frameY / 18 % Math.Max(1, h);
+        return (x - ox, y - oy);
+    }
+
     /// <summary>Natural loot the AI may break (by type; the location rules of Protection still apply).</summary>
     public static bool IsBreakableLoot(int type, int frameX) =>
         type is Heart or Pots or LifeFruit || IsSwordInStone(type, frameX);

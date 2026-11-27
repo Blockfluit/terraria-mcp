@@ -1,3 +1,4 @@
+using LlmPlayer.Core.Observe;
 using LlmPlayer.Core.Gather;
 using LlmPlayer.Core.Grid;
 using Xunit;
@@ -449,6 +450,71 @@ public class BlastSafetyTests
         Assert.Contains("allow_boss_summon", Check(Orb(), allowOrb: true, orbsBroken: 2).Refusal);
         Assert.Null(Check(Orb(), allowOrb: true, orbsBroken: 2, allowBoss: true).Refusal);
         Assert.Null(Check(Orb(), allowOrb: true, orbsBroken: 1).Refusal);
+    }
+
+    public enum OriginSource { Object, Frames, PerTile }
+
+    /// <summary>An orb's four tiles with their origin as the glue reports it: the object origin, derived from the real
+    /// frames (18 px per sub-tile, style in 36 px steps: 0 Shadow Orb, 1 Crimson Heart), or missing (each tile alone).</summary>
+    private static void AddOrb(Dictionary<TilePoint, BlastTile> d, int ox, int oy, OriginSource src, int style)
+    {
+        for (int dx = 0; dx < 2; dx++)
+            for (int dy = 0; dy < 2; dy++)
+            {
+                int x = ox + dx, y = oy + dy;
+                TilePoint? origin = src switch
+                {
+                    OriginSource.Object => new TilePoint(ox, oy),
+                    OriginSource.Frames => Valuables.FrameOrigin(x, y, style * 36 + dx * 18, dy * 18, 2, 2) is var (fx, fy)
+                        ? new TilePoint(fx, fy) : null,
+                    _ => null,
+                };
+                d[new TilePoint(x, y)] = new BlastTile(BlastTileKind.Orb, style == 0 ? "Shadow Orb" : "Crimson Heart", Origin: origin);
+            }
+    }
+
+    /// <summary>Seen in game: shadowOrbCount 1 and exactly one orb in the zone was refused as "breaking 2 more summons the
+    /// Eater of Worlds". Every orb is counted once, however its tiles report their origin.</summary>
+    [Theory]
+    [OrbMatrixData]
+    public void OrbCount_CountsEachOrbOnce(int orbsInZone, int broken, OriginSource src)
+    {
+        var over = new Dictionary<TilePoint, BlastTile>();
+        if (orbsInZone >= 1) AddOrb(over, 48, 51, src, 0);
+        if (orbsInZone >= 2) AddOrb(over, 52, 51, src, 1);
+        var r = Check(over, allowOrb: true, orbsBroken: broken);
+        Assert.Equal(orbsInZone, r.Orbs);
+        bool summons = orbsInZone > 0 && broken + orbsInZone >= 3;
+        if (summons) Assert.Contains($"breaking {orbsInZone} more", r.Refusal);
+        else Assert.Null(r.Refusal);
+    }
+
+    private sealed class OrbMatrixDataAttribute : Xunit.Sdk.DataAttribute
+    {
+        public override IEnumerable<object[]> GetData(System.Reflection.MethodInfo testMethod) =>
+            from n in new[] { 0, 1, 2 }
+            from b in new[] { 0, 1, 2 }
+            from s in Enum.GetValues<OriginSource>()
+            select new object[] { n, b, s };
+    }
+
+    [Fact]
+    public void FrameOrigin_IsTheTopLeftOfEachOrb()
+    {
+        // Shadow Orb frames x 0/18, Crimson Heart 36/54; y 0/18.
+        Assert.Equal((5608, 744), Valuables.FrameOrigin(5609, 745, 18, 18, 2, 2));
+        Assert.Equal((5608, 744), Valuables.FrameOrigin(5608, 745, 36, 18, 2, 2));
+        Assert.Equal((5608, 744), Valuables.FrameOrigin(5609, 744, 54, 0, 2, 2));
+        Assert.True(Valuables.IsFixed2x2(Valuables.ShadowOrbs));
+    }
+
+    [Fact]
+    public void DistinctOrbs_MergesTilesOfOneOrb()
+    {
+        Assert.Equal(0, BlastSafety.DistinctOrbs(Array.Empty<TilePoint>()));
+        Assert.Equal(1, BlastSafety.DistinctOrbs(new TilePoint[] { new(10, 10), new(11, 10), new(10, 11), new(11, 11) }));
+        Assert.Equal(2, BlastSafety.DistinctOrbs(new TilePoint[] { new(10, 10), new(11, 10), new(12, 10), new(13, 10) }));
+        Assert.Equal(2, BlastSafety.DistinctOrbs(new TilePoint[] { new(10, 10), new(14, 10) }));
     }
 
     [Fact]

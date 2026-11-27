@@ -87,13 +87,10 @@ public static class TileClass
     /// <summary>Top-left tile of the multi-tile object containing (x,y), from its frame (18 px per sub-tile).</summary>
     public static (int X, int Y) ObjectOrigin(int x, int y, Tile tile)
     {
-        var data = TileObjectData.GetTileData(tile.TileType, 0);
-        // Pots and life crystals have no TileObjectData but are always 2x2 (explore_caves listed each pot 4 times).
-        (int w, int h) = data != null ? (data.Width, data.Height)
-            : tile.TileType is TileID.Pots or TileID.Heart or TileID.LifeFruit ? (2, 2) : (1, 1);
-        if (w == 1 && h == 1) return (x, y);
-        int ox = tile.TileFrameX / 18 % Math.Max(1, w);
-        int oy = tile.TileFrameY / 18 % Math.Max(1, h);
-        return (x - ox, y - oy);
+        // Pots, life crystals, life fruit and orbs are always 2x2 (explore_caves listed each pot 4 times; blast
+        // counted one Shadow Orb as two): don't rely on TileObjectData for them.
+        (int w, int h) = Valuables.IsFixed2x2(tile.TileType) ? (2, 2)
+            : TileObjectData.GetTileData(tile.TileType, 0) is { } data ? (data.Width, data.Height) : (1, 1);
+        return Valuables.FrameOrigin(x, y, tile.TileFrameX, tile.TileFrameY, w, h);
     }
 }
