@@ -49,10 +49,11 @@ public static class TileClass
     }
 
     /// <summary>Furniture/objects the AI must never break (type-based part of Protection). World-generated loot
-    /// (pots, life crystals, life fruit: <see cref="Valuables.IsLootType"/>) isn't; shadow orbs, altars, chests,
+    /// (pots, life crystals, life fruit: <see cref="Valuables.IsLootType"/>) isn't, nor are tombstones (the player's
+    /// own graves: seen in game, one blocked a blast at a Shadow Orb and couldn't be mined); shadow orbs, altars, chests,
     /// doors and stations are.</summary>
     public static bool IsProtectedType(int type) =>
-        !IsTree(type) && !Valuables.IsLootType(type)
+        !IsTree(type) && !Valuables.IsLootType(type) && type != TileID.Tombstones
         && (IsContainer(type) || IsStation(type) || IsDoor(type) || IsMultiTileObject(type));
 
     /// <summary><see cref="IsProtectedType"/> with the frame: also lets the sword in stone of an Enchanted Sword
