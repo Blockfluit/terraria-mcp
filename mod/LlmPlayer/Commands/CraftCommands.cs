@@ -26,7 +26,10 @@ public static class CraftCommands
                 throw new CommandError(ErrorCodes.BadParams, $"count must be 1..{Crafting.MaxCraftCount}");
             if (Params.Bool(p, "with_intermediates", false))
                 return Crafting.CraftWithIntermediates(Main.LocalPlayer, Params.String(p, "item"), count);
-            return Crafting.Craft(Main.LocalPlayer, Params.String(p, "item"), count);
+            int? items = Params.Has(p, "items") ? Params.Int(p, "items") : null;
+            if (items is < 1 or > 99_999) throw new CommandError(ErrorCodes.BadParams, "items must be 1..99999");
+            if (items != null && Params.Has(p, "count")) throw new CommandError(ErrorCodes.BadParams, "give count or items, not both");
+            return Crafting.Craft(Main.LocalPlayer, Params.String(p, "item"), count, items);
         }, isAction: true);
     }
 }

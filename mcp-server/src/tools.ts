@@ -301,7 +301,8 @@ const TOOLS: ToolDef[] = [
       INSTANT_ACTION,
     shape: {
       item: z.string().min(1).describe("Result item name (case-insensitive)"),
-      count: int().min(1).max(999).optional().describe("Times to craft, default 1"),
+      count: int().min(1).max(999).optional().describe("Times to craft, default 1. Careful: one craft can make many items (one Wooden Arrow craft = 25 arrows, one Torch craft = 3); use `items` to ask for an item count"),
+      items: int().min(1).max(99999).optional().describe("Instead of count: craft until at least this many items are made (e.g. items 500 of Wooden Arrow = 20 crafts). The reply's `produced` is the item count made"),
       with_intermediates: z.boolean().optional().describe("Also craft missing intermediate ingredients first, default false"),
     },
   },

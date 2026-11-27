@@ -16,7 +16,9 @@ public sealed record IngredientView(string Name, int Stack);
 
 public sealed record RecipeView(string Result, int Stack, List<IngredientView> Ingredients, List<string> Stations);
 
-public sealed record CraftResult(string Item, int Crafted, int Requested, string? Reason, int DroppedAtFeet);
+/// <param name="Crafted">Times the recipe was crafted.</param>
+/// <param name="Produced">Items made: Crafted × the recipe's yield (one Wooden Arrow craft makes 25).</param>
+public sealed record CraftResult(string Item, int Crafted, int Requested, int Produced, string? Reason, int DroppedAtFeet);
 
 public sealed record CraftedStep(string Item, int Crafted, int Planned);
 
@@ -74,14 +76,16 @@ public static class Crafting
     /// Craft <paramref name="query"/> up to <paramref name="count"/> times. Throws missing_item (no recipe makes it,
     /// or ingredients short), missing_station (stations/conditions unmet) when not even one craft is possible.
     /// </summary>
-    public static CraftResult Craft(Player p, string query, int count)
+    /// <param name="items">Instead of <paramref name="count"/>: craft until at least this many items are made (seen in
+    /// play: count 999 of Wooden Arrow made 9725 arrows and used up all the wood; count is crafts, not items).</param>
+    public static CraftResult Craft(Player p, string query, int count, int? items = null)
     {
         CraftResult? result = null;
-        WithoutGuideItem(() => result = CraftInner(p, query, count));
+        WithoutGuideItem(() => result = CraftInner(p, query, count, items));
         return result!;
     }
 
-    private static CraftResult CraftInner(Player p, string query, int count)
+    private static CraftResult CraftInner(Player p, string query, int count, int? items)
     {
         Refresh(p);
         var candidates = AllRecipes().ToList();
@@ -95,6 +99,8 @@ public static class Crafting
             available.Contains(r.RecipeIndex), MissingStations(p, r).Count == 0, RecipeMath.Missing(Ingredients(p, r)).Count)).ToList())];
 
         if (!available.Contains(picked.RecipeIndex)) throw Unavailable(p, picked);
+        if (items is int wanted)
+            count = Math.Clamp((wanted + Math.Max(1, picked.createItem.stack) - 1) / Math.Max(1, picked.createItem.stack), 1, MaxCraftCount);
 
         // Craft one at a time while the game still offers the recipe (alchemy savings can stretch ingredients past
         // a precomputed maximum, so the game's availability is the stop condition).
@@ -116,7 +122,7 @@ public static class Crafting
         }
         if (dropped > 0)
             reason = (reason == null ? "" : reason + "; ") + $"inventory full: {dropped} dropped at the player's feet";
-        return new CraftResult(picked.createItem.Name, crafted, count, reason, dropped);
+        return new CraftResult(picked.createItem.Name, crafted, count, crafted * Math.Max(1, picked.createItem.stack), reason, dropped);
     }
 
     /// <summary>
