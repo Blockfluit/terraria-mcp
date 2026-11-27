@@ -33,6 +33,8 @@ public readonly record struct FollowerOutput(ControlIntent Intent, FollowerStatu
 /// <item>Dig: hold the centred stance (so a dug-out floor drops the whole hitbox) and mine WorkTile.</item>
 /// <item>BuildPlatform bridging: stop at the source, place, walk on. Climbing: stand centred, jump, place WorkTile
 /// once the feet are above it, land on it.</item>
+/// <item>BuildDown: stand still at the source and place WorkTile (below the feet), then drop through the platform
+/// underfoot (centred, Down for a tick) or walk off the edge, and land on it.</item>
 /// <item>DropThrough / straight-down Fall: centre first, then hold Down for a tick (or wait for the dig).</item>
 /// <item>Swim (vanilla has no swimming without Flippers): jump off the bottom, holding while rising. With
 /// <c>canSwim</c> (Flippers etc.) jump is also pressed again in mid-water whenever the player stops rising.</item>
@@ -148,7 +150,7 @@ public sealed class PathFollower
     }
 
     private static float Tx(TilePoint p) => p.X + PlayerPhysics.CenterOffset;
-    private static bool IsWork(MoveKind kind) => kind is MoveKind.Dig or MoveKind.BuildPlatform or MoveKind.OpenDoor;
+    private static bool IsWork(MoveKind kind) => kind is MoveKind.Dig or MoveKind.BuildPlatform or MoveKind.BuildDown or MoveKind.OpenDoor;
     private static bool IsDoor(MoveKind kind) => kind is MoveKind.OpenDoor or MoveKind.CloseDoor;
 
     private static bool WorkDone(PathStep s, ITileGrid grid)
@@ -170,7 +172,7 @@ public sealed class PathFollower
     {
         MoveKind.Dig or MoveKind.OpenDoor => WorkDone(s, grid),
         MoveKind.CloseDoor => WorkDone(s, grid) || _closeTicks >= CloseDoorPatience,
-        MoveKind.BuildPlatform => WorkDone(s, grid) && StandingAt(s.Pos, k),
+        MoveKind.BuildPlatform or MoveKind.BuildDown => WorkDone(s, grid) && StandingAt(s.Pos, k),
         MoveKind.Swim => SwimReached(s.Pos, k),
         // Falling/jumping into water: the player sinks (no swimming without Flippers), so anywhere at or below
         // the planned entry point counts; the Swim steps that follow lift it back up.
@@ -264,6 +266,10 @@ public sealed class PathFollower
 
             case MoveKind.BuildPlatform:
                 return Build(step, prev, k, grid, ref intent);
+
+            case MoveKind.BuildDown:
+                BuildDown(step, prev, k, grid, ref intent);
+                return null;
 
             case MoveKind.Jump:
                 return Jump(step, prev, k, grid, ref intent);
@@ -376,6 +382,32 @@ public sealed class PathFollower
         Steer(txs, k, ref intent);
         if (Aligned(txs, k) && !_jumpHeld && k.Y > step.Pos.Y + ArriveTolerance) intent.Jump = true;
         return null;
+    }
+
+    private void BuildDown(PathStep step, TilePoint s, PlayerKinematics k, ITileGrid grid, ref ControlIntent intent)
+    {
+        bool onSource = k.OnGround && k.Y < step.Pos.Y - ArriveTolerance;
+        if (!WorkDone(step, grid))
+        {
+            // Place it from the source; never leave before it exists (the drop below isn't safe).
+            if (onSource) Steer(Tx(s), k, ref intent);
+            else SteerInto(step.Pos, k, ref intent);
+            intent.UseItem = onSource;
+            intent.CursorTile = step.WorkTile;
+            return;
+        }
+        if (!onSource)
+        {
+            SteerInto(step.Pos, k, ref intent);
+            return;
+        }
+        if (step.Pos.X == s.X)
+        {
+            // Through the platform underfoot: centre over the new one first, then Down for a tick.
+            if (Aligned(Tx(s), k)) intent.Down = true;
+            else Steer(Tx(s), k, ref intent);
+        }
+        else Steer(Tx(step.Pos), k, ref intent); // walk off the edge (slowly: the landing is right below)
     }
 
     /// <summary>Would releasing jump now still carry the feet above `levels` tiles over the source feet row?</summary>
@@ -559,7 +591,8 @@ public sealed class PathFollower
             {
                 var below = new TilePoint(bx, p.Y + 1);
                 var t = grid.Get(below);
-                if (t.IsStandable || t.Kind == TileKind.Unknown || IsPlannedWork(below, MoveKind.BuildPlatform, i))
+                if (t.IsStandable || t.Kind == TileKind.Unknown || IsPlannedWork(below, MoveKind.BuildPlatform, i)
+                    || IsPlannedWork(below, MoveKind.BuildDown, i))
                     supported = true;
                 if (grid.Get(bx, p.Y).Kind is TileKind.Water or TileKind.Honey or TileKind.Lava) inLiquid = true;
             }

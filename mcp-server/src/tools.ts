@@ -169,7 +169,7 @@ const TOOLS: ToolDef[] = [
       y: tileY().optional(),
       entity_id: int().optional().describe("Entity id from get_entities, instead of x,y"),
       allow_dig: z.boolean().optional().describe("May mine through blocks on the way, default true"),
-      allow_build: z.boolean().optional().describe("May place platforms/blocks to climb or bridge, default true"),
+      allow_build: z.boolean().optional().describe("May place platforms/blocks to climb, bridge, or build down a drop too deep to fall safely (a platform below the feet, then drop onto it), default true"),
     },
     check: (a) =>
       a.entity_id !== undefined || (a.x !== undefined && a.y !== undefined)

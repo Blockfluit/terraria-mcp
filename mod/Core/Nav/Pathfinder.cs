@@ -32,6 +32,11 @@ namespace LlmPlayer.Core.Nav;
 /// <item>BuildPlatform: place a platform at WorkTile, which ends up directly under Pos. Either
 /// bridging (Pos is one tile sideways, WorkTile under it at the current feet+1 row) or climbing
 /// (Pos is straight up 1..3 tiles: jump, place WorkTile below the feet near the apex, land).</item>
+/// <item>BuildDown: descend a drop too deep to fall safely (e.g. a chasm with walls the pickaxe can't dig). Standing at
+/// the previous position, place a platform at WorkTile (1..2 rows under Pos's feet row + 1, i.e. at most 3 rows below
+/// the current feet: vanilla placement reach), then either drop through the platform underfoot (Pos straight below:
+/// hold Down) or step one tile sideways off the edge (Pos one column over), and land on it. Only generated where the
+/// plain fall/drop from there is not safe (or finds no floor), so real routes and safe falls always win.</item>
 /// <item>OpenDoor: stand at Pos (= the previous position) and open the closed door at WorkTile (any of its tiles);
 /// always followed by the Walk into the door's column. Only plain walks pass doors (no digging, jumping or
 /// falling through a door column).</item>
@@ -52,6 +57,9 @@ public static class Pathfinder
     /// <summary>A goal the body can't occupy snaps to the nearest standable cell within this many tiles.</summary>
     public const int GoalSearchRadius = 3;
     private const int MaxBuildUp = 3, MaxBuildsTracked = 511;
+    /// <summary>BuildDown lands at most this many rows lower: its platform then sits 3 rows below the source feet,
+    /// the deepest vanilla's placement reach allows (tileRangeY 4: (bottom/16) + 4 - 2 rows below the feet).</summary>
+    public const int MaxBuildDown = 2;
     // Jump evaluation works on 64-row column bitmasks: 2*MaxJumpUp + 5 rows must fit.
     private const int MaxJumpUpModelled = 29, MaxJumpGapModelled = 32;
 
@@ -326,7 +334,7 @@ public static class Pathfinder
         }
 
         private static bool Standing(MoveKind k) =>
-            k is MoveKind.Walk or MoveKind.StepUp or MoveKind.Jump or MoveKind.Fall or MoveKind.DropThrough;
+            k is MoveKind.Walk or MoveKind.StepUp or MoveKind.Jump or MoveKind.Fall or MoveKind.DropThrough or MoveKind.BuildDown;
 
         private static bool Covers(TilePoint body, int column) => column == body.X || column == body.X + 1;
 
@@ -486,7 +494,7 @@ public static class Pathfinder
                 Horizontal(ni, x, y, builds, +1);
                 StepUp(ni, x, y, builds, -1);
                 StepUp(ni, x, y, builds, +1);
-                DropThrough(ni, x, y, builds);
+                DropThrough(ni, x, y, builds, false);
                 DigDown(ni, x, y, builds);
                 BuildUp(ni, x, y, builds);
                 return;
@@ -505,9 +513,10 @@ public static class Pathfinder
             StepUp(ni, x, y, builds, -1);
             StepUp(ni, x, y, builds, +1);
             Jumps(ni, x, y, builds);
-            if (!built) DropThrough(ni, x, y, builds);
+            DropThrough(ni, x, y, builds, built);
             if (!built) DigDown(ni, x, y, builds);
             BuildUp(ni, x, y, builds);
+            BuildDown(ni, x, y, builds, built);
         }
 
         private void Horizontal(int ni, int x, int y, int builds, int dx)
@@ -546,7 +555,8 @@ public static class Pathfinder
             }
             if (_digs.Count > 0) return;
 
-            if (FallScan(tx, y, out int ly, out bool lq) && (lq || FallOk(ly - y)))
+            // A platform this path just placed under the target body holds it: that is no fall (bridging still works).
+            if (!PlannedUnder(ni, tx, y) && FallScan(tx, y, out int ly, out bool lq) && (lq || FallOk(ly - y)))
                 Add(ni, tx, ly, builds, false, FallCost(ly - y), MoveKind.Fall);
 
             // Bridge: place a platform under the target's inner column, next to our support.
@@ -695,11 +705,12 @@ public static class Pathfinder
         /// <summary>Mask of rows lo..hi (inclusive) relative to `top`.</summary>
         private static ulong Bits(int lo, int hi, int top) => ((1UL << (hi - lo + 1)) - 1) << (lo - top);
 
-        private void DropThrough(int ni, int x, int y, int builds)
+        /// <param name="built">Standing on a platform this path placed (not in the grid yet).</param>
+        private void DropThrough(int ni, int x, int y, int builds, bool built)
         {
             ushort a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
             if (((a | b) & TileCache.Block) != 0) return;
-            if (((a | b) & TileCache.Plat) == 0) return;
+            if (!built && ((a | b) & TileCache.Plat) == 0) return;
             if (!Passable(x, y + 1) || !Passable(x + 1, y + 1)) return;
             if (!FallScan(x, y + 1, out int ly, out bool lq)) return;
             int d = ly - y;
@@ -743,6 +754,59 @@ public static class Pathfinder
             }
         }
 
+        /// <summary>
+        /// Descend where falling isn't safe: place a platform 2–3 rows under the feet (anchored to a known tile or the
+        /// platform this path placed last), then drop through the platform underfoot or step off the edge onto it.
+        /// Repeated, this walks a deep shaft down a platform at a time, every fall short.
+        /// </summary>
+        private void BuildDown(int ni, int x, int y, int builds, bool built)
+        {
+            if (!_canBuild || builds >= _buildCap) return;
+            // Straight down: through a platform underfoot (one from the grid, or the one this path placed: built).
+            ushort a = _t.F(x, y + 1), b = _t.F(x + 1, y + 1);
+            bool platformOnly = built || (((a | b) & TileCache.Block) == 0 && ((a | b) & TileCache.Plat) != 0);
+            if (platformOnly && Passable(x, y + 1) && Passable(x + 1, y + 1) && !SafeFall(x, y + 1, y))
+                Descend(ni, y, x, builds);
+            if (built) return; // stepping off a platform this path placed: the grid doesn't know where it ends
+            for (int dx = -1; dx <= 1; dx += 2)
+            {
+                int tx = x + dx, col = dx > 0 ? x + 2 : x - 1;
+                if (!Passable(col, y) || !Passable(col, y - 1) || !Passable(col, y - 2)) continue;
+                if (HasSupport(tx, y) || BodyHas(tx, y, TileCache.Liquid) || SafeFall(tx, y, y)) continue;
+                Descend(ni, y, tx, builds);
+            }
+        }
+
+        /// <summary>Land 1..<see cref="MaxBuildDown"/> rows below source row <paramref name="y"/> in column tx on a
+        /// platform placed under the landing body.</summary>
+        private void Descend(int ni, int y, int tx, int builds)
+        {
+            for (int k = 1; k <= MaxBuildDown; k++)
+            {
+                int ty = y + k;
+                if (!BodyClear(tx, ty) || BodyHas(tx, ty, TileCache.Liquid)) return;
+                if (k > 1 && HasSupport(tx, ty - 1)) return; // something would catch the feet a row early
+                if (HasSupport(tx, ty)) continue;            // the plain fall/drop covers it
+                for (int wx = tx; wx <= tx + 1; wx++)
+                {
+                    int wy = ty + 1;
+                    if (!PlainAir(wx, wy) || !AnchoredFrom(ni, wx, wy)) continue;
+                    Add(ni, tx, ty, builds + 1, true, BuildCost + FallCost(k), MoveKind.BuildDown, wx: wx, wy: wy, hasWork: true);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>Falling from feet row <paramref name="fy"/> (column x) lands safely, measured from source row y.</summary>
+        private bool SafeFall(int x, int fy, int y) => FallScan(x, fy, out int ly, out bool lq) && (lq || FallOk(ly - y));
+
+        /// <summary>The node was reached by placing a platform that lies under the body at (tx, y).</summary>
+        private bool PlannedUnder(int ni, int tx, int y)
+        {
+            ref var n = ref _nodes[ni];
+            return n.Built && n.HasWork && n.WY == y + 1 && (n.WX == tx || n.WX == tx + 1);
+        }
+
         private bool StepSupport(int x, int y)
         {
             ushort f = _t.F(x, y);
@@ -764,7 +828,7 @@ public static class Pathfinder
         {
             if (Anchored(x, y)) return true;
             ref var n = ref _nodes[ni];
-            return n.Kind == MoveKind.BuildPlatform && n.HasWork && Math.Abs(n.WX - x) + Math.Abs(n.WY - y) == 1;
+            return n.Kind is (MoveKind.BuildPlatform or MoveKind.BuildDown) && n.HasWork && Math.Abs(n.WX - x) + Math.Abs(n.WY - y) == 1;
         }
 
         /// <summary>Known empty air (a background wall behind it is fine).</summary>
