@@ -431,10 +431,17 @@ public sealed class ExploreCavesTask : IGameTask<GameCtx>
         return GameTaskStatus.Running;
     }
 
+    /// <summary>A pot gets this long (walk + swing); then it is skipped (seen in game: a pot behind rock held the task
+    /// at "breaking a pot" for the whole 300 s).</summary>
+    private const int MaxPotTicks = 10 * 60;
+    private int _potTicks;
+
     private GameTaskStatus TickCollect(GameCtx ctx)
     {
         var st = _collect!.Tick(ctx);
-        if (st == GameTaskStatus.Running) return GameTaskStatus.Running;
+        if (st == GameTaskStatus.Running && ++_potTicks < MaxPotTicks) return GameTaskStatus.Running;
+        if (st == GameTaskStatus.Running) _collect.OnCancel(ctx); // gave up on this pot (it stays in _potsTried)
+        _potTicks = 0;
         if (st == GameTaskStatus.Succeeded) _potsBroken++;
         _collect = null;
         ControlState.Pending = default;

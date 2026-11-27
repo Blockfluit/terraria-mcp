@@ -41,7 +41,7 @@ public sealed class StallWatchdog
             _inventory = inventorySignature;
         }
         bool progressed = false;
-        if (progress != null && _seenProgress.Add(progress)) progressed = true;
+        if (progress != null && _seenProgress.Add(WithoutTimers(progress))) progressed = true;
         if (_visited.Add((tileX, tileY))) progressed = true;
         if (inventorySignature != _inventory)
         {
@@ -52,6 +52,11 @@ public sealed class StallWatchdog
         else if (!paused) _idleTicks++;
         return _idleTicks >= LimitTicks;
     }
+
+    /// <summary>Progress messages with elapsed-time counters ("255/300 s", "12 s") change every second without any
+    /// real progress (seen in game: explore_caves idled 300 s at "breaking a pot"); counters don't count.</summary>
+    public static string WithoutTimers(string progress) =>
+        System.Text.RegularExpressions.Regex.Replace(progress, @"\d+(\.\d+)?(/\d+)? ?s\b", "#s");
 
     public void Reset()
     {
