@@ -45,7 +45,8 @@ public static class BossFacts
             + "releases Blue Slimes when hit. Shrinks as it loses life.",
         Tips: new[]
         {
-            "A flat open area or a platform arena; it jumps high, so dodge sideways and drop through platforms.",
+            "A wide flat open area (80+ tiles, nothing to trip over): it hops toward you faster than you run (small, small, medium, big jumps), so run under it while it is high in the air rather than into a corner; attack does this itself.",
+            "Platforms help little: its big jump reaches ~17 tiles up.",
             "Any weapon works; ranged lets you keep away from its jumps.",
             "Drops a Solidifier, often a Slime Hook, Slime Gun, Slimy Saddle or Ninja armor piece.",
         });

@@ -6,10 +6,11 @@ namespace LlmPlayer.Core.Combat;
 
 /// <summary>
 /// An enemy's hitbox and motion, in tiles and tiles/tick (y down). <see cref="Gravity"/> is its fall acceleration in
-/// tiles/tick² (0 for flyers); <see cref="MaxFall"/> caps its fall speed.
+/// tiles/tick² (0 for flyers); <see cref="MaxFall"/> caps its fall speed. <see cref="GroundFriction"/>: the factor its
+/// horizontal speed is multiplied by each tick it rests on the floor (1 = keeps sliding; slimes and King Slime 0.8).
 /// </summary>
 public readonly record struct EnemyMotion(float CX, float CY, float HalfW, float HalfH, float VX, float VY,
-    float Gravity = 0f, float MaxFall = 10f / 16f);
+    float Gravity = 0f, float MaxFall = 10f / 16f, float GroundFriction = 1f);
 
 /// <summary>One way to move for the next fraction of a second: run left/right/stand, with or without a jump, or
 /// dropping through the platform underfoot (<see cref="Drop"/>: hold Down, fall to the next floor below).</summary>
@@ -21,6 +22,11 @@ public readonly record struct ContactForecast(int? FirstContactTick, float MinGa
 {
     public bool Contact => FirstContactTick != null;
 }
+
+/// <summary>A <see cref="ContactForecast"/> plus where both ended up (centres, tiles) at the horizon or the first
+/// contact.</summary>
+public readonly record struct ContactTrace(ContactForecast Forecast, float PlayerCX, float EnemyCX, float EnemyCY,
+    float PlayerVX = 0f);
 
 /// <summary>
 /// Predicts whether the player and an enemy will touch over the next ticks, for a given maneuver. Deliberately simple
@@ -39,7 +45,14 @@ public static class ContactPredictor
     /// <param name="jumpLeft">Ticks of a jump already under way that the held jump key still sustains (vanilla
     /// keeps velocity.Y at -jumpSpeed for up to jumpHeight ticks while the key is held).</param>
     public static ContactForecast Forecast(in PlayerKinematics me, in EnemyMotion e, Maneuver m, float floorBottom,
-        PlayerPhysics phys, int horizonTicks, int jumpLeft = 0)
+        PlayerPhysics phys, int horizonTicks, int jumpLeft = 0) =>
+        Trace(me, e, m, floorBottom, phys, horizonTicks, jumpLeft).Forecast;
+
+    /// <summary><see cref="Forecast"/> that also reports the end positions. <paramref name="minLeft"/>/<paramref name="maxRight"/>
+    /// (tiles): the player's hitbox stops at these edges (an arena's ends); the enemy is unbounded.</summary>
+    public static ContactTrace Trace(in PlayerKinematics me, in EnemyMotion e, Maneuver m, float floorBottom,
+        PlayerPhysics phys, int horizonTicks, int jumpLeft = 0,
+        float minLeft = float.NegativeInfinity, float maxRight = float.PositiveInfinity)
     {
         float px = me.X + HalfW, bottom = me.Y + 1f, vx = me.VelX, vy = me.VelY;
         float accel = phys.RunAcceleration / 16f, max = phys.MaxRunSpeed / 16f, slow = phys.RunSlowdown / 16f;
@@ -51,7 +64,8 @@ public static class ContactPredictor
         bool clampEnemy = e.Gravity > 0f && e.CY + e.HalfH <= floorBottom + 0.01f;
 
         float minGap = Gap(px, bottom - HalfH, ex, ey, e);
-        if (minGap < ContactMargin) return new ContactForecast(0, minGap);
+        if (minGap < ContactMargin) return new ContactTrace(new ContactForecast(0, minGap), px, ex, ey, vx);
+        bool enemyGrounded = clampEnemy && MathF.Abs(evy) < 0.001f && ey + e.HalfH >= floorBottom - 0.01f;
         for (int t = 1; t <= horizonTicks; t++)
         {
             vx = Run(vx, m.Dir, onGround, accel, max, slow);
@@ -67,6 +81,8 @@ public static class ContactPredictor
             }
             vy = Math.Min(vy + g, maxFall);
             px += vx;
+            if (px - HalfW < minLeft) { px = minLeft + HalfW; vx = 0f; }
+            else if (px + HalfW > maxRight) { px = maxRight - HalfW; vx = 0f; }
             bottom += vy;
             onGround = false;
             if (vy > 0f && bottom >= floorBottom && me.Y + 1f <= floorBottom + 0.01f)
@@ -76,20 +92,22 @@ public static class ContactPredictor
                 onGround = true;
             }
 
-            evy = Math.Min(evy + e.Gravity, e.Gravity > 0f ? Math.Max(e.MaxFall, evy) : float.MaxValue);
+            if (enemyGrounded) evx *= e.GroundFriction;
+            else evy = Math.Min(evy + e.Gravity, e.Gravity > 0f ? Math.Max(e.MaxFall, evy) : float.MaxValue);
             ex += evx;
             ey += evy;
             if (clampEnemy && ey + e.HalfH > floorBottom)
             {
                 ey = floorBottom - e.HalfH;
                 evy = 0f;
+                enemyGrounded = true;
             }
 
             float gap = Gap(px, bottom - HalfH, ex, ey, e);
             minGap = Math.Min(minGap, gap);
-            if (gap < ContactMargin) return new ContactForecast(t, minGap);
+            if (gap < ContactMargin) return new ContactTrace(new ContactForecast(t, minGap), px, ex, ey, vx);
         }
-        return new ContactForecast(null, minGap);
+        return new ContactTrace(new ContactForecast(null, minGap), px, ex, ey, vx);
     }
 
     /// <summary>Vanilla HorizontalMovement in tiles/tick: dir +1/-1 runs, 0 slows down (half as fast in the air).</summary>
