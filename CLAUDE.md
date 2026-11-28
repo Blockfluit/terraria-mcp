@@ -33,7 +33,11 @@ next step when the current one is done. Fix or add tools when play shows a real 
   parallel and to try things that could hurt the real world. Order for a new build: `scripts/instance.sh build`
   (packages into `<instances>/_build`, never the main game's .tmod) → `scripts/instance.sh reload N` → test with
   `node scripts/play/call.mjs --port "$(scripts/instance.sh port N)" ...` → when good, merge and `dev-reload.sh` for instance 0.
-- Only the main session starts, stops or reloads instances, and it assigns them: an agent may be told "use
+- Fast dev loop (docs/FAST-DEV.md): test instances run with drawing off at max timescale (~1200 updates/s, ~20x);
+  `scripts/engine-test.sh -i N` runs scenario files (scripts/engine-test/scenarios) against the real engine.
+- The main session may hand ONE agent exclusive ownership of a test instance N (build into `_build`, `reload N`,
+  engine tests, bridge calls on its port) for a task; nobody else touches that instance meanwhile.
+- Otherwise only the main session starts, stops or reloads instances, and it assigns them: an agent may be told "use
   instance N" and then only calls the bridge on that port (reads and actions), never starts/stops/reloads anything.
   Reasons: every client costs ~1-2 GB RAM and a GPU context, starting one can race another for ports and log files,
   and `instance.sh build` writes the shared ModSources/LlmPlayer folder, so builds must be serialized by one owner.

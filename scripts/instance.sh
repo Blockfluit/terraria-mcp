@@ -10,7 +10,7 @@
 #                                          looked up in <instances>/templates/Worlds first, then the main Worlds folder
 #              --fresh        recopy player, world and map from the source (throws away instance N's progress)
 #              --mod main|build|PATH       LlmPlayer.tmod to use (default: the newer of main Mods/ and <instances>/_build)
-#              --res WxH      window size (default 1024x640)        --all-mods  enable the main game's mods too
+#              --res WxH      screen size (default: the main game's, so fair vision sees the same area)        --all-mods  enable the main game's mods too
 #              --no-control   don't call request_control            --no-wait   return right after launching
 #              --no-launch    only prepare the folder (copy saves, settings, mod, autoload request)
 #              --render off|minimal|full  drawing (default off: nothing drawn, the mod moves the camera and lights
@@ -48,7 +48,7 @@ case "$CMD" in
   *) echo "unknown command: $CMD" >&2; usage >&2; exit 2 ;;
 esac
 
-PLAYER="" WORLD="" FRESH=0 MODSRC="" RES="1024x640" ALLMODS=0 CONTROL=1 WAIT=1 FORCE=0 LAUNCH=1
+PLAYER="" WORLD="" FRESH=0 MODSRC="" RES="" ALLMODS=0 CONTROL=1 WAIT=1 FORCE=0 LAUNCH=1
 RENDER="off" TIMESCALE="max" NOAUDIO=0 SPEED_SET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -204,6 +204,12 @@ copy_settings() {
   mkdir -p "$IDIR/ModConfigs"
   # Game settings from the main game, then a small window and no sound/eye candy (drawing only: the simulation,
   # lighting and the AI's fair vision stay the same).
+  # Same screen size as instance 0 by default: fair vision (lit tiles on screen) then covers the same area. Seen in
+  # the engine tests: at 1024x640 goals 40+ tiles away were off-screen and "goal_not_standable". With rendering off
+  # the size costs nothing.
+  if [[ -z "$RES" ]]; then
+    RES="$(python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1])); print(f"{c.get(\"DisplayWidth\",1920)}x{c.get(\"DisplayHeight\",1080)}")' "$MAIN_SAVE/config.json" 2>/dev/null || echo 1920x1080)"
+  fi
   python3 -I - "$MAIN_SAVE/config.json" "$IDIR/config.json" "${RES%x*}" "${RES#*x}" <<'EOF'
 import json, os, sys
 src, dst, w, h = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])

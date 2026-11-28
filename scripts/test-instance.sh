@@ -15,7 +15,7 @@ expect() { # EXIT_CODE EXPECTED_OUTPUT_SUBSTRING ARGS...
   fi
 }
 
-expect 0 "cmd=start n=1 player= world= fresh=0 mod= res=1024x640 allmods=0 control=1 wait=1 force=0" start 1
+expect 0 "cmd=start n=1 player= world= fresh=0 mod= res= allmods=0 control=1 wait=1 force=0" start 1
 expect 0 "cmd=start n=2 player=Bot world=Tiny Test fresh=1 mod=build res=800x600" \
   start 2 --player Bot --world "Tiny Test" --fresh --mod build --res 800x600
 expect 0 "control=0 wait=0" reload 3 --no-control --no-wait
