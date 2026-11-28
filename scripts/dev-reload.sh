@@ -150,7 +150,9 @@ log "launching tModLoader through Steam"
 for _ in $(seq 1 12); do tml_running && break; sleep 5; done
 if ! tml_running; then
   log "Steam didn't start the game within 60 s: starting start-tModLoader.bat"
-  (cd "$TML_DIR" && cmd.exe /c start "" start-tModLoader.bat >/dev/null 2>&1 &) \
+  # Fully detached (setsid, no inherited stdin/stdout/stderr): a child holding this script's output pipe kept the
+  # script (and whoever waited on it) running after it finished (seen in play: dev-reload "hung" after request_control).
+  (cd "$TML_DIR" && setsid cmd.exe /c start "" start-tModLoader.bat </dev/null >/dev/null 2>&1 &) \
     || die "could not start start-tModLoader.bat"
 fi
 

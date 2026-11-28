@@ -22,4 +22,6 @@ next step when the current one is done. Fix or add tools when play shows a real 
 - Deploy to the game: `scripts/dev-reload.sh` (saves and exits the running game, builds, relaunches through Steam,
   auto-loads the same character and world, takes control; ~25 s). Needs `DevCommands` on in the mod config.
 - Logs: `C:\Program Files (x86)\Steam\steamapps\common\tModLoader\tModLoader-Logs\client.log`.
+- Play helpers for the main session: `scripts/play/` (see its README). Every loop and bridge call must be bounded
+  (call.mjs has a hard deadline) and background launches fully detached, so nothing can hang a session.
 - Put decision logic in `mod/Core` (unit-testable, MiniPhysics sim for movement); keep `mod/LlmPlayer` glue thin.
