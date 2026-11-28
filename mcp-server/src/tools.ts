@@ -9,6 +9,9 @@ export interface ModClient {
   drainEvents(): ModEvent[];
 }
 
+/** MCP server identity reported in the initialize handshake. */
+export const SERVER_INFO = { name: "terraria", version: "0.1.0" } as const;
+
 export const SERVER_INSTRUCTIONS = `You control the user's own Terraria character through the LlmPlayer mod.
 - Control: action tools need AI mode. Call request_control to switch it on yourself; the user can also hand control over with the toggle key (default Insert). The user pressing Insert takes control back at once and cancels the current task; after that request_control is refused until the user hands control over again — respect that, stop, and ask them. Dying cancels the current task but you keep control.
 - Coordinates: absolute tile coordinates, y grows DOWNWARD (smaller y = higher up). The player's position (x,y) is the bottom-left tile of its 2-wide x 3-tall body (feet-left): it occupies x..x+1, y-2..y, standing on tile row y+1.

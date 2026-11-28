@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolveHost } from "./host.js";
 import { ModConnection } from "./connection.js";
-import { registerTools, SERVER_INSTRUCTIONS } from "./tools.js";
+import { registerTools, SERVER_INFO, SERVER_INSTRUCTIONS } from "./tools.js";
 
 // stdout carries the MCP protocol only; all logging goes to stderr.
 const log = (msg: string) => process.stderr.write(`[terraria-mcp] ${msg}\n`);
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.TERRARIA_PORT) || 7878;
   const conn = new ModConnection(host, port);
 
-  const server = new McpServer({ name: "terraria", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer({ ...SERVER_INFO }, { instructions: SERVER_INSTRUCTIONS });
   registerTools(server, conn);
 
   await server.connect(new StdioServerTransport());
