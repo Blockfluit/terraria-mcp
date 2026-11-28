@@ -218,7 +218,7 @@ The message is written for the LLM and usually says what to do next.
 | `internal` | mod, server | Unexpected exception (`<Type>: <message>`) or a non-mod error in the server |
 | `not_connected` | server | The game isn't reachable at `TERRARIA_HOST:TERRARIA_PORT` (not running, mod disabled, no world, firewall) |
 | `timeout` | server | The mod didn't reply to one bridge call within 10 s |
-| `dev_commands_disabled`, `not_singleplayer`, `item_on_cursor` | mod | Dev commands only (below) |
+| `dev_commands_disabled`, `not_singleplayer`, `item_on_cursor`, `not_test_instance` | mod | Dev commands only (below) |
 
 `no_path` and `out_of_reach` exist in `ErrorCodes` but no command raises them today: unreachable targets show up as
 a failed task with a reason instead. Task failures in general (`status: "failed"`) carry their explanation in
@@ -231,10 +231,13 @@ The mod registers these commands on the bridge; the MCP server deliberately does
 | Command | Gate | What it does |
 |---|---|---|
 | `ping` | none, works at the menu | `{pong: true, version}`: mod version check |
-| `dev_status` | none, works at the menu, read-only | `{devCommands, inWorld, autoload}`: whether dev commands are on and the last auto-load outcome (used by `scripts/dev-reload.sh` to fail fast) |
+| `dev_status` | none, works at the menu, read-only | `{devCommands, inWorld, autoload, port, savePath, pid, fastDev, world}`: whether dev commands are on, the last auto-load outcome (used by `scripts/dev-reload.sh` to fail fast), and the fast-dev state (test instance?, time scale, render mode, measured ups/fps; `world` only in test instances) |
 | `dev_save_and_exit {reload?}` | `DevCommands` config, single player | Runs the in-game *Save & Exit* (player + world), optionally writes an auto-load file so the next launch loads the same character and world, then quits the game. Used by `scripts/dev-reload.sh` |
 | `dev_dump {x1, y1, x2, y2}` | `DevCommands`, in a world | The real tiles of a rectangle (max 200k tiles) as `ArrayTileGrid` glyph rows, **ignoring fair vision**: test-fixture capture for offline navigation fuzzing, never for the playing AI |
 | `dev_plan {x, y, tolerance?}` | `DevCommands`, in a world | The path `move_to` would plan from the player's tile to (x,y) plus the follower's first tick: navigation debugging |
+| `dev_timescale {factor: 1..8\|"max"}` | test instance only (`not_test_instance` elsewhere) | Game updates per 1/60 s of wall time; see [FAST-DEV.md](FAST-DEV.md) |
+| `dev_render {mode: "full"\|"minimal"\|"off"}` | test instance only | How much is drawn; `off` keeps camera, lighting and map reveal running |
+| `dev_setup {...}` | test instance only, in a world | Build a test scene: teleport, items, life, time, clear/spawn NPCs, place tiles. Cheating by design, for `scripts/engine-test.sh` |
 
 `DevCommands` is off by default because anyone who can reach the bridge port could close the game. The dev commands
 are not actions (`user_has_control` does not apply), which is why they must stay out of the MCP tool list: `dev_dump`

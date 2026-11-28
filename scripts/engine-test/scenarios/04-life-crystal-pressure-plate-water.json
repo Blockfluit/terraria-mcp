@@ -1,0 +1,21 @@
+{
+  "name": "collect a Life Crystal next to a pressure plate in water",
+  "why": "seen in play: collect failed on a Life Crystal under water with a pressure plate beside it",
+  "anchor": { "dx": 620 },
+  "setup": {
+    "place_tiles": [
+      { "x1": -10, "y1": -30, "x2": 40, "y2": 16, "clear": true },
+      { "x1": 0, "y1": 0, "x2": 30, "y2": 10, "tile": "Stone" },
+      { "x1": 10, "y1": 0, "x2": 20, "y2": 3, "clear": true },
+      { "x1": 14, "y1": 3, "tile": "Heart" },
+      { "x1": 17, "y1": 3, "tile": "PressurePlates" },
+      { "x1": 10, "y1": 0, "x2": 20, "y2": 3, "liquid": "water" }
+    ],
+    "x": 4, "y": -1,
+    "clear_inventory": true,
+    "items": [{ "name": "Iron Pickaxe" }, { "name": "Wood Platform", "count": 30 }, { "name": "Torch", "count": 10 }]
+  },
+  "settle_s": 2,
+  "steps": [{ "method": "collect", "params": { "x": 14, "y": 3 }, "timeout_s": 60 }],
+  "expect": { "task": "succeeded", "inventory": { "Life Crystal": ">=1" }, "alive": true }
+}

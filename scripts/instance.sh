@@ -13,8 +13,14 @@
 #              --res WxH      window size (default 1024x640)        --all-mods  enable the main game's mods too
 #              --no-control   don't call request_control            --no-wait   return right after launching
 #              --no-launch    only prepare the folder (copy saves, settings, mod, autoload request)
+#              --render off|minimal|full  drawing (default off: nothing drawn, the mod moves the camera and lights
+#                                          the screen itself; minimal = ~5 fps to watch; full = vanilla)
+#              --timescale 1..8|max       game updates per 1/60 s (default max: as fast as the PC allows)
+#              --watch        = --render full --timescale 1 (debug by watching at normal speed)
+#              --no-audio     SDL's dummy audio driver (SDL_AUDIODRIVER=dummy): no sound device at all
 #   stop N     save & exit instance N through the bridge (dev_save_and_exit); --force kills it if that fails
 #   reload N   stop N, then start N (same options as start; picks up a new mod build)
+#   speed N    change a running instance's --render / --timescale (dev_render / dev_timescale), print dev_status
 #   status     every instance: folder, pid, port, what get_state says
 #   port N     print instance N's bridge port (from its status file)
 #   log N      print the path of instance N's client log (N = 0: the main game's)
@@ -23,14 +29,14 @@
 # Env: TML_INSTANCES (instances root, default %LOCALAPPDATA%\LlmPlayerInstances), TERRARIA_HOST, TML_DIR, TML_MODSOURCES.
 set -euo pipefail
 
-usage() { sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { printf '[instance] ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[instance] %s\n' "$*"; }
 
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
 N=""
 case "$CMD" in
-  start|stop|reload|port|log|template)
+  start|stop|reload|port|log|template|speed)
     [[ $# -ge 1 && "$1" =~ ^[0-9]+$ ]] || { echo "$CMD needs an instance number" >&2; exit 2; }
     N="$1"; shift
     if [[ "$CMD" != log && "$N" -lt 1 ]]; then
@@ -43,6 +49,7 @@ case "$CMD" in
 esac
 
 PLAYER="" WORLD="" FRESH=0 MODSRC="" RES="1024x640" ALLMODS=0 CONTROL=1 WAIT=1 FORCE=0 LAUNCH=1
+RENDER="off" TIMESCALE="max" NOAUDIO=0 SPEED_SET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --player) [[ $# -ge 2 && -n "$2" ]] || { echo "--player needs a name" >&2; exit 2; }; PLAYER="$2"; shift 2 ;;
@@ -55,12 +62,18 @@ while [[ $# -gt 0 ]]; do
     --no-wait) WAIT=0; shift ;;
     --no-launch) LAUNCH=0; shift ;;
     --force) FORCE=1; shift ;;
+    --render) [[ $# -ge 2 && "$2" =~ ^(off|minimal|full)$ ]] || { echo "--render needs off, minimal or full" >&2; exit 2; }
+              RENDER="$2"; SPEED_SET+=r; shift 2 ;;
+    --timescale) [[ $# -ge 2 && "$2" =~ ^([1-8]|max)$ ]] || { echo "--timescale needs 1..8 or max" >&2; exit 2; }
+              TIMESCALE="$2"; SPEED_SET+=t; shift 2 ;;
+    --watch) RENDER="full"; TIMESCALE="1"; SPEED_SET+=rt; shift ;;
+    --no-audio) NOAUDIO=1; shift ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 # Test hook (scripts/test-instance.sh): stop after argument parsing.
 if [[ -n "${INSTANCE_PARSE_ONLY:-}" ]]; then
-  echo "cmd=$CMD n=$N player=$PLAYER world=$WORLD fresh=$FRESH mod=$MODSRC res=$RES allmods=$ALLMODS control=$CONTROL wait=$WAIT force=$FORCE launch=$LAUNCH"
+  echo "cmd=$CMD n=$N player=$PLAYER world=$WORLD fresh=$FRESH mod=$MODSRC res=$RES allmods=$ALLMODS control=$CONTROL wait=$WAIT force=$FORCE launch=$LAUNCH render=$RENDER timescale=$TIMESCALE noaudio=$NOAUDIO"
   exit 0
 fi
 
@@ -204,6 +217,9 @@ cfg.update({"DisplayWidth": w, "DisplayHeight": h, "Fullscreen": False, "WindowM
             "BackgroundEnabled": False, "UseStormEffect": False, "UseHeatDistortion": False, "WaveQuality": 0})
 json.dump(cfg, open(dst, "w", encoding="utf-8"), indent=2)
 EOF
+  # The test-instance marker: together with -tmlsavedirectory and a port other than 7878 it unlocks the test-only dev
+  # commands (time scale, render off, dev_setup). Only this script writes it, and only into an instance folder.
+  printf '{"instance":%d}' "$N" > "$IDIR/LlmPlayerTestInstance.json"
   [[ -f "$MAIN_SAVE/input profiles.json" && ! -f "$IDIR/input profiles.json" ]] && cp "$MAIN_SAVE/input profiles.json" "$IDIR/"
   # The mod's config: the main one, with DevCommands on (stop N saves & exits through the bridge).
   python3 -I - "$MAIN_SAVE/ModConfigs/LlmPlayer_LlmConfig.json" "$IDIR/ModConfigs/LlmPlayer_LlmConfig.json" <<'EOF'
@@ -247,10 +263,12 @@ launch() {
   rm -f "$IDIR/LlmPlayerInstance.json"
   # Straight to tModLoader.dll with the working directory at the install (as start-tModLoader.bat does after its
   # dotnet checks), not through Steam: Steam starts one copy of an app. -tmlsavedirectory is used as-is as Main.SavePath.
-  pid="$(cd /mnt/c && powershell.exe -NoProfile -Command "\$p = Start-Process -FilePath '$exe' -WorkingDirectory '$wd' -PassThru -ArgumentList 'tModLoader.dll','-tmlsavedirectory','\"$idir_win\"','-llmport','$port'; \$p.Id" 2>&1 | tr -d '\r')"
+  local psenv=""
+  (( NOAUDIO )) && psenv="\$env:SDL_AUDIODRIVER='dummy'; "
+  pid="$(cd /mnt/c && powershell.exe -NoProfile -Command "$psenv\$p = Start-Process -FilePath '$exe' -WorkingDirectory '$wd' -PassThru -ArgumentList 'tModLoader.dll','-tmlsavedirectory','\"$idir_win\"','-llmport','$port','-llmrender','$RENDER','-llmtimescale','$TIMESCALE'; \$p.Id" 2>&1 | tr -d '\r')"
   [[ "$pid" =~ ^[0-9]+$ ]] || die "launch failed: $pid"
   echo "$pid" > "$(pid_file "$N")"
-  log "launched instance $N: pid $pid, save dir $idir_win, requested port $port"
+  log "launched instance $N: pid $pid, save dir $idir_win, requested port $port, render $RENDER, timescale $TIMESCALE"
 }
 
 wait_ready() { # -> sets PORT
@@ -332,6 +350,21 @@ case "$CMD" in
   stop) do_stop ;;
   reload) do_stop; do_start ;;
   port) instance_port "$N" ;;
+  speed)
+    instance_running "$N" || die "instance $N is not running"
+    PORT="$(instance_port "$N")"
+    [[ -n "$SPEED_SET" ]] || die "speed needs --render, --timescale or --watch"
+    if [[ "$SPEED_SET" == *r* ]]; then
+      reply="$(bridge_call "$PORT" dev_render "{\"mode\":\"$RENDER\"}" || true)"
+      [[ "$reply" == '{"id":1,"result"'* ]] || die "dev_render: ${reply:-no reply}"
+    fi
+    if [[ "$SPEED_SET" == *t* ]]; then
+      if [[ "$TIMESCALE" == max ]]; then f='"max"'; else f="$TIMESCALE"; fi
+      reply="$(bridge_call "$PORT" dev_timescale "{\"factor\":$f}" || true)"
+      [[ "$reply" == '{"id":1,"result"'* ]] || die "dev_timescale: ${reply:-no reply}"
+    fi
+    sleep 2   # one measuring window
+    bridge_call "$PORT" dev_status '{}' ;;
   log) find_log "$N" || die "no client log names instance $N's save folder" ;;
   template)
     [[ -d "$IDIR/Worlds" ]] || die "instance $N has no worlds"

@@ -21,7 +21,8 @@ namespace LlmPlayer.Dev;
 /// (SaveSettings, SocialAPI.Shutdown, Game.Exit) on the main thread. At the title menu (nothing to save) it just exits.
 /// It replies immediately; the script waits for the port to close.
 ///
-/// <c>dev_status</c>: read-only, works from the menu: the last autoload outcome, so the script can fail fast.
+/// <c>dev_status</c>: read-only, works from the menu: the last autoload outcome, so the script can fail fast, plus the
+/// fast-dev state of test instances (FastDevSystem).
 /// </summary>
 [CommandGroup]
 public static class DevCommands
@@ -39,6 +40,12 @@ public static class DevCommands
             Port = BridgeSystem.ListenPort,
             SavePath = Main.SavePath,
             Pid = Environment.ProcessId,
+            // Test instances (docs/FAST-DEV.md): gate result, time scale, render mode, measured updates/draws per second.
+            FastDev = FastDevSystem.Status(),
+            // Test instances only: where scenario scripts may build (scripts/engine-test).
+            World = InWorld && FastDevSystem.Gate().Allowed
+                ? new { SpawnX = Main.spawnTileX, SpawnY = Main.spawnTileY, Main.maxTilesX, Main.maxTilesY, WorldSurface = (int)Main.worldSurface }
+                : null,
         }, isAction: false, requiresWorld: false);
 
         // Dev fixture capture (DevCommands only, not an MCP tool, never used by the playing AI): the real tiles of a

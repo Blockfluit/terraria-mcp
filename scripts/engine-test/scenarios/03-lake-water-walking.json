@@ -1,0 +1,22 @@
+{
+  "name": "cross a lake with water walking",
+  "why": "seen in play: with the Water Walking buff the route still swam, or stopped on the water",
+  "anchor": { "dx": 500 },
+  "setup": {
+    "place_tiles": [
+      { "x1": -10, "y1": -30, "x2": 80, "y2": 16, "clear": true },
+      { "x1": 0, "y1": 0, "x2": 70, "y2": 12, "tile": "Stone" },
+      { "x1": 16, "y1": 0, "x2": 55, "y2": 6, "clear": true },
+      { "x1": 16, "y1": 0, "x2": 55, "y2": 6, "liquid": "water" }
+    ],
+    "x": 4, "y": -1,
+    "clear_inventory": true,
+    "items": [{ "name": "Copper Pickaxe" }, { "name": "Water Walking Potion", "count": 2 }]
+  },
+  "settle_s": 2,
+  "steps": [
+    { "method": "use_item", "params": { "item": "Water Walking Potion" }, "timeout_s": 10 },
+    { "method": "move_to", "params": { "x": 64, "y": -1, "allow_dig": false, "allow_build": false }, "timeout_s": 40 }
+  ],
+  "expect": { "task": "succeeded", "near": { "x": 64, "y": -1, "tol": 1 }, "buff": "Water Walking", "alive": true }
+}

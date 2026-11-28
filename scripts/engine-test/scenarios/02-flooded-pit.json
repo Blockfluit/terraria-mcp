@@ -1,0 +1,19 @@
+{
+  "name": "climb out of a flooded pit",
+  "why": "seen in play: stuck at the bottom of a water-filled shaft (swimming, breath, no foothold)",
+  "anchor": { "dx": 400 },
+  "setup": {
+    "place_tiles": [
+      { "x1": -10, "y1": -30, "x2": 50, "y2": 20, "clear": true },
+      { "x1": 0, "y1": 0, "x2": 40, "y2": 16, "tile": "Stone" },
+      { "x1": 18, "y1": 0, "x2": 21, "y2": 12, "clear": true },
+      { "x1": 18, "y1": 2, "x2": 21, "y2": 12, "liquid": "water" }
+    ],
+    "x": 19, "y": 12,
+    "clear_inventory": true,
+    "items": [{ "name": "Copper Pickaxe" }, { "name": "Wood Platform", "count": 60 }, { "name": "Dirt Block", "count": 60 }, { "name": "Torch", "count": 20 }]
+  },
+  "settle_s": 2,
+  "steps": [{ "method": "move_to", "params": { "x": 32, "y": -1 }, "timeout_s": 60 }],
+  "expect": { "task": "succeeded", "near": { "x": 32, "y": -1, "tol": 1 }, "alive": true }
+}
