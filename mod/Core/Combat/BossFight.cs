@@ -193,12 +193,18 @@ public readonly record struct Contender(int Id, float Dx, float Dy, float VX, fl
 /// During a boss fight, which minion (if any) to shoot before going back to the boss: a hostile within
 /// <see cref="Range"/> that is about to reach the player (within <see cref="CloseTiles"/>, or closing in), the one
 /// that would arrive first. Once picked it stays the focus until it dies or gets beyond <see cref="KeepRange"/>.
+/// <see cref="AdjacentOnly"/> (kill_minions off, the default): the boss comes first; only a minion right next to the
+/// player (within <see cref="AdjacentTiles"/>) is shot, and only while it stays that close.
 /// </summary>
 public sealed class MinionFocus
 {
-    public const float Range = 12f, KeepRange = 16f, CloseTiles = 5f, MinClosing = 0.05f;
+    public const float Range = 12f, KeepRange = 16f, CloseTiles = 5f, MinClosing = 0.05f, AdjacentTiles = 3f;
 
     private int? _id;
+
+    public MinionFocus(bool adjacentOnly = false) => AdjacentOnly = adjacentOnly;
+
+    public bool AdjacentOnly { get; }
 
     public int? Current => _id;
 
@@ -207,17 +213,18 @@ public sealed class MinionFocus
     public int? Tick(IEnumerable<Contender> minions)
     {
         var list = minions as IReadOnlyCollection<Contender> ?? minions.ToList();
+        float range = AdjacentOnly ? AdjacentTiles : Range, keep = AdjacentOnly ? AdjacentTiles : KeepRange;
         if (_id is { } cur)
         {
             foreach (var m in list)
-                if (m.Id == cur && m.Dist <= KeepRange) return cur;
+                if (m.Id == cur && m.Dist <= keep) return cur;
             _id = null;
         }
         float bestEta = float.MaxValue;
         foreach (var m in list)
         {
             float d = m.Dist;
-            if (d > Range) continue;
+            if (d > range) continue;
             float closing = m.Closing;
             if (d > CloseTiles && closing < MinClosing) continue;
             float eta = d / MathF.Max(closing, MinClosing);
@@ -243,8 +250,13 @@ public readonly record struct BossMoveInputs(
 /// <param name="Drop">Hold Down this tick to drop through the platform underfoot.</param>
 /// <param name="Fire">Worth shooting/swinging at the boss now.</param>
 /// <param name="DistTiles">Player centre to the nearest point of the boss's hitbox.</param>
+/// <param name="Cornered">Little arena left behind the player with the boss close (<see cref="BossMovement.Cornered"/>,
+/// for every boss).</param>
+/// <param name="Crossing">Running under a jumping boss to its other side.</param>
+/// <param name="CutJump">Let go of the jump key now even while rising (the jumper dodge planned without the extra
+/// height: going up into a hopping boss is the worst place to be).</param>
 public readonly record struct BossMoveDecision(int Dir, bool Jump, bool Drop, bool Evading, bool DodgeStarted, bool Fire,
-    float DistTiles);
+    float DistTiles, bool Cornered = false, bool Crossing = false, bool CutJump = false);
 
 /// <summary>
 /// How attack moves against a boss (and the boss sim drives the same code): never pathfinding, never leaving the
@@ -258,6 +270,11 @@ public readonly record struct BossMoveDecision(int Dir, bool Jump, bool Drop, bo
 /// <item>Both: <see cref="Evasion"/> against the boss and nearby minions overrides the plan when contact is coming:
 /// sideways, a jump, or dropping through the platform underfoot to the row below.</item>
 /// <item>Near an arena edge, brake (<see cref="BrakeFor"/>) rather than slide past it.</item>
+/// <item>A boss that hops under gravity (<see cref="JumperDodge"/>, e.g. King Slime): while it is in the air coming down
+/// on the player's floor, the jumper plan (landing-aware, often running under it to the other side) replaces evasion
+/// against it; on the ground (ranged) it replaces the kite with a stance from which the next jump (its learnt rhythm)
+/// can be dodged, and evasion only watches the minions (never stepping into the boss, never jumping for a minion).
+/// No climbing onto platform rows then (it jumps higher than they are).</item>
 /// </list>
 /// </summary>
 public sealed class BossMovement
@@ -266,15 +283,26 @@ public sealed class BossMovement
 
     private readonly Evasion _evasion;
     private readonly Kiter _kiter = new();
+    private readonly JumperDodge _jumper;
+    private readonly bool _jumperAware;
+    private bool _jumperDodging;
 
-    public BossMovement(PlayerPhysics? phys = null) => _evasion = new Evasion(phys);
+    /// <param name="jumperAware">Use <see cref="JumperDodge"/> against gravity-bound bosses (off only for comparisons).</param>
+    public BossMovement(PlayerPhysics? phys = null, bool jumperAware = true)
+    {
+        _evasion = new Evasion(phys);
+        _jumper = new JumperDodge(phys);
+        _jumperAware = jumperAware;
+    }
 
-    public bool Evading => _evasion.Evading;
+    public bool Evading => _evasion.Evading || _jumperDodging;
 
     public void Reset()
     {
         _evasion.Reset();
         _kiter.Reset();
+        _jumper.Reset();
+        _jumperDodging = false;
     }
 
     public BossMoveDecision Tick(in BossMoveInputs i)
@@ -294,24 +322,87 @@ public sealed class BossMovement
                      || (i.Strategy == AttackStrategy.Auto && i.Style == WeaponStyle.Ranged);
         int kiterDir = kites ? _kiter.Plan(stand.X, i.Arena, b.CX - pcx, canL, canR) : 0;
         int plan = Strategies.BossPlan(i.Strategy, i.Style, dx, dist, i.ReachTiles, i.KeepTiles, i.BackOff, kiterDir, canL, canR);
-
-        // Climb to a platform row above when nothing threatens: up there, dropping through is one more way out.
-        // Hold stands its ground (no climbing).
-        float dropFloor = DropThrough.FloorBelow(i.Grid, me);
-        bool climb = i.Strategy != AttackStrategy.Hold && me.OnGround && !float.IsFinite(dropFloor)
-                     && PlatformAbove(i.Grid, me) && !DashDetector.IsDash(me, b);
-
-        var d = _evasion.Tick(new EvasionInputs(me, b, i.Style, plan, climb, ContactPredictor.FloorBelow(i.Grid, me),
-            safeL, safeR, dropFloor, i.Others, leftOk, rightOk));
-
+        float floor = ContactPredictor.FloorBelow(i.Grid, me);
         bool fire = i.CanSeeBoss && (i.Style == WeaponStyle.Ranged
             ? i.LineOfSight && dist <= FireTiles
             : dist <= i.ReachTiles + 1f);
-        int dir = d.Dir;
-        if (i.Arena is { } a && BrakeFor(a, me) is var brake && brake != 0) dir = brake;
+        bool cornered = Cornered(i.Arena, pcx, b);
+
+        bool jumper = _jumperAware && JumperDodge.IsJumper(b);
+        bool crossing = false;
+        if (jumper)
+        {
+            int jplan = i.Strategy == AttackStrategy.Hold ? 0 : plan;
+            var jp = _jumper.Plan(me, b, floor, i.Arena, i.Style, jplan, canL, canR, i.Others);
+            if (jp.Override)
+            {
+                // In the air and coming down here: the landing-aware plan is the dodge (evasion's shorter look-ahead
+                // would second-guess a run under it).
+                bool started = !_jumperDodging && jp.Dir != jplan;
+                if (jp.Dir != jplan) _jumperDodging = true;
+                _evasion.Reset();
+                int jdir = jp.Dir;
+                if (i.Arena is { } ja && BrakeFor(ja, me) is var jb && jb != 0 && jb != jdir && !jp.Crossing) jdir = jb;
+                return new BossMoveDecision(jdir, jp.Jump, false, _jumperDodging, started, fire, dist, cornered, jp.Crossing,
+                    CutJump: !jp.Jump);
+            }
+            _jumperDodging = false;
+            plan = i.Strategy == AttackStrategy.Hold ? 0 : jp.Dir;
+            crossing = jp.Crossing;
+            if (i.Style == WeaponStyle.Ranged)
+            {
+                // On the ground the jumper plan already keeps its distance (and closes in on purpose when room runs
+                // out), which evasion would read as walking into it: evasion only watches the minions then.
+                var others = i.Others;
+                if (others is not { Count: > 0 })
+                {
+                    _evasion.Reset();
+                    return Finish(i, me, plan, false, false, false, false, fire, dist, cornered, crossing);
+                }
+                var near = others.OrderBy(o => MathF.Abs(o.CX - pcx) + MathF.Abs(o.CY - pcy)).ToList();
+                var ed = _evasion.Tick(new EvasionInputs(me, near[0], i.Style, plan, false, floor, safeL, safeR,
+                    DropThrough.FloorBelow(i.Grid, me), near.Skip(1).Append(b).ToList(), leftOk, rightOk)); // never into the boss
+                // Minions (Blue Slimes) are a nuisance; a jump or a drop to dodge one could put the player in the boss's path.
+                return ed.Evading && !ed.Jump && !ed.Drop
+                    ? Finish(i, me, ed.Dir, ed.Jump, ed.Drop, true, ed.Started, fire, dist, cornered, crossing)
+                    : Finish(i, me, plan, false, false, false, false, fire, dist, cornered, crossing);
+            }
+        }
+
+        // Climb to a platform row above when nothing threatens: up there, dropping through is one more way out.
+        // Hold stands its ground (no climbing); a jumper jumps higher than a platform row.
+        float dropFloor = DropThrough.FloorBelow(i.Grid, me);
+        bool climb = i.Strategy != AttackStrategy.Hold && !jumper && me.OnGround && !float.IsFinite(dropFloor)
+                     && PlatformAbove(i.Grid, me) && !DashDetector.IsDash(me, b);
+
+        var d = _evasion.Tick(new EvasionInputs(me, b, i.Style, plan, climb, floor,
+            safeL, safeR, dropFloor, i.Others, leftOk, rightOk));
+
         return d.Evading
-            ? new BossMoveDecision(dir, d.Jump, d.Drop, true, d.Started, fire, dist)
-            : new BossMoveDecision(dir, d.Jump, false, false, false, fire, dist);
+            ? Finish(i, me, d.Dir, d.Jump, d.Drop, true, d.Started, fire, dist, cornered, crossing)
+            : Finish(i, me, d.Dir, d.Jump, false, false, false, fire, dist, cornered, crossing);
+    }
+
+    /// <summary>The decision, braking near an arena edge.</summary>
+    private static BossMoveDecision Finish(in BossMoveInputs i, in PlayerKinematics me, int dir, bool jump, bool drop,
+        bool evading, bool started, bool fire, float dist, bool cornered, bool crossing)
+    {
+        if (i.Arena is { } a && BrakeFor(a, me) is var brake && brake != 0) dir = brake;
+        return new BossMoveDecision(dir, jump, drop, evading, started, fire, dist, cornered, crossing);
+    }
+
+    public const float CornerTiles = 8f, CornerNearTiles = 12f;
+
+    /// <summary>Less than <see cref="CornerTiles"/> of arena behind the player (on the side away from the boss) while
+    /// the boss's hitbox is within <see cref="CornerNearTiles"/> horizontally.</summary>
+    public static bool Cornered(ArenaBounds? arena, float playerCx, in EnemyMotion boss)
+    {
+        if (arena is not { } a) return false;
+        const float hw = PlayerPhysics.HitboxWidth / 2f;
+        int away = playerCx >= boss.CX ? 1 : -1;
+        float room = away > 0 ? a.X2 + 1f - (playerCx + hw) : playerCx - hw - a.X1;
+        float gap = MathF.Abs(playerCx - boss.CX) - hw - boss.HalfW;
+        return room < CornerTiles && gap < CornerNearTiles;
     }
 
     /// <summary>A platform 3..<see cref="MaxClimbTiles"/> rows above the player's feet, over its hitbox columns,

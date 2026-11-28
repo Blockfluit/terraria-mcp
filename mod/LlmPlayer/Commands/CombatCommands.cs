@@ -37,7 +37,7 @@ public static class CombatCommands
                     throw new CommandError(ErrorCodes.BadParams, "heal_below must be >= 0 and < 1");
                 healBelow = hb;
             }
-            bool killMinions = Params.Bool(p, "kill_minions", true);
+            bool killMinions = Params.Bool(p, "kill_minions", false);
             ArenaBounds? arena = ParseArena(p);
             var chosen = ResolveWeapon(player, p);
             var ammo = ResolveAmmo(player, p, chosen);

@@ -48,7 +48,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
     public const float RetreatClearTiles = 15f, NpcGravityPx = 0.3f;
     private const int RangedPathTolerance = 10;
 
-    private readonly bool _all, _killMinions;
+    private readonly bool _all;
     private readonly float _radius, _retreatBelow;
     private readonly float? _healBelow;
     private readonly int _potionsAtStart;
@@ -76,7 +76,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
     private bool _boss;
     private ArenaBounds? _arena;
     private readonly BossMovement _bossMove;
-    private readonly MinionFocus _focus = new();
+    private readonly MinionFocus _focus;
     private (int Id, int Type, uint Since)? _minion;
     private int _dropTicks;
 
@@ -89,12 +89,13 @@ public sealed class AttackTask : IGameTask<GameCtx>
     /// until none remain.</param>
     /// <param name="retreatBelow">Life fraction to retreat below when no healing is available (0 = never).</param>
     /// <param name="arena">Boss fights: the columns to stay within (default: the walkable span around the player).</param>
-    /// <param name="killMinions">Boss fights: shoot minions that are about to reach the player first.</param>
+    /// <param name="killMinions">Boss fights: shoot minions that are about to reach the player first. Off (default):
+    /// the boss first, a minion only when it is right next to the player (<see cref="MinionFocus.AdjacentOnly"/>).</param>
     /// <param name="healBelow">Quick-heal below this life fraction while the task runs (if above the config's).</param>
     /// <param name="loadout">Weapon/ammo/strategy the LLM chose (default: auto weapon, vanilla ammo order, auto).</param>
     /// <param name="keepDistance">kite / flee_and_shoot distance in tiles (default 12).</param>
     public AttackTask(NPC target, bool all = false, float radius = 25f, float retreatBelow = 0.3f,
-        ArenaBounds? arena = null, bool killMinions = true, float? healBelow = null, WeaponLoadout? loadout = null,
+        ArenaBounds? arena = null, bool killMinions = false, float? healBelow = null, WeaponLoadout? loadout = null,
         float? keepDistance = null)
     {
         _loadout = loadout ?? new WeaponLoadout(null, null, true, AttackStrategy.Auto);
@@ -103,7 +104,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
         _radius = radius;
         _retreatBelow = retreatBelow;
         _arena = arena;
-        _killMinions = killMinions;
+        _focus = new MinionFocus(adjacentOnly: !killMinions);
         _healBelow = healBelow;
         _potionsAtStart = Reflexes.PotionsUsed;
         _stats = new AttackStats(Main.GameUpdateCount);
@@ -247,8 +248,11 @@ public sealed class AttackTask : IGameTask<GameCtx>
     /// <item>Ranged: kites across the arena (turning near its ends), shooting with lead aim whenever the boss is in
     /// sight; melee: steps toward it, hit-and-run. Evasion against the boss and nearby minions overrides the plan:
     /// sideways, a jump, or a drop through the platform underfoot (Down for a few ticks).</item>
-    /// <item>Minions (<c>kill_minions</c>): one about to reach the player (<see cref="MinionFocus"/>) is shot first,
-    /// then back to the boss.</item>
+    /// <item>Minions: the boss is the target; only a minion right next to the player is shot first. With
+    /// <c>kill_minions</c> any minion about to reach the player (<see cref="MinionFocus"/>) is, then back to the boss.</item>
+    /// <item>A boss that hops (King Slime; <see cref="JumperDodge"/>): its landing is predicted from its jump, and the
+    /// player runs out from under it or under it to the other side; on the ground it keeps a stance from which the
+    /// next jump (its learnt rhythm) can be dodged. Progress says when the player is cornered at an arena end.</item>
     /// <item>The boss stays the target when it leaves the screen, but fairly: the player can't see where it is, so
     /// movement uses the last sighting carried along its last velocity for a second, then held there
     /// (<see cref="LastSeen"/>); shooting waits until it's visible again. Its life (the vanilla boss bar) and whether it
@@ -318,7 +322,7 @@ public sealed class AttackTask : IGameTask<GameCtx>
             if (others.Count < MaxOthers) others.Add(Motion(n));
             contenders.Add(new Contender(n.whoAmI, o.X, o.Y, n.velocity.X / 16f, n.velocity.Y / 16f));
         }
-        int? minionId = _killMinions ? _focus.Tick(contenders) : null;
+        int? minionId = _focus.Tick(contenders);
 
         bool los = CombatKit.LineOfSight(p, npc);
         // hit_and_run's rhythm goes by last tick's distance (from the fair boss motion, not its hidden position).
@@ -331,8 +335,11 @@ public sealed class AttackTask : IGameTask<GameCtx>
         ControlIntent intent = default;
         intent.Left = d.Dir < 0;
         intent.Right = d.Dir > 0;
-        bool blocked = k.OnGround && d.Dir != 0 && Math.Abs(p.velocity.X) < 0.1f;
+        // Jump over a wall we are stuck at; not merely because the speed passes zero while turning around.
+        var (bsx, bsy) = StateReader.StandingTile(p);
+        bool blocked = k.OnGround && Math.Abs(p.velocity.X) < 0.1f && StepSafety.WallAhead(ctx.Grid, new TilePoint(bsx, bsy), d.Dir);
         intent.Jump = JumpPulse.Next(d.Jump || blocked, k.OnGround, p.velocity.Y, ref _lastJump);
+        if (d.CutJump && !k.OnGround) intent.Jump = _lastJump = false;
         if (d.Drop) _dropTicks = DropHoldTicks;
         if (_dropTicks > 0)
         {
@@ -366,7 +373,8 @@ public sealed class AttackTask : IGameTask<GameCtx>
             + (visible ? "" : $" (out of sight {(Main.GameUpdateCount - _lastSeen) / 60} s, going by its last sighting)")
             + $", {_loadout.Label(p)}" + (ammo is { } a ? $" ({a} ammo)" : "") + $", {Strategies.Name(strategy)}"
             + (aimAt != npc ? $", shooting {aimAt.GivenOrTypeName} first" : "")
-            + (d.Evading ? ", dodging" : "")
+            + (d.Evading ? ", dodging" : "") + (d.Crossing ? ", running under it" : "")
+            + (d.Cornered ? ", CORNERED (little arena left behind you)" : "")
             + $"; life {p.statLife}/{p.statLifeMax2}" + (sick ? " (potion sickness)" : "")
             + $", potions {_stats.PotionsUsed}, dodges {_stats.Dodges}";
         return GameTaskStatus.Running;
@@ -409,10 +417,11 @@ public sealed class AttackTask : IGameTask<GameCtx>
 
     public void OnCancel(GameCtx ctx) => Cleanup(ctx);
 
-    /// <summary>The target's hitbox and motion for <see cref="ContactPredictor"/>, in tiles.</summary>
+    /// <summary>The target's hitbox and motion for <see cref="ContactPredictor"/>, in tiles. Slimes and King Slime
+    /// lose 20% of their horizontal speed per tick on the ground (vanilla slime AI), so a landing doesn't slide on.</summary>
     private static EnemyMotion Motion(NPC n) =>
         new(n.Center.X / 16f, n.Center.Y / 16f, n.width / 32f, n.height / 32f, n.velocity.X / 16f, n.velocity.Y / 16f,
-            n.noGravity ? 0f : NpcGravityPx / 16f);
+            n.noGravity ? 0f : NpcGravityPx / 16f, GroundFriction: n.aiStyle is NPCAIStyleID.Slime or NPCAIStyleID.KingSlime ? 0.8f : 1f);
 
     /// <summary>Run away from the visible hostiles (no attacking), then fail with "low life".</summary>
     private GameTaskStatus TickRetreat(GameCtx ctx)

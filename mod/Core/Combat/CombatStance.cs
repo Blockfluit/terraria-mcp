@@ -75,6 +75,18 @@ public static class StepSafety
         return true;
     }
 
+    /// <summary>A solid tile in the body's height right next to it in <paramref name="dir"/>: worth a jump when the
+    /// player is stopped there. (A stop alone isn't: turning around passes through zero speed, and a needless jump
+    /// under a hopping boss is the worst place to be.)</summary>
+    public static bool WallAhead(ITileGrid g, TilePoint stand, int dir)
+    {
+        if (dir == 0) return false;
+        int x = dir > 0 ? stand.X + 2 : stand.X - 1;
+        for (int y = stand.Y - 2; y <= stand.Y; y++)
+            if (g.Get(x, y).Kind == TileKind.Solid) return true;
+        return false;
+    }
+
     /// <summary>Column <paramref name="x"/> for a body standing at row <paramref name="y"/>: no lava/hazard in body
     /// height and a standable floor at most <see cref="MaxDrop"/> tiles down (first non-air tile solid or platform).</summary>
     public static bool ColumnSafe(ITileGrid g, int x, int y)
