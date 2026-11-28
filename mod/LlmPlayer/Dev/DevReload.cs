@@ -56,7 +56,10 @@ public static class DevCommands
             int x1 = Params.Int(p, "x1"), y1 = Params.Int(p, "y1"), x2 = Params.Int(p, "x2"), y2 = Params.Int(p, "y2");
             if (x2 < x1 || y2 < y1 || (long)(x2 - x1 + 1) * (y2 - y1 + 1) > 200_000)
                 throw new CommandError(ErrorCodes.BadParams, "rectangle too big (max 200k tiles) or inverted");
-            var grid = new LlmPlayer.Observe.GameTileGrid(Main.LocalPlayer, fairVision: false);
+            // Fair play: in the user's real game (instance 0) the dump shows only what the player has seen (unknown
+            // tiles are '?'); the true tiles (and hidden Life Crystals) only in throwaway test instances.
+            bool truth = FastDevSystem.Gate().Allowed;
+            var grid = new LlmPlayer.Observe.GameTileGrid(Main.LocalPlayer, fairVision: !truth);
             var rows = new List<string>();
             var sb = new System.Text.StringBuilder();
             for (int y = y1; y <= y2; y++)
@@ -65,7 +68,7 @@ public static class DevCommands
                 for (int x = x1; x <= x2; x++)
                 {
                     var t = grid.Get(x, y);
-                    if (Main.tile[x, y].HasTile && Main.tile[x, y].TileType == Terraria.ID.TileID.Heart) { sb.Append('H'); continue; }
+                    if (truth && Main.tile[x, y].HasTile && Main.tile[x, y].TileType == Terraria.ID.TileID.Heart) { sb.Append('H'); continue; }
                     sb.Append(LlmPlayer.Core.Grid.ArrayTileGrid.GlyphOf(t)); // hardness before shape (hard slopes: ')' '(' '-' 'R' 'Q')
                 }
                 rows.Add(sb.ToString());

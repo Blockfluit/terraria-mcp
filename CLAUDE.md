@@ -5,6 +5,9 @@ Play the user's character through the MCP and beat Terraria boss by boss (first:
 next step when the current one is done. Fix or add tools when play shows a real gap.
 
 ## Rules that never bend
+- Instance 0 (the real playthrough) never gets cheats or hidden information: dev_setup / dev_timescale / dev_render
+  refuse there (not_test_instance), and dev_dump returns only fair-vision tiles there. Don't use dev tools to decide
+  anything in instance 0; cheats (spawning bosses, items, teleports, god mode) are for test instances only.
 - Completely fair play: only what the player could see (fair vision, map-revealed tiles, tiles touching the body);
   no off-screen positions, no teleporting, no item spawning, real controls and vanilla reach only.
 - The AI may take control with `request_control`, but when the user presses Insert to take it back, stop and wait.
