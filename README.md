@@ -13,6 +13,9 @@ mod/LlmPlayer tModLoader mod inside Terraria
    └─ mod/Core  pure C# library: pathfinding, path following, map rendering, tasks
 ```
 
+Everything the MCP server exposes (tools, events, error codes, environment variables) is documented in
+[docs/MCP.md](docs/MCP.md), with a generated per-tool reference in [docs/MCP-tools.md](docs/MCP-tools.md).
+
 ## What the AI can do
 
 - **See fairly.** It only sees tiles you've explored or that are lit near the screen, shown as an
