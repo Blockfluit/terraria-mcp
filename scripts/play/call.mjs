@@ -1,14 +1,20 @@
-// Usage: node call.mjs <method> '<json params>' [wait_s]  — calls the mod directly; with wait_s polls get_task until done.
+// Usage: node call.mjs [--port N] <method> '<json params>' [wait_s]  — calls the mod directly; with wait_s polls get_task
+// until done. Port: --port, else TERRARIA_PORT, else 7878 (test instance N: 7878+N, see scripts/instance.sh port N).
+// Host: TERRARIA_HOST, else the WSL default gateway.
 import net from "node:net";
 import fs from "node:fs";
 const route = fs.readFileSync("/proc/net/route", "utf8").split("\n").slice(1).map(l => l.trim().split(/\s+/)).find(c => c[1] === "00000000");
-const host = [6,4,2,0].map(i => parseInt(route[2].slice(i, i+2), 16)).join(".");
-const [method, params = "{}", waitS] = process.argv.slice(2);
+const host = process.env.TERRARIA_HOST?.trim() || [6,4,2,0].map(i => parseInt(route[2].slice(i, i+2), 16)).join(".");
+const argv = process.argv.slice(2);
+let port = Number(process.env.TERRARIA_PORT) || 7878;
+const pi = argv.indexOf("--port");
+if (pi >= 0) { port = Number(argv[pi + 1]); argv.splice(pi, 2); if (!(port > 0 && port < 65536)) { console.log("ERROR --port needs a number"); process.exit(2); } }
+const [method, params = "{}", waitS] = argv;
 // Hard deadline: never hang (a call waiting on a dead/frozen game kept scripts stuck). wait_s + 60 s, or 90 s.
 const deadline = (Number(waitS) || 30) * 1000 + 60000;
 setTimeout(() => { console.log("ERROR timeout: no answer within " + Math.round(deadline / 1000) + " s (game frozen or busy?)"); process.exit(3); }, deadline).unref();
 process.stdout.on("error", () => process.exit(0)); // reader closed the pipe (head -1): exit quietly, no EPIPE trace
-const s = net.createConnection({ host, port: 7878 });
+const s = net.createConnection({ host, port });
 let buf = "", id = 0; const pending = new Map(); const events = [];
 s.setEncoding("utf8");
 s.on("close", () => { if (pending.size) { console.log("ERROR connection closed by the game"); process.exit(2); } });

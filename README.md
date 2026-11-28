@@ -198,7 +198,7 @@ In game: *Workshop → Manage Mods → LLM Player → Config*.
 
 | Option | Default | Meaning |
 |---|---|---|
-| Port | 7878 | TCP port the mod listens on |
+| Port | 7878 | TCP port the mod listens on. `-llmport N` on the command line or the `LLMPLAYER_PORT` environment variable override it; a taken port moves to the next free one (see test instances below) |
 | BindAddress | 0.0.0.0 | Use `127.0.0.1` if your MCP client runs on Windows or WSL uses mirrored networking |
 | ProtectSpawnRadius | 20 | Blocks within this many tiles of spawn are never broken |
 | BackupKeep | 5 | How many save backups to keep |
@@ -260,6 +260,44 @@ How it works:
 Options: `--player NAME --world NAME` enters a different save, which also works when the game isn't running.
 `--no-build` skips the build. `--no-launch` stops after the build. `scripts/test-dev-reload.sh` checks the
 script's argument handling.
+
+### Development: test instances
+
+Several tModLoader clients can run at once, so features can be tested in parallel and without touching your real
+world. Instance 0 is your main game (port 7878, your real saves, `scripts/dev-reload.sh`). Test instances 1, 2, ...
+are extra clients with their own throwaway save folder (`%LOCALAPPDATA%\LlmPlayerInstances\<N>`, override with
+`TML_INSTANCES`), their own bridge port (7878 + N) and their own copy of the built mod:
+
+```bash
+scripts/instance.sh start 1            # copy player + world + mod, launch, auto-load, request_control
+node scripts/play/call.mjs --port 7879 get_state     # or TERRARIA_PORT=7879
+scripts/instance.sh status             # pid, port and get_state of every instance
+scripts/instance.sh build              # build this checkout into <instances>/_build only (main game untouched)
+scripts/instance.sh reload 1           # save & exit, recopy the newest mod build, launch again
+scripts/instance.sh stop 1             # save & exit (--force kills it if the bridge doesn't answer)
+scripts/instance.sh log 1              # path of that instance's client log (log 0: the main game's)
+```
+
+- Saves: on the first start (or with `--fresh`) the script copies the main game's last player (with its map) and
+  world, or `--player NAME --world NAME`, into the instance folder. The copies are the instance's own from then on:
+  your real files are only ever read. Worlds are looked up in `<instances>/templates/Worlds` first, so a small test
+  world can be made once in an instance (title screen → New World) and kept with `scripts/instance.sh template N`.
+- Launch: `dotnet tModLoader.dll -tmlsavedirectory <folder> -llmport <port>` straight from the install folder, not
+  through Steam (Steam only starts one copy of an app). `-tmlsavedirectory` makes that folder `Main.SavePath`, so
+  the instance has its own `config.json`, `ModConfigs`, `Mods`, `Players`, `Worlds`, autoload request
+  (`LlmPlayerAutoload.json`) and status file (`LlmPlayerInstance.json`, the port the bridge got). Only our mod is
+  enabled (`--all-mods` copies your mod list), the window is 1024x640 (`--res`), sound and backgrounds are off.
+  DevCommands is on in the instance's config.
+- Mod builds: each instance runs a copy of `LlmPlayer.tmod`, so building never touches a running instance.
+  `scripts/instance.sh build` packages into `<instances>/_build/Mods` (tModLoader's `-tmlsavedirectory` passed
+  through `ExtraBuildModFlags`), so the main game can keep running too. `start`/`reload` use the newer of that build
+  and the main `Mods/LlmPlayer.tmod` (`--mod main|build|PATH` to choose).
+- Logs: all clients log to the install's `tModLoader-Logs`; the second client that starts gets `client2.log` and
+  so on. `scripts/instance.sh log N` finds the right one by the "save path" line the mod logs.
+- Several MCP clients: register one MCP server per instance with its own `TERRARIA_PORT`, e.g.
+  `claude mcp add terraria-test1 -e TERRARIA_PORT=7879 -- node /path/to/mcp-server/dist/index.js`.
+
+`scripts/test-instance.sh` checks the script's argument handling.
 
 ## Status
 

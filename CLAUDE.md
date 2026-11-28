@@ -21,7 +21,18 @@ next step when the current one is done. Fix or add tools when play shows a real 
   `cd mcp-server && npm test && npm run build`, `scripts/check-mod.sh main`.
 - Deploy to the game: `scripts/dev-reload.sh` (saves and exits the running game, builds, relaunches through Steam,
   auto-loads the same character and world, takes control; ~25 s). Needs `DevCommands` on in the mod config.
-- Logs: `C:\Program Files (x86)\Steam\steamapps\common\tModLoader\tModLoader-Logs\client.log`.
+- Logs: `C:\Program Files (x86)\Steam\steamapps\common\tModLoader\tModLoader-Logs\client.log` (with test instances
+  running, a client started later logs to `client2.log`...: `scripts/instance.sh log 0` / `log N` finds the right one).
+- Test instances (`scripts/instance.sh`, see README): instance 0 = the user's main game on 7878 with the real world
+  "The Weird Fjord" (only `dev-reload.sh` touches it). Instances 1, 2, ... are extra clients on port 7878+N with
+  throwaway copies of the player/world in `%LOCALAPPDATA%\LlmPlayerInstances\<N>`; use them to test features in
+  parallel and to try things that could hurt the real world. Order for a new build: `scripts/instance.sh build`
+  (packages into `<instances>/_build`, never the main game's .tmod) → `scripts/instance.sh reload N` → test with
+  `node scripts/play/call.mjs --port "$(scripts/instance.sh port N)" ...` → when good, merge and `dev-reload.sh` for instance 0.
+- Only the main session starts, stops or reloads instances, and it assigns them: an agent may be told "use
+  instance N" and then only calls the bridge on that port (reads and actions), never starts/stops/reloads anything.
+  Reasons: every client costs ~1-2 GB RAM and a GPU context, starting one can race another for ports and log files,
+  and `instance.sh build` writes the shared ModSources/LlmPlayer folder, so builds must be serialized by one owner.
 - Play helpers for the main session: `scripts/play/` (see its README). Every loop and bridge call must be bounded
   (call.mjs has a hard deadline) and background launches fully detached, so nothing can hang a session.
 - Put decision logic in `mod/Core` (unit-testable, MiniPhysics sim for movement); keep `mod/LlmPlayer` glue thin.

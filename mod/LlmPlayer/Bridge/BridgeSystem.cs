@@ -14,7 +14,14 @@ public sealed class BridgeSystem : ModSystem
     private const int MaxRequestsPerFrame = 64;
 
     private static JsonLineServer? _server;
-    private static (string Bind, int Port) _bound;
+    private static (string Bind, int Port) _bound;   // config values the server was started for
+    private static PortChoice _requested;
+
+    /// <summary>The port the bridge listens on (0 when it isn't listening). May differ from the requested port when
+    /// that was taken: see <see cref="BridgeInstance"/>.</summary>
+    public static int ListenPort { get; private set; }
+
+    public static string StatusFilePath => Path.Combine(Terraria.Main.SavePath, BridgeInstance.StatusFileName);
     private static Action<string> _log = _ => { };
 
     /// <summary>Raised once per game update (PostUpdateEverything, in-world frames), after requests are handled.
@@ -39,6 +46,8 @@ public sealed class BridgeSystem : ModSystem
         Terraria.On_Main.DoUpdate -= DrainThenUpdate;
         _server?.Stop();
         _server = null;
+        ListenPort = 0;
+        DeleteStatusFile();
         Tick = null;
         CommandRouter.Clear();
         _log = _ => { };
@@ -60,9 +69,16 @@ public sealed class BridgeSystem : ModSystem
     internal static void OnConfigChanged(LlmConfig config)
     {
         if (_server == null || (_bound.Bind == config.BindAddress && _bound.Port == config.Port)) return;
+        if (_bound.Bind == config.BindAddress && _requested.Source != PortSource.Config)
+        {
+            _log($"[bridge] config Port {config.Port} ignored: the port was set by {_requested.Source} ({_requested.Port})");
+            _bound = (config.BindAddress, config.Port);
+            return;
+        }
         _log("bridge config changed; restarting server");
         _server.Stop();
         _server = null;
+        ListenPort = 0;
         EnsureServer();
     }
 
@@ -70,16 +86,61 @@ public sealed class BridgeSystem : ModSystem
     {
         if (_server != null) return;
         var cfg = LlmConfig.Current;
-        var server = new JsonLineServer(msg => _log("[bridge] " + msg));
+        _requested = BridgeInstance.ChoosePort(Environment.GetCommandLineArgs(),
+            Environment.GetEnvironmentVariable(BridgeInstance.PortEnv), cfg.Port);
+        if (_requested.Warning != null) _log("[bridge] " + _requested.Warning);
+        JsonLineServer? started = null;
+        var port = BridgeInstance.BindFirstFree(_requested.Port, p =>
+        {
+            var server = new JsonLineServer(msg => _log("[bridge] " + msg));
+            try
+            {
+                server.Start(cfg.BindAddress, p);
+                started = server;
+                return true;
+            }
+            catch (SocketException e)
+            {
+                server.Stop();
+                _log($"[bridge] could not listen on {cfg.BindAddress}:{p}: {e.Message}");
+                return false;
+            }
+        });
+        if (port is not { } bound || started == null)
+        {
+            _log($"[bridge] no free port in {_requested.Port}..{_requested.Port + BridgeInstance.MaxPortTries - 1}; bridge is off");
+            return;
+        }
+        _server = started;
+        _bound = (cfg.BindAddress, cfg.Port);
+        ListenPort = bound;
+        _log($"[bridge] port {bound} (requested {_requested.Port} from {_requested.Source}), save path {Terraria.Main.SavePath}");
+        WriteStatusFile();
+    }
+
+    /// <summary>Tells scripts (scripts/instance.sh) which port this game process got.</summary>
+    private static void WriteStatusFile()
+    {
         try
         {
-            server.Start(cfg.BindAddress, cfg.Port);
-            _server = server;
-            _bound = (cfg.BindAddress, cfg.Port);
+            File.WriteAllText(StatusFilePath, BridgeInstance.SerializeStatus(new InstanceStatus(ListenPort, _requested.Port,
+                _requested.Source, Environment.ProcessId, Terraria.Main.SavePath, DateTime.UtcNow)));
         }
-        catch (SocketException e)
+        catch (Exception e)
         {
-            _log($"[bridge] could not listen on {cfg.BindAddress}:{cfg.Port}: {e.Message}");
+            _log($"[bridge] could not write {StatusFilePath}: {e.Message}");
+        }
+    }
+
+    private static void DeleteStatusFile()
+    {
+        try
+        {
+            if (File.Exists(StatusFilePath)) File.Delete(StatusFilePath);
+        }
+        catch (Exception)
+        {
+            // best effort: scripts also check the port and the pid
         }
     }
 
