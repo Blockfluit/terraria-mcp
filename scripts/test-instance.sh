@@ -22,6 +22,13 @@ expect 0 "control=0 wait=0" reload 3 --no-control --no-wait
 expect 0 "cmd=stop n=1" stop 1 --force
 expect 0 "force=1" stop 1 --force
 expect 0 "launch=0" start 1 --no-launch
+expect 0 "render=off timescale=max noaudio=0" start 1
+expect 0 "render=minimal timescale=3 noaudio=1" start 1 --render minimal --timescale 3 --no-audio
+expect 0 "render=full timescale=1" reload 1 --watch
+expect 0 "cmd=speed n=2 " speed 2 --timescale max
+expect 2 "main game" speed 0 --timescale 2
+expect 2 "--render needs" start 1 --render none
+expect 2 "--timescale needs" start 1 --timescale 9
 expect 0 "cmd=status n=" status
 expect 0 "cmd=build" build
 expect 0 "cmd=log n=0" log 0

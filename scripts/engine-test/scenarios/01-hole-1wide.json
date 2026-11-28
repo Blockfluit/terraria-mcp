@@ -1,0 +1,17 @@
+{
+  "name": "walk over a 1-wide hole",
+  "why": "seen in play: move_to stepped into a 1-tile-wide shaft instead of walking over it",
+  "anchor": { "dx": 300 },
+  "setup": {
+    "place_tiles": [
+      { "x1": -10, "y1": -30, "x2": 60, "y2": 16, "clear": true },
+      { "x1": 0, "y1": 0, "x2": 50, "y2": 12, "tile": "Stone" },
+      { "x1": 25, "y1": 0, "x2": 25, "y2": 10, "clear": true }
+    ],
+    "x": 3, "y": -1,
+    "clear_inventory": true,
+    "items": [{ "name": "Copper Pickaxe" }]
+  },
+  "steps": [{ "method": "move_to", "params": { "x": 45, "y": -1, "allow_dig": false, "allow_build": false }, "timeout_s": 30 }],
+  "expect": { "task": "succeeded", "near": { "x": 45, "y": -1, "tol": 1 }, "alive": true }
+}

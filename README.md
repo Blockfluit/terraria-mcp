@@ -300,6 +300,11 @@ scripts/instance.sh log 1              # path of that instance's client log (log
 - Several MCP clients: register one MCP server per instance with its own `TERRARIA_PORT`, e.g.
   `claude mcp add terraria-test1 -e TERRARIA_PORT=7879 -- node /path/to/mcp-server/dist/index.js`.
 
+- Speed: test instances start with drawing off and the time scale at max (`--render off --timescale max`; `--watch`
+  for normal drawing at 1x, `scripts/instance.sh speed N ...` to change it while running). Engine tests:
+  `scripts/engine-test.sh -i 1,2` runs `scripts/engine-test/scenarios/*.json` in parallel. Both only work in test
+  instances; details in [docs/FAST-DEV.md](docs/FAST-DEV.md).
+
 `scripts/test-instance.sh` checks the script's argument handling.
 
 ## Status
