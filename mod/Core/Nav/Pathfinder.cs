@@ -1431,6 +1431,10 @@ public static class Pathfinder
             return b;
         }
 
+        private bool HazardBeside(int x, int y) =>
+            _g.Get(x - 1, y).Kind == TileKind.Hazard || _g.Get(x + 1, y).Kind == TileKind.Hazard
+            || _g.Get(x, y - 1).Kind == TileKind.Hazard || _g.Get(x, y + 1).Kind == TileKind.Hazard;
+
         private ushort Classify(TileInfo t, int x, int y)
         {
             int b = Computed;
@@ -1446,7 +1450,13 @@ public static class Pathfinder
                     break;
                 case TileKind.Platform: b |= Stand | Plat; break;
                 case TileKind.Water:
-                case TileKind.Honey: b |= Liquid; break;
+                case TileKind.Honey:
+                    b |= Liquid;
+                    // A swimmer drifts: a liquid cell beside a hazard (a pressure plate wired to a dart trap, spikes) is
+                    // as bad as the hazard (seen in game: "Bot was decapitated by Poison Dart", swimming past a
+                    // pressure plate in a pool next to a Life Crystal; the plan passed one tile beside the plate).
+                    if (HazardBeside(x, y)) b |= Deadly;
+                    break;
                 case TileKind.Lava:
                 case TileKind.Hazard: b |= Deadly; break;
                 case TileKind.Unknown: b |= Unknown; break;

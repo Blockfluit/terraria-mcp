@@ -295,4 +295,32 @@ public class BuildDownTests(ITestOutputHelper output)
         Assert.True(r.NodesExpanded < 10000, $"{r.NodesExpanded} nodes");
         output.WriteLine($"{r.NodesExpanded} nodes: " + string.Join(" ", r.Steps.Select(st => $"{st.Kind}{st.Pos}w{st.WorkTile}")));
     }
+
+    /// <summary>Seen in game: a plan swam through a pool one tile beside a pressure plate (dart trap) and the player
+    /// drifted onto it. Liquid cells next to a hazard are avoided.</summary>
+    [Fact]
+    public void SwimmingPastAPressurePlate_IsAvoided()
+    {
+        string[] rows =
+        {
+            "XXXXXXXXXXXXXXXXXXXX",
+            "....................",
+            "....................",
+            "....................",
+            "##~~~~~~~~~~~~~~~###",
+            "##~~~~~~~~~~~~~~~###",
+            "##~~~~~~~^~~~~~~~###",
+            "XXXXXXXXXXXXXXXXXXXX",
+        };
+        var g = ArrayTileGrid.Parse(rows).Grid;
+        var r = Pathfinder.FindPath(g, new(0, 3), new(17, 3), Real(builds: 0) with { CanSwim = true }, new());
+        Assert.True(r.Success, r.FailureReason);
+        foreach (var st in r.Steps)
+            for (int dx = 0; dx <= 1; dx++)
+                for (int dy = 0; dy <= 2; dy++)
+                {
+                    int cx = st.Pos.X + dx, cy = st.Pos.Y - dy;
+                    Assert.False((cy == 6 && Math.Abs(cx - 9) <= 1) || (cy == 5 && cx == 9), $"step {st.Kind}{st.Pos} touches the plate's neighbourhood");
+                }
+    }
 }
