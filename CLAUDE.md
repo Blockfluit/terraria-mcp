@@ -14,7 +14,7 @@ next step when the current one is done. Fix or add tools when play shows a real 
   `git worktree add -b wt/<name> .claude/worktrees/<name> feat/v1`. Agents may run Core tests, MCP tests and
   `scripts/check-mod.sh <name>` (compile only, safe while the game runs). They must never run `build-mod.sh`,
   `sync-mod.sh`, `dev-reload.sh` or start/stop the game, and they commit on their branch without pushing.
-- The main session owns the single game instance: it plays, tests in game, merges agent branches into `feat/v1`,
+- The main session owns the play instance (instance 0): it plays, tests in game, merges agent branches into `feat/v1`,
   runs all checks, commits and pushes.
 - Checks before every commit:
   `export PATH="$HOME/.dotnet:$PATH"; dotnet test mod/Core.Tests`,
@@ -23,6 +23,10 @@ next step when the current one is done. Fix or add tools when play shows a real 
   auto-loads the same character and world, takes control; ~25 s). Needs `DevCommands` on in the mod config.
 - Logs: `C:\Program Files (x86)\Steam\steamapps\common\tModLoader\tModLoader-Logs\client.log` (with test instances
   running, a client started later logs to `client2.log`...: `scripts/instance.sh log 0` / `log N` finds the right one).
+- Instance roles (user decision): exactly ONE instance plays to finish the game: instance 0, the user's real world,
+  with the full UI, normal speed and completely fair play. Every other instance is purely for development: no UI
+  needed, run it as fast and cheap as possible (no rendering, max timescale, dev setup commands), never fair-play
+  bound, and its world is a throwaway copy. Dev/cheat commands must refuse to run in instance 0.
 - Test instances (`scripts/instance.sh`, see README): instance 0 = the user's main game on 7878 with the real world
   "The Weird Fjord" (only `dev-reload.sh` touches it). Instances 1, 2, ... are extra clients on port 7878+N with
   throwaway copies of the player/world in `%LOCALAPPDATA%\LlmPlayerInstances\<N>`; use them to test features in
