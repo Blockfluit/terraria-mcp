@@ -67,11 +67,12 @@ bridge_call() {
 
 TML_DIR="${TML_DIR:-/mnt/c/Program Files (x86)/Steam/steamapps/common/tModLoader}"
 
-tml_running() { # the game process (dotnet tModLoader.dll), not tModLoader's own build/server runs.
+tml_running() { # the main game process (dotnet tModLoader.dll), not tModLoader's own build/server runs and not the
+  # test instances of scripts/instance.sh (started with -tmlsavedirectory).
   # If the process list can't be read, assume it is running (never build or launch over a live game).
   local n
   n="$(cd /mnt/c && powershell.exe -NoProfile -Command \
-    "@(Get-CimInstance Win32_Process | Where-Object { (\$_.Name -eq 'dotnet.exe' -or \$_.Name -eq 'tModLoader.exe') -and \$_.CommandLine -like '*tModLoader*' -and \$_.CommandLine -notlike '*-build*' -and \$_.CommandLine -notlike '*-server*' }).Count" \
+    "@(Get-CimInstance Win32_Process | Where-Object { (\$_.Name -eq 'dotnet.exe' -or \$_.Name -eq 'tModLoader.exe') -and \$_.CommandLine -like '*tModLoader*' -and \$_.CommandLine -notlike '*-build*' -and \$_.CommandLine -notlike '*-server*' -and \$_.CommandLine -notlike '*-tmlsavedirectory*' }).Count" \
     2>/dev/null | tr -d '\r')" || true
   [[ "$n" =~ ^[0-9]+$ ]] || return 0
   (( n > 0 ))

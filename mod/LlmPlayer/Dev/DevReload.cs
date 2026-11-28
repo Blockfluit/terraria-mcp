@@ -36,6 +36,9 @@ public static class DevCommands
             DevCommands = LlmConfig.Current.DevCommands,
             InWorld = InWorld,
             Autoload = DevAutoloadSystem.Status,
+            Port = BridgeSystem.ListenPort,
+            SavePath = Main.SavePath,
+            Pid = Environment.ProcessId,
         }, isAction: false, requiresWorld: false);
 
         // Dev fixture capture (DevCommands only, not an MCP tool, never used by the playing AI): the real tiles of a
